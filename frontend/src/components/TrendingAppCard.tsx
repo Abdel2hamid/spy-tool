@@ -1,0 +1,94 @@
+'use client';
+
+import Link from 'next/link';
+import { TrendingUp as TrendUpIcon, Star, TrendingDown } from 'lucide-react';
+import { TrendingApp } from '@/lib/api';
+import { cn } from '@/lib/utils';
+
+interface TrendingAppCardProps {
+  app: TrendingApp;
+}
+
+export function TrendingAppCard({ app }: TrendingAppCardProps) {
+  const isTrendingUp = (app?.rank_velocity || 0) > 0;
+  const currentRank = app?.current_rank ?? '-';
+  const rankVelocity = app?.rank_velocity ?? 0;
+  const reviewGrowth = app?.review_growth ?? 0;
+  const trendScore = app?.trend_score ?? 0;
+
+  return (
+    <Link href={`/apps/${app.id}`}>
+      <div className="group rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition-all duration-200 hover:border-indigo-200 hover:shadow-md dark:border-gray-800 dark:bg-gray-900 cursor-pointer">
+        <div className="flex items-start gap-4">
+          <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-gray-100 overflow-hidden dark:bg-gray-800">
+            {app?.icon_url ? (
+              <img
+                src={app.icon_url}
+                alt={app.name || 'App'}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <span className="text-xl font-bold text-gray-400">
+                {(app?.name || '?')[0]}
+              </span>
+            )}
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <h3 className="truncate text-sm font-semibold text-gray-900 dark:text-white">
+              {app?.name || 'Unknown App'}
+            </h3>
+            <p className="truncate text-xs text-gray-500 dark:text-gray-400">
+              {app?.developer || 'Unknown Developer'}
+            </p>
+
+            <div className="mt-2 flex items-center gap-3">
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-300">
+                <span className="flex h-5 w-5 items-center justify-center rounded bg-gray-100 text-xs font-bold dark:bg-gray-800">
+                  #{currentRank}
+                </span>
+              </span>
+
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1 text-xs font-medium',
+                  isTrendingUp
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-red-600 dark:text-red-400'
+                )}
+              >
+                {isTrendingUp ? (
+                  <TrendUpIcon className="h-3 w-3" />
+                ) : (
+                  <TrendingDown className="h-3 w-3" />
+                )}
+                {Math.abs(rankVelocity).toFixed(1)}
+              </span>
+
+              <span className="inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+                <Star className="h-3 w-3 text-yellow-500" />
+                {reviewGrowth.toFixed(1)}%
+              </span>
+            </div>
+          </div>
+
+          <div className="flex flex-col items-end">
+            <div
+              className={cn(
+                'text-lg font-bold',
+                trendScore > 70
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : trendScore > 40
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-gray-400 dark:text-gray-500'
+              )}
+            >
+              {trendScore.toFixed(0)}
+            </div>
+            <div className="text-xs text-gray-500 dark:text-gray-400">score</div>
+          </div>
+        </div>
+      </div>
+    </Link>
+  );
+}
