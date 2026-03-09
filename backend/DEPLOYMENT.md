@@ -8,14 +8,29 @@ Railway must use **Python 3.11** (not 3.12 or 3.13).
 pre-built wheel for Python 3.13 at the pinned versions in `requirements.txt`.
 Attempting to build from source fails on Railway's build infrastructure.
 
-The fix is a `runtime.txt` file at the **repository root** (not inside `backend/`):
+Railway's Nixpacks builder looks for version-pin files relative to the
+**service root directory**. Since this service's root is set to `backend/`
+in Railway settings, all Python version files must live inside `backend/`.
 
-```
-python-3.11.9
+Three files are used (Nixpacks checks all of them):
+
+| File | Content | Purpose |
+|------|---------|---------|
+| `backend/runtime.txt` | `python-3.11.9` | Heroku-style version pin |
+| `backend/.python-version` | `3.11.9` | pyenv-style version pin |
+| `backend/nixpacks.toml` | see below | Explicit Nix package + start command |
+
+`backend/nixpacks.toml`:
+```toml
+[phases.setup]
+nixPkgs = ["python311", "gcc"]
+
+[start]
+cmd = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
 ```
 
-Railway's Nixpacks builder reads this file to pin the Python version.
-Do **not** move it into `backend/` — Railway looks for it at the repo root.
+Do **not** rely solely on a `runtime.txt` at the repository root when the
+Railway service root is `backend/` — Railway will not find it there.
 
 ---
 

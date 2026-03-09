@@ -214,6 +214,6 @@ Also created: `PRODUCT_STRATEGY_REPORT.md` at repository root (product strategy 
 **Files Modified:**
 - `backend/DEPLOYMENT.md` — added Python Version section at top
 
-**Key Gotcha:** `runtime.txt` must be at the repository root. Railway does NOT look inside `backend/` for it. Moving it into `backend/` has no effect.
+**Key Gotcha (corrected):** When the Railway service root is set to `backend/`, Nixpacks resolves all config files relative to `backend/`. A `runtime.txt` at the repo root is ignored. All three version-pin files (`runtime.txt`, `.python-version`, `nixpacks.toml`) must live inside `backend/`. `nixpacks.toml` is the most reliable override because it explicitly sets the Nix package (`python311`) and the start command.
 
 ---
