@@ -291,6 +291,9 @@ class OpportunityOfDayResponse(BaseModel):
     competition_score: float
     trend_score: float
     success_probability: float
+    attractiveness_score: Optional[float] = None
+    feasibility_score: Optional[float] = None
+    feasibility_details: Optional[dict] = None
     ai_integration_potential: float
     rank_velocity: float
     review_growth: float

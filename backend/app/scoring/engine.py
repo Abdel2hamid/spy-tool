@@ -1,10 +1,120 @@
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 
 from app.models.models import App, Ranking, Review, Keyword, AppKeyword, Opportunity, Category
 from app.scoring.weights import SCORING_WEIGHTS
+
+# ---------------------------------------------------------------------------
+# Big-brand exclusion — developer names (normalised to lowercase substrings)
+# ---------------------------------------------------------------------------
+
+_BIG_BRAND_DEVELOPERS = frozenset({
+    "openai", "openai llc", "openai lc",
+    "google llc", "google inc", "google",
+    "meta platforms", "meta platforms inc", "meta",
+    "microsoft corporation", "microsoft",
+    "xai", "x.ai",
+    "anthropic", "anthropic plc", "anthropic llc",
+    "amazon.com services llc", "amazon", "amazon.com",
+    "apple", "apple inc", "apple distribution international",
+    "adobe", "adobe inc", "adobe systems",
+    "netflix", "netflix inc",
+    "spotify ab", "spotify",
+    "notion labs", "notion labs inc", "notion",
+    "canva pty ltd", "canva",
+    "bytedance", "tiktok ltd", "tiktok pte",
+    "x corp", "twitter", "twitter inc",
+    "snap inc", "snap",
+    "linkedin corporation", "linkedin",
+    "pinterest",
+    "samsung electronics",
+    "huawei device",
+    "shopify inc",
+    "salesforce inc", "salesforce.com",
+    "zoom video communications",
+    "slack technologies",
+    "dropbox inc",
+    "box inc",
+    "airbnb inc",
+    "uber technologies",
+    "lyft inc",
+    "doordash inc",
+    "instacart",
+    "duolingo",         # highly entrenched language app
+    "bumble inc",
+    "match group",      # Tinder, Hinge, OkCupid parent
+    "unity technologies",
+    "epic games",
+    "activision publishing",
+    "electronic arts",
+    "zynga",
+    "king",             # Candy Crush parent
+    "niantic",
+    "riot games",
+    "supercell",
+    "verizon media",
+    "yahoo",
+    "baidu",
+    "alibaba",
+    "tencent",
+    "naver corporation",
+    "kakao corporation",
+    "line corporation",
+    "rakuten",
+    "sony interactive entertainment",
+    "warner bros",
+    "disney",
+    "paramount",
+    "hbo",
+    "hulu",
+    "peacock",
+    "amazon prime video",
+    "twitch interactive",
+    "reddit inc",
+})
+
+# App name substrings that flag a big-brand product regardless of developer field
+_BIG_BRAND_APP_KEYWORDS = (
+    "chatgpt", "dall-e", "dall·e", "openai",
+    "gemini", "google one", "google docs", "google sheets", "google drive",
+    "youtube", "gmail", "chrome", "google maps", "google photos",
+    "instagram", "facebook", "whatsapp", "messenger", "threads",
+    "grok",
+    "microsoft copilot", "bing ", "bing chat", "microsoft 365",
+    "microsoft teams", "outlook", "onedrive", "xbox",
+    "claude ",            # Anthropic
+    "alexa ", "amazon prime", "amazon music", "amazon photos",
+    "adobe photoshop", "adobe acrobat", "adobe illustrator",
+    "adobe lightroom", "adobe premiere",
+    "netflix",
+    "notion ",
+    "canva ",
+    "tiktok",
+    "snapchat",
+    " twitter", "twitter for", "x for iphone",
+    "linkedin",
+    "pinterest",
+    "spotify",
+    "slack ",
+    "zoom ",
+    "dropbox",
+    "duolingo",
+    "shazam",            # Apple subsidiary
+    "garageband",        # Apple
+    "iwork", "pages for", "numbers for", "keynote for",
+)
+
+# ---------------------------------------------------------------------------
+# Market dominance thresholds — entrenched incumbents regardless of brand
+# ---------------------------------------------------------------------------
+
+_DOMINANCE_REVIEW_HARD = 500_000   # absolute behemoth
+_DOMINANCE_REVIEW_RATED = 100_000  # entrenched with high rating
+_DOMINANCE_RATED_FLOOR = 4.5       # "entrenched + beloved"
+_DOMINANCE_TOP_RANK = 3            # chart dominator rank threshold
+_DOMINANCE_TOP_REVIEWS = 50_000    # chart dominator review threshold
 
 
 class ScoringEngine:
@@ -245,6 +355,154 @@ class ScoringEngine:
 
         return " ".join(recommendations[:3])
 
+    # ------------------------------------------------------------------
+    # Big-brand / dominance filters
+    # ------------------------------------------------------------------
+
+    def _is_excluded_big_brand(self, app: App) -> Tuple[bool, str]:
+        """Return (True, reason) if the app belongs to a big-brand developer."""
+        dev = (app.developer or "").strip().lower()
+        if dev in _BIG_BRAND_DEVELOPERS:
+            return True, f"Developer '{app.developer}' is a major company"
+        for brand in _BIG_BRAND_DEVELOPERS:
+            if len(brand) > 5 and brand in dev:
+                return True, f"Developer name contains brand token '{brand}'"
+
+        name_lower = (app.name or "").lower()
+        for kw in _BIG_BRAND_APP_KEYWORDS:
+            if kw.strip() in name_lower:
+                return True, f"App name contains big-brand keyword '{kw.strip()}'"
+
+        return False, ""
+
+    def _is_dominated_market(self, app: App) -> Tuple[bool, str]:
+        """Return (True, reason) if this app is an entrenched market incumbent."""
+        reviews = app.current_reviews or 0
+        rating = app.current_rating or 0.0
+        rank = app.current_rank
+
+        if reviews >= _DOMINANCE_REVIEW_HARD:
+            return True, f"{reviews:,} reviews — absolute behemoth"
+        if reviews >= _DOMINANCE_REVIEW_RATED and rating >= _DOMINANCE_RATED_FLOOR:
+            return True, f"{reviews:,} reviews + {rating:.1f}★ — entrenched and beloved"
+        if rank is not None and rank <= _DOMINANCE_TOP_RANK and reviews >= _DOMINANCE_TOP_REVIEWS:
+            return True, f"Rank #{rank} with {reviews:,} reviews — chart dominator"
+
+        return False, ""
+
+    # ------------------------------------------------------------------
+    # Feasibility / winnability scoring
+    # ------------------------------------------------------------------
+
+    def calculate_feasibility_score(
+        self, app: App, competition_score: float
+    ) -> Tuple[float, Dict]:
+        """
+        Score how feasible it is for an indie developer to win in this space.
+
+        Components (100 pts total):
+          review_pts      (25) — fewer reviews = easier to enter
+          competition_pts (25) — lower keyword difficulty = easier ASO
+          gap_pts         (20) — feature-gap requests = clear differentiation path
+          rating_pts      (15) — lower avg rating = unhappy users to win over
+          rank_pts        (15) — rank > 20 = not locked out of charts
+        """
+        from app.models.models import FeatureGap
+
+        reviews = app.current_reviews or 0
+        rating = app.current_rating or 3.0
+        rank = app.current_rank or 999
+
+        # 1. Review scarcity
+        if reviews < 500:
+            review_pts = 25.0
+        elif reviews < 5_000:
+            review_pts = 20.0
+        elif reviews < 20_000:
+            review_pts = 12.0
+        elif reviews < 50_000:
+            review_pts = 6.0
+        elif reviews < 100_000:
+            review_pts = 2.0
+        else:
+            review_pts = 0.0
+
+        # 2. Low keyword competition
+        competition_pts = max(0.0, (100.0 - competition_score) / 4.0)
+
+        # 3. Feature gap signals
+        gap_count = (
+            self.db.query(FeatureGap)
+            .filter(FeatureGap.app_id == app.id)
+            .count()
+        )
+        gap_pts = min(gap_count * 4.0, 20.0)
+
+        # 4. Rating weakness — lower rating means more room to win
+        if rating < 2.0:
+            rating_pts = 15.0
+        elif rating < 3.0:
+            rating_pts = 12.0
+        elif rating < 3.5:
+            rating_pts = 8.0
+        elif rating < 4.0:
+            rating_pts = 4.0
+        else:
+            rating_pts = 0.0
+
+        # 5. Rank accessibility — not locked out of charts
+        if rank > 100:
+            rank_pts = 15.0
+        elif rank > 50:
+            rank_pts = 10.0
+        elif rank > 20:
+            rank_pts = 5.0
+        else:
+            rank_pts = 0.0
+
+        total = min(review_pts + competition_pts + gap_pts + rating_pts + rank_pts, 100.0)
+        details = {
+            "review_pts": round(review_pts, 1),
+            "competition_pts": round(competition_pts, 1),
+            "gap_pts": round(gap_pts, 1),
+            "rating_pts": round(rating_pts, 1),
+            "rank_pts": round(rank_pts, 1),
+            "gap_count": gap_count,
+        }
+        return round(total, 2), details
+
+    def _generate_winnability_recommendation(
+        self,
+        app_name: str,
+        feasibility_score: float,
+        feasibility_details: Dict,
+        attractiveness_score: float,
+    ) -> str:
+        parts = []
+
+        if feasibility_score >= 65:
+            parts.append(f"High winnability — realistic indie opportunity in the '{app_name}' niche.")
+        elif feasibility_score >= 45:
+            parts.append(f"Moderate winnability — competition is manageable around '{app_name}'.")
+        else:
+            parts.append(f"Tough space — '{app_name}' category is crowded but micro-niches exist.")
+
+        gap_count = feasibility_details.get("gap_count", 0)
+        if gap_count >= 3:
+            parts.append(f"{gap_count} feature gaps reported by users — clear differentiation path.")
+        if feasibility_details.get("rating_pts", 0) >= 8:
+            parts.append("Users are unhappy with existing options — quality gap to exploit.")
+        if feasibility_details.get("review_pts", 0) >= 20:
+            parts.append("Low review count — early-mover advantage still available.")
+        if feasibility_details.get("competition_pts", 0) >= 18:
+            parts.append("Low keyword competition — strong ASO opportunity.")
+
+        return " ".join(parts[:3])
+
+    # ------------------------------------------------------------------
+    # Opportunity of the Day
+    # ------------------------------------------------------------------
+
     def generate_opportunity_of_day(self) -> Optional[Dict]:
         apps = self.db.query(App).filter(App.current_rank.isnot(None)).all()
 
@@ -254,32 +512,35 @@ class ScoringEngine:
         scored = []
 
         for app in apps:
-            primary_keyword = app.name.split()[0].lower() if app.name else "app"
+            # Hard exclusion: major brand developer or product name
+            excluded, _excl_reason = self._is_excluded_big_brand(app)
+            if excluded:
+                continue
 
+            # Hard exclusion: entrenched market incumbent
+            dominated, _dom_reason = self._is_dominated_market(app)
+            if dominated:
+                continue
+
+            primary_keyword = app.name.split()[0].lower() if app.name else "app"
             competition_score = self.calculate_keyword_competition(primary_keyword)
             ai_potential = self.calculate_ai_potential(app.id, app.name, app.description or "")
 
-            rank_score = 0.0
-            if app.current_rank is not None:
-                rank_score = max(0, 100 - (app.current_rank * 2))
-
-            rating_score = 0.0
-            if app.current_rating is not None:
-                rating_score = app.current_rating * 20
-
-            success_probability = min(
+            # Attractiveness (45%) — market size + demand signals
+            rank_score = max(0.0, 100.0 - (app.current_rank * 2)) if app.current_rank else 0.0
+            rating_score = (app.current_rating or 0.0) * 20.0
+            attractiveness = min(
                 (rank_score * 0.45) +
                 (rating_score * 0.30) +
-                ((100 - competition_score) * 0.15) +
+                ((100.0 - competition_score) * 0.15) +
                 (ai_potential * 0.10),
-                100
+                100.0,
             )
 
-            trend_score = min(
-                (rank_score * 0.6) +
-                (rating_score * 0.4),
-                100
-            )
+            # Feasibility / Winnability (55%)
+            feasibility, feasibility_details = self.calculate_feasibility_score(app, competition_score)
+
+            combined = attractiveness * 0.45 + feasibility * 0.55
 
             category_name = "general"
             if app.category_id:
@@ -292,22 +553,27 @@ class ScoringEngine:
                 "app_name": app.name,
                 "primary_keyword": primary_keyword,
                 "competition_score": round(competition_score, 2),
-                "trend_score": round(trend_score, 2),
-                "success_probability": round(success_probability, 2),
+                "trend_score": round(min(rank_score * 0.6 + rating_score * 0.4, 100.0), 2),
+                "success_probability": round(combined, 2),
+                "attractiveness_score": round(attractiveness, 2),
+                "feasibility_score": round(feasibility, 2),
+                "feasibility_details": feasibility_details,
                 "ai_integration_potential": round(ai_potential, 2),
                 "rank_velocity": round(self.calculate_rank_velocity(app.id), 2),
                 "review_growth": round(self.calculate_review_growth(app.id), 2),
                 "rating_velocity": round(self.calculate_rating_velocity(app.id), 2),
                 "category_growth": round(self.calculate_category_growth(app.category_id), 2) if app.category_id else 0.0,
                 "category": category_name,
-                "recommendation": self._generate_recommendation(
+                "recommendation": self._generate_winnability_recommendation(
                     app.name,
-                    success_probability,
-                    trend_score,
-                    competition_score,
-                    ai_potential
-                )
+                    feasibility,
+                    feasibility_details,
+                    attractiveness,
+                ),
             })
+
+        if not scored:
+            return None
 
         scored.sort(key=lambda x: x["success_probability"], reverse=True)
         return scored[0]
