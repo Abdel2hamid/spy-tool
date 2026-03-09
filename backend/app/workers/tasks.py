@@ -570,6 +570,17 @@ class ScoringWorker:
                 logger.error(f"Feature gap analysis failed for app {app.id}: {e}")
         logger.info(f"Feature gaps computed for {fg_count} apps")
 
+        # Recompute keyword opportunity + feasibility scores using stored signals
+        # (fast pass — no external API calls; the full pipeline runs via its own job)
+        logger.info("Recomputing keyword intelligence scores")
+        try:
+            from app.services.keyword_intelligence_pipeline import KeywordIntelligencePipeline
+            kw_pipeline = KeywordIntelligencePipeline(self.db)
+            scored_count = kw_pipeline.recompute_scores(self.db.query(Keyword).all())
+            logger.info(f"Keyword scores updated for {scored_count} keywords")
+        except Exception as e:
+            logger.error(f"Keyword score recompute failed: {e}")
+
         # Generate AI app ideas from aggregated signals
         logger.info("Generating AI app ideas")
         try:

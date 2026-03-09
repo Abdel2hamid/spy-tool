@@ -104,6 +104,14 @@ export interface KeywordListItem {
   ads_presence: number;
   feature_gap_count: number;
   last_updated: string | null;
+  // External signal fields (from KeywordIntelligencePipeline)
+  trend_score: number;        // Google Trends average interest (0-100)
+  trend_growth: number;       // % growth last 4 weeks vs prior 4 weeks
+  trend_velocity: number;     // momentum: last week vs recent average
+  dominance_score: number;    // top-app market dominance (0-100)
+  competition_score: number;  // DataForSEO competition index (0-100)
+  cpc: number;                // cost per click (USD)
+  last_enriched: string | null;
 }
 
 export interface KeywordListResponse {
@@ -113,11 +121,17 @@ export interface KeywordListResponse {
   limit: number;
 }
 
+export interface GoogleTrendWeekPoint {
+  date: string;    // ISO date (Monday of week)
+  interest: number; // 0-100 relative Google Trends interest
+}
+
 export interface KeywordDetail extends KeywordListItem {
   top_competitors: KeywordCompetitorItem[];
   related_keywords: string[];
   market_fragmentation: number;
   last_scanned: string | null;
+  google_trend_points: GoogleTrendWeekPoint[];
 }
 
 export interface KeywordTrendPoint {
@@ -130,6 +144,26 @@ export interface KeywordTrendPoint {
 export interface KeywordTrendResponse {
   term: string;
   trend_points: KeywordTrendPoint[];
+}
+
+export interface TrendingKeywordItem {
+  id: number;
+  term: string;
+  trend_score: number;
+  trend_growth: number;
+  trend_velocity: number;
+  opportunity_score: number;
+  feasibility_score: number;
+  search_volume: number;
+  difficulty: number;
+  dominance_score: number;
+  apps_count: number;
+  classification: 'easy' | 'medium' | 'hard' | 'impossible';
+}
+
+export interface TrendingKeywordsResponse {
+  keywords: TrendingKeywordItem[];
+  total: number;
 }
 
 export interface RankHistory {
@@ -457,6 +491,22 @@ export async function getKeywordTrend(term: string, days = 30): Promise<KeywordT
   if (!res.ok) return { term, trend_points: [] };
   const data = await res.json();
   return { term: data?.term ?? term, trend_points: Array.isArray(data?.trend_points) ? data.trend_points : [] };
+}
+
+export async function getTrendingKeywords(limit = 20): Promise<TrendingKeywordsResponse> {
+  const res = await fetch(`${API_BASE}/keywords/trending?limit=${limit}`, { cache: 'no-store' });
+  if (!res.ok) return { keywords: [], total: 0 };
+  const data = await res.json();
+  return {
+    keywords: Array.isArray(data?.keywords) ? data.keywords : [],
+    total: data?.total ?? 0,
+  };
+}
+
+export async function triggerKeywordPipeline(): Promise<{ status: string; message: string }> {
+  const res = await fetch(`${API_BASE}/keywords/pipeline/run`, { method: 'POST', cache: 'no-store' });
+  if (!res.ok) return { status: 'error', message: 'Failed to trigger pipeline' };
+  return res.json();
 }
 
 export async function getRankings(

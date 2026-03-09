@@ -9,15 +9,23 @@ class Settings(BaseSettings):
     postgres_user: str = "abdelhamid"
     postgres_password: str = ""
     postgres_db: str = "appstore_spy"
-    
+
     app_name: str = "AppStore Spy AI"
     debug: bool = True
 
     # ── Test-phase app cap ────────────────────────────────────────────────
-    # Limits how many apps are scraped / refreshed across every pipeline path.
-    # Set MAX_TEST_APPS=0 in .env (or bump the default here) to remove the cap
-    # when moving to production.
     max_test_apps: int = 0
+
+    # ── Google Trends integration ─────────────────────────────────────────
+    # Set GOOGLE_TRENDS_ENABLED=false to disable (e.g. if pytrends is blocked)
+    google_trends_enabled: bool = True
+
+    # ── DataForSEO integration (optional) ────────────────────────────────
+    # Sign up at https://dataforseo.com — free tier available.
+    # Set DATAFORSEO_ENABLED=true + credentials to activate real search volumes.
+    dataforseo_enabled: bool = False
+    dataforseo_username: str = ""
+    dataforseo_password: str = ""
 
     class Config:
         env_file = ".env"

@@ -525,3 +525,57 @@ All three cases handled correctly:
 - `apps_count_sq` subquery avoids N+1 queries for counting apps per keyword
 - `KeywordSearchSnapshot` `captured_at` index is critical for the "latest batch" window query in detail endpoint
 
+
+---
+
+## Session: 2026-03-09 (Session 17 — Keyword Intelligence Pipeline)
+
+**Summary:** Built a multi-layer keyword intelligence pipeline integrating Google Trends, Apple App Store signals, and optional DataForSEO to replace internally-generated fake keyword metrics with real demand data.
+
+**New External Data Sources:**
+- **Google Trends** (pytrends): trend_score (0-100 interest), trend_growth (% 90-day), trend_velocity (momentum), weekly sparkline data
+- **Apple App Store signals** (iTunes Search API): apps_count, dominance_score from top-app review count + big-brand detection
+- **DataForSEO** (optional): real search_volume, keyword_difficulty, cpc, competition_score (only for keywords with opportunity_score ≥ 50)
+
+**New Scoring Formulas:**
+- `opportunity_score` = trend_pts(30) + growth_pts(20) + volume_pts(25) + space_pts(25) where space = (100-difficulty)/100 * 12.5 + (100-dominance)/100 * 12.5
+- `feasibility_score` = diff_pts(35) + dom_pts(35) + vel_pts(20) + scar_pts(10)
+
+**New DB Schema:**
+- `keywords` table: 10 new columns: trend_score, trend_growth, trend_velocity, apps_count, dominance_score, competition_score, cpc, opportunity_score, feasibility_score, last_enriched
+- `keyword_trends` table: keyword_id, week_start (unique), interest_score (0-100), captured_at — stores Google Trends weekly sparkline data
+
+**New Service: `backend/app/services/keyword_intelligence_pipeline.py`**
+- `GoogleTrendsCollector`: batch 5 keywords/request, 2s delays, 48h TTL, weekly points stored in keyword_trends
+- `AppleSignalsCollector`: async iTunes search, chunks of 10, 0.5s delay between batches
+- `DataForSEOCollector`: optional, batches of 50, only high-score keywords
+- `KeywordIntelligencePipeline`: orchestrates all phases; run_full_pipeline(), run_trends_only(), run_scoring_only()
+- Seed keywords: ~130 across 12 categories (productivity, health, finance, education, social, utilities, ai, business, photo, games, travel, food)
+- Related keyword discovery: fetch_related() per category seed adds trending terms from Google
+
+**New Scheduler Jobs:**
+- `keyword_intelligence` — every 12h, first run 3min after startup (full pipeline)
+- `keyword_scoring` — every 6h, first run 70min (scoring only, no external API)
+
+**New API Endpoints:**
+- `GET /keywords/trending` — keywords by trend_velocity + opportunity_score
+- `POST /keywords/pipeline/run` — manually trigger pipeline in background
+- Updated `GET /keywords/enhanced` — returns new external signal fields; prefers stored scores
+- Updated `GET /keywords/{term}/detail` — returns trend_score, trend_growth, trend_velocity, dominance_score, competition_score, cpc, google_trend_points
+
+**Frontend Changes:**
+- `KeywordsClient.tsx`: "Refresh Intelligence" button triggers pipeline; Activity icon badge on high-trend-score keywords; +N% growth badge in table; Google Trends section in drawer with sparkline (AreaChart), 3-metric grid (interest/growth/momentum); Dominance bar; DataForSEO CPC/competition panel; new sort options (Trending, Growth)
+- `api.ts`: 3 new interfaces (GoogleTrendWeekPoint, TrendingKeywordItem, TrendingKeywordsResponse), 2 new functions (getTrendingKeywords, triggerKeywordPipeline); KeywordListItem + KeywordDetail extended with external signal fields
+
+**Config:**
+- `GOOGLE_TRENDS_ENABLED=true` (set false if Google blocks pytrends)
+- `DATAFORSEO_ENABLED=true` + `DATAFORSEO_USERNAME` + `DATAFORSEO_PASSWORD`
+
+**Key Gotchas:**
+- pytrends uses unofficial Google Trends API; Google may throttle/block; always wrap in try/except
+- Batch size ≤ 5 for pytrends (hard limit); 2s sleep between batches
+- KeywordTrend uses (keyword_id, week_start) unique index for upsert via pg_insert ON CONFLICT
+- New Keyword columns require `ALTER TABLE keywords ADD COLUMN` — handled automatically by `Base.metadata.create_all()` IF tables don't exist; for existing tables use Alembic migration
+- `/keywords/trending` must be registered BEFORE `/keywords/{term}/detail` — already done
+- `tasks.py` ScoringWorker now calls `pipeline.recompute_scores()` on every hourly scoring run (no external API calls — fast)
+

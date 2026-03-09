@@ -269,6 +269,68 @@ async def job_keyword_rank_tracker():
 
 
 # ---------------------------------------------------------------------------
+# Job: every 12 h — keyword intelligence pipeline (trends + Apple signals + scoring)
+# ---------------------------------------------------------------------------
+
+async def job_keyword_intelligence():
+    """
+    Full keyword intelligence pipeline:
+    - Discover new keywords from Google Trends rising queries + seed list
+    - Enrich with Google Trends (trend_score, trend_growth, trend_velocity)
+    - Enrich with Apple App Store signals (apps_count, dominance_score)
+    - Optionally enrich with DataForSEO (search_volume, difficulty, cpc)
+    - Recompute opportunity_score + feasibility_score for all keywords
+    """
+    job_id = "keyword_intelligence"
+    t0 = _log_start(job_id)
+    try:
+        from app.services.keyword_intelligence_pipeline import KeywordIntelligencePipeline
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            pipeline = KeywordIntelligencePipeline(db)
+            summary = await pipeline.run_full_pipeline(max_keywords=500)
+            _log_done(
+                job_id, t0,
+                f"discovered={summary['discovered']}, "
+                f"trends={summary['trends_updated']}, "
+                f"apple={summary['apple_updated']}, "
+                f"seo={summary['seo_updated']}, "
+                f"scored={summary['scored']}",
+            )
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+# ---------------------------------------------------------------------------
+# Job: every 6 h — keyword scoring only (fast, no external API calls)
+# ---------------------------------------------------------------------------
+
+async def job_keyword_scoring():
+    """
+    Recompute opportunity_score + feasibility_score for all keywords
+    using existing stored signals (no external API calls — very fast).
+    Runs more frequently than the full intelligence pipeline.
+    """
+    job_id = "keyword_scoring"
+    t0 = _log_start(job_id)
+    try:
+        from app.services.keyword_intelligence_pipeline import KeywordIntelligencePipeline
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            pipeline = KeywordIntelligencePipeline(db)
+            count = await pipeline.run_scoring_only()
+            _log_done(job_id, t0, f"{count} keywords scored")
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+# ---------------------------------------------------------------------------
 # Scheduler setup
 # ---------------------------------------------------------------------------
 
@@ -385,6 +447,34 @@ def setup_scheduler() -> AsyncIOScheduler:
         ),
         id="keyword_rank_tracker",
         name="Every 6h: Keyword Rank Tracking",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── every 12 h: full keyword intelligence pipeline ───────────────────────
+    # First run: 3 min after startup so keyword data starts enriching immediately.
+    scheduler.add_job(
+        job_keyword_intelligence,
+        trigger=IntervalTrigger(
+            hours=12,
+            start_date=now + timedelta(minutes=3),
+            timezone="UTC",
+        ),
+        id="keyword_intelligence",
+        name="Every 12h: Keyword Intelligence Pipeline",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── every 6 h: fast keyword scoring (no external API) ────────────────────
+    # First run: 70 min after startup (after hourly_scoring so data is fresh).
+    scheduler.add_job(
+        job_keyword_scoring,
+        trigger=IntervalTrigger(
+            hours=6,
+            start_date=now + timedelta(minutes=70),
+            timezone="UTC",
+        ),
+        id="keyword_scoring",
+        name="Every 6h: Keyword Scoring",
         **_JOB_DEFAULTS,
     )
 

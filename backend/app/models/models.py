@@ -180,12 +180,36 @@ class Keyword(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     term = Column(String(255), unique=True, nullable=False, index=True)
+    # Legacy / internal estimates (kept for backwards compatibility)
     search_volume = Column(Integer, default=0)
     difficulty = Column(Float, default=0)
     trend = Column(Float, default=0)
     last_updated = Column(DateTime(timezone=True), server_default=func.now())
+    # ── External signal columns (populated by KeywordIntelligencePipeline) ──
+    # Google Trends signals
+    trend_score = Column(Float, default=0.0)        # 0-100 relative interest (Google Trends avg)
+    trend_growth = Column(Float, default=0.0)       # % growth last 4 weeks vs prior 4 weeks
+    trend_velocity = Column(Float, default=0.0)     # last week vs recent avg (momentum)
+    # Apple App Store signals
+    apps_count = Column(Integer, default=0)         # apps found for this keyword in iTunes search
+    dominance_score = Column(Float, default=0.0)    # top-app market dominance (0-100)
+    # DataForSEO signals (optional)
+    competition_score = Column(Float, default=0.0)  # 0-100 competition index
+    cpc = Column(Float, default=0.0)                # cost per click (USD)
+    # Unified scores (computed from all signals)
+    opportunity_score = Column(Float, default=0.0)  # 0-100 market opportunity
+    feasibility_score = Column(Float, default=0.0)  # 0-100 indie entry feasibility
+    # Housekeeping
+    last_enriched = Column(DateTime(timezone=True)) # last time external data was fetched
 
     apps = relationship("AppKeyword", back_populates="keyword")
+    trends = relationship("KeywordTrend", back_populates="keyword", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_keyword_opp_score", "opportunity_score"),
+        Index("idx_keyword_trend_score", "trend_score"),
+        Index("idx_keyword_enriched", "last_enriched"),
+    )
 
 
 class AppKeyword(Base):
@@ -368,4 +392,26 @@ class AppIdea(Base):
         Index("idx_idea_score", "opportunity_score"),
         Index("idx_idea_pattern", "pattern_type"),
         Index("idx_idea_category", "category"),
+    )
+
+
+class KeywordTrend(Base):
+    """
+    Time-series Google Trends interest data per keyword (weekly granularity).
+    Used for sparkline charts and trend_growth computation.
+    """
+    __tablename__ = "keyword_trends"
+
+    id = Column(Integer, primary_key=True, index=True)
+    keyword_id = Column(Integer, ForeignKey("keywords.id"), nullable=False)
+    week_start = Column(DateTime(timezone=True), nullable=False)  # Monday of the week
+    interest_score = Column(Integer, default=0)   # 0-100, Google Trends relative interest
+    captured_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    keyword = relationship("Keyword", back_populates="trends")
+
+    __table_args__ = (
+        Index("idx_ktrend_keyword_week", "keyword_id", "week_start", unique=True),
+        Index("idx_ktrend_keyword", "keyword_id"),
+        Index("idx_ktrend_week_start", "week_start"),
     )

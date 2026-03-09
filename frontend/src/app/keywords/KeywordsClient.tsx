@@ -8,9 +8,11 @@ import {
   KeywordListResponse,
   KeywordDetail,
   KeywordTrendResponse,
+  GoogleTrendWeekPoint,
   getKeywordsEnhanced,
   getKeywordDetail,
   getKeywordTrend,
+  triggerKeywordPipeline,
 } from '@/lib/api';
 import {
   Search,
@@ -25,6 +27,8 @@ import {
   Shield,
   AlertTriangle,
   XCircle,
+  RefreshCw,
+  Activity,
 } from 'lucide-react';
 import {
   LineChart,
@@ -36,6 +40,8 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
+  Area,
+  AreaChart,
 } from 'recharts';
 import { cn } from '@/lib/utils';
 
@@ -87,19 +93,29 @@ function fmtReviews(n: number | null | undefined): string {
   return fmtVolume(n);
 }
 
+// Google Trends interest level label
+function trendScoreLabel(score: number): string {
+  if (score >= 70) return 'Viral';
+  if (score >= 50) return 'Strong';
+  if (score >= 30) return 'Moderate';
+  if (score >= 10) return 'Low';
+  return 'None';
+}
+
+function trendGrowthColor(growth: number): string {
+  if (growth >= 50) return 'text-emerald-600 dark:text-emerald-400';
+  if (growth >= 10) return 'text-emerald-500 dark:text-emerald-500';
+  if (growth >= -10) return 'text-gray-400';
+  return 'text-red-500 dark:text-red-400';
+}
+
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
 
 function ScoreRing({ score, size = 40 }: { score: number; size?: number }) {
   const color =
-    score >= 70
-      ? '#10b981'
-      : score >= 50
-      ? '#f59e0b'
-      : score >= 30
-      ? '#ef4444'
-      : '#9ca3af';
+    score >= 70 ? '#10b981' : score >= 50 ? '#f59e0b' : score >= 30 ? '#ef4444' : '#9ca3af';
   const ring =
     score >= 70
       ? 'border-emerald-500'
@@ -136,25 +152,30 @@ function DifficultyDots({ difficulty }: { difficulty: number }) {
   );
 }
 
-function TrendBadge({ trend }: { trend: number }) {
-  if (trend > 3)
+function TrendBadge({ trend, trendScore }: { trend: number; trendScore?: number }) {
+  // Prefer Google Trends score when available
+  const displayVal = trendScore != null && trendScore > 0 ? trendScore : Math.abs(trend);
+  const isRising = trendScore != null ? trendScore > 30 : trend > 3;
+  const isFalling = trendScore == null && trend < -3;
+
+  if (isRising)
     return (
       <span className="flex items-center gap-0.5 text-sm font-medium text-emerald-600 dark:text-emerald-400">
         <TrendingUp className="h-3 w-3" />
-        {trend.toFixed(1)}
+        {Math.round(displayVal)}
       </span>
     );
-  if (trend < -3)
+  if (isFalling)
     return (
       <span className="flex items-center gap-0.5 text-sm font-medium text-red-500 dark:text-red-400">
         <TrendingDown className="h-3 w-3" />
-        {Math.abs(trend).toFixed(1)}
+        {Math.round(displayVal)}
       </span>
     );
   return (
     <span className="flex items-center gap-0.5 text-sm text-gray-400">
       <Minus className="h-3 w-3" />
-      {Math.abs(trend).toFixed(1)}
+      {Math.round(displayVal)}
     </span>
   );
 }
@@ -168,13 +189,51 @@ function ClassBadge({ cls }: { cls: Classification }) {
   );
 }
 
-function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function StatCard({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: 'green' | 'amber' | 'red' }) {
+  const accentCls = accent === 'green'
+    ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/20'
+    : accent === 'amber'
+    ? 'border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/20'
+    : accent === 'red'
+    ? 'border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/20'
+    : 'border-gray-100 bg-gray-50 dark:border-gray-700 dark:bg-gray-800';
   return (
-    <div className="rounded-lg border border-gray-100 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800">
+    <div className={cn('rounded-lg border p-3', accentCls)}>
       <p className="text-xs text-gray-500 dark:text-gray-400">{label}</p>
       <p className="mt-0.5 text-lg font-bold text-gray-900 dark:text-white">{value}</p>
       {sub && <p className="text-xs text-gray-400">{sub}</p>}
     </div>
+  );
+}
+
+// Tiny sparkline for Google Trends interest
+function GoogleTrendsSparkline({ points }: { points: GoogleTrendWeekPoint[] }) {
+  if (!points || points.length < 2) return null;
+  return (
+    <ResponsiveContainer width="100%" height={60}>
+      <AreaChart data={points} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
+        <defs>
+          <linearGradient id="trendGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
+            <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <XAxis dataKey="date" hide />
+        <YAxis domain={[0, 100]} hide />
+        <Tooltip
+          formatter={(v: number) => [`${v}`, 'Interest']}
+          labelFormatter={(d) => d.slice(0, 10)}
+        />
+        <Area
+          type="monotone"
+          dataKey="interest"
+          stroke="#6366f1"
+          strokeWidth={1.5}
+          fill="url(#trendGradient)"
+          dot={false}
+        />
+      </AreaChart>
+    </ResponsiveContainer>
   );
 }
 
@@ -210,24 +269,17 @@ function KeywordDrawer({
       .finally(() => {
         if (alive) setLoading(false);
       });
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, [term]);
 
   const cls = (detail?.classification ?? 'medium') as Classification;
-  const cfg = CLS_CONFIG[cls] ?? CLS_CONFIG.medium;
-
   const hasTrend = (trend?.trend_points?.length ?? 0) > 1;
+  const hasGoogleTrend = (detail?.google_trend_points?.length ?? 0) > 1;
+  const hasRealTrendData = detail != null && (detail.trend_score > 0 || detail.trend_growth !== 0);
 
   return (
     <>
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm"
-        onClick={onClose}
-      />
-      {/* Drawer */}
+      <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm" onClick={onClose} />
       <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-lg flex-col bg-white shadow-2xl dark:bg-gray-900">
         {/* Header */}
         <div className="flex items-start justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-700">
@@ -236,17 +288,19 @@ function KeywordDrawer({
               <ClassBadge cls={cls} />
               {detail && (
                 <span className="text-xs text-gray-500">
-                  Opportunity {Math.round(detail.opportunity_score)} · Feasibility{' '}
-                  {Math.round(detail.feasibility_score)}
+                  Opp {Math.round(detail.opportunity_score)} · Feas {Math.round(detail.feasibility_score)}
+                </span>
+              )}
+              {hasRealTrendData && (
+                <span className="flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                  <Activity className="h-3 w-3" />
+                  Google Trends
                 </span>
               )}
             </div>
             <h2 className="truncate text-xl font-bold text-gray-900 dark:text-white">{term}</h2>
           </div>
-          <button
-            onClick={onClose}
-            className="ml-2 flex-shrink-0 rounded-lg p-2 hover:bg-gray-100 dark:hover:bg-gray-800"
-          >
+          <button onClick={onClose} className="ml-2 flex-shrink-0 rounded-lg p-2 hover:bg-gray-100 dark:hover:bg-gray-800">
             <X className="h-5 w-5 text-gray-500" />
           </button>
         </div>
@@ -255,7 +309,7 @@ function KeywordDrawer({
         <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5">
           {loading ? (
             <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, i) => (
+              {Array.from({ length: 6 }).map((_, i) => (
                 <div key={i} className="h-14 animate-pulse rounded-xl bg-gray-100 dark:bg-gray-800" />
               ))}
             </div>
@@ -265,21 +319,103 @@ function KeywordDrawer({
             </div>
           ) : (
             <>
-              {/* Key metrics */}
+              {/* Core metrics */}
               <div className="grid grid-cols-3 gap-2">
                 <StatCard label="Search Volume" value={fmtVolume(detail.search_volume)} />
                 <StatCard label="Difficulty" value={`${Math.round(detail.difficulty)}/100`} />
-                <StatCard label="Opp. Score" value={String(Math.round(detail.opportunity_score))} />
+                <StatCard label="Opp. Score" value={String(Math.round(detail.opportunity_score))}
+                  accent={detail.opportunity_score >= 60 ? 'green' : detail.opportunity_score >= 40 ? 'amber' : undefined} />
               </div>
               <div className="grid grid-cols-3 gap-2">
-                <StatCard label="Feasibility" value={String(Math.round(detail.feasibility_score))} />
+                <StatCard label="Feasibility" value={String(Math.round(detail.feasibility_score))}
+                  accent={detail.feasibility_score >= 60 ? 'green' : undefined} />
                 <StatCard
                   label="Ads Presence"
                   value={`${Math.round(detail.ads_presence * 100)}%`}
-                  sub={detail.ads_presence > 0.5 ? 'High competition' : 'Low competition'}
+                  sub={detail.ads_presence > 0.5 ? 'High ad density' : 'Low ad density'}
                 />
                 <StatCard label="Tracked Apps" value={String(detail.apps_count)} />
               </div>
+
+              {/* Google Trends signals panel */}
+              {hasRealTrendData && (
+                <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 dark:border-indigo-800 dark:bg-indigo-950/20">
+                  <div className="mb-3 flex items-center gap-2">
+                    <Activity className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                    <h3 className="text-sm font-semibold text-indigo-700 dark:text-indigo-300">Google Trends Signals</h3>
+                    {detail.last_enriched && (
+                      <span className="ml-auto text-xs text-indigo-400">
+                        Updated {new Date(detail.last_enriched).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <p className="text-xs text-indigo-500">Interest</p>
+                      <p className="font-bold text-indigo-700 dark:text-indigo-200">
+                        {Math.round(detail.trend_score)}/100
+                      </p>
+                      <p className="text-xs text-indigo-400">{trendScoreLabel(detail.trend_score)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-indigo-500">90-day Growth</p>
+                      <p className={cn('font-bold', trendGrowthColor(detail.trend_growth))}>
+                        {detail.trend_growth > 0 ? '+' : ''}{Math.round(detail.trend_growth)}%
+                      </p>
+                      <p className="text-xs text-indigo-400">vs prior period</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-indigo-500">Momentum</p>
+                      <p className={cn('font-bold', trendGrowthColor(detail.trend_velocity))}>
+                        {detail.trend_velocity > 0 ? '+' : ''}{Math.round(detail.trend_velocity)}%
+                      </p>
+                      <p className="text-xs text-indigo-400">last week vs avg</p>
+                    </div>
+                  </div>
+                  {/* Google Trends sparkline */}
+                  {hasGoogleTrend && (
+                    <div className="mt-3">
+                      <p className="mb-1 text-xs text-indigo-500">Interest Over Time (12 weeks)</p>
+                      <GoogleTrendsSparkline points={detail.google_trend_points} />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Market dominance */}
+              {detail.dominance_score > 0 && (
+                <div className="rounded-lg border border-gray-100 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800">
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <span className="text-xs font-semibold text-gray-600 dark:text-gray-400">
+                      Market Dominance
+                    </span>
+                    <span className={cn(
+                      'text-xs font-bold',
+                      detail.dominance_score >= 80 ? 'text-red-500' :
+                      detail.dominance_score >= 50 ? 'text-amber-500' : 'text-emerald-600'
+                    )}>
+                      {Math.round(detail.dominance_score)}/100
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+                    <div
+                      className={cn(
+                        'h-full rounded-full',
+                        detail.dominance_score >= 80 ? 'bg-red-500' :
+                        detail.dominance_score >= 50 ? 'bg-amber-500' : 'bg-emerald-500'
+                      )}
+                      style={{ width: `${detail.dominance_score}%` }}
+                    />
+                  </div>
+                  <p className="mt-1 text-xs text-gray-400">
+                    {detail.dominance_score >= 80
+                      ? 'Giant player dominates — very hard to enter'
+                      : detail.dominance_score >= 50
+                      ? 'Established player — requires strong differentiation'
+                      : 'No dominant player — good entry opportunity'}
+                  </p>
+                </div>
+              )}
 
               {/* Market fragmentation */}
               <div className="rounded-lg border border-gray-100 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800">
@@ -295,11 +431,8 @@ function KeywordDrawer({
                   <div
                     className={cn(
                       'h-full rounded-full',
-                      detail.market_fragmentation > 0.6
-                        ? 'bg-emerald-500'
-                        : detail.market_fragmentation > 0.3
-                        ? 'bg-amber-500'
-                        : 'bg-red-500'
+                      detail.market_fragmentation > 0.6 ? 'bg-emerald-500' :
+                      detail.market_fragmentation > 0.3 ? 'bg-amber-500' : 'bg-red-500'
                     )}
                     style={{ width: `${detail.market_fragmentation * 100}%` }}
                   />
@@ -313,51 +446,57 @@ function KeywordDrawer({
                 </p>
               </div>
 
-              {/* Trend chart */}
-              {hasTrend && (
-                <div>
-                  <h3 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">
-                    Average Ranking Position (30 days)
-                  </h3>
-                  <ResponsiveContainer width="100%" height={130}>
-                    <LineChart data={trend!.trend_points} margin={{ top: 4, right: 4, bottom: 4, left: -20 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                      <XAxis
-                        dataKey="date"
-                        tick={{ fontSize: 9 }}
-                        tickFormatter={(d) => d.slice(5)}
-                      />
-                      <YAxis reversed domain={[1, 20]} tick={{ fontSize: 9 }} />
-                      <Tooltip
-                        formatter={(v: number) => [`#${v.toFixed(1)}`, 'Avg Position']}
-                        labelFormatter={(l) => l}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="avg_position"
-                        stroke="#6366f1"
-                        strokeWidth={2}
-                        dot={false}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                  <p className="mt-1 text-xs text-center text-gray-400">Lower position = higher ranking</p>
+              {/* DataForSEO signals (when available) */}
+              {(detail.cpc > 0 || detail.competition_score > 0) && (
+                <div className="rounded-lg border border-gray-100 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800">
+                  <p className="mb-2 text-xs font-semibold text-gray-600 dark:text-gray-400">
+                    Search Ad Intelligence
+                  </p>
+                  <div className="flex gap-6">
+                    {detail.cpc > 0 && (
+                      <div>
+                        <p className="text-xs text-gray-500">Avg CPC</p>
+                        <p className="font-bold text-gray-900 dark:text-white">${detail.cpc.toFixed(2)}</p>
+                      </div>
+                    )}
+                    {detail.competition_score > 0 && (
+                      <div>
+                        <p className="text-xs text-gray-500">Ad Competition</p>
+                        <p className="font-bold text-gray-900 dark:text-white">{Math.round(detail.competition_score)}/100</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
-              {/* Ads intensity chart */}
+              {/* App Store position trend chart */}
+              {hasTrend && (
+                <div>
+                  <h3 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">
+                    App Store Ranking Position (30 days)
+                  </h3>
+                  <ResponsiveContainer width="100%" height={120}>
+                    <LineChart data={trend!.trend_points} margin={{ top: 4, right: 4, bottom: 4, left: -20 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                      <XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={(d) => d.slice(5)} />
+                      <YAxis reversed domain={[1, 20]} tick={{ fontSize: 9 }} />
+                      <Tooltip formatter={(v: number) => [`#${v.toFixed(1)}`, 'Avg Position']} labelFormatter={(l) => l} />
+                      <Line type="monotone" dataKey="avg_position" stroke="#6366f1" strokeWidth={2} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                  <p className="mt-1 text-xs text-center text-gray-400">Lower = higher ranking</p>
+                </div>
+              )}
+
+              {/* Ad intensity chart */}
               {hasTrend && (
                 <div>
                   <h3 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">
                     Ad Intensity Over Time
                   </h3>
-                  <ResponsiveContainer width="100%" height={90}>
+                  <ResponsiveContainer width="100%" height={80}>
                     <BarChart data={trend!.trend_points} margin={{ top: 4, right: 4, bottom: 4, left: -20 }}>
-                      <XAxis
-                        dataKey="date"
-                        tick={{ fontSize: 9 }}
-                        tickFormatter={(d) => d.slice(5)}
-                      />
+                      <XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={(d) => d.slice(5)} />
                       <YAxis tick={{ fontSize: 9 }} tickFormatter={(v) => `${Math.round(v * 100)}%`} />
                       <Tooltip formatter={(v: number) => [`${Math.round(v * 100)}%`, 'Sponsored']} />
                       <Bar dataKey="sponsored_ratio" fill="#f97316" radius={[2, 2, 0, 0]} />
@@ -379,11 +518,7 @@ function KeywordDrawer({
                         className="flex items-center gap-3 rounded-lg bg-gray-50 p-2.5 dark:bg-gray-800"
                       >
                         {comp.icon_url ? (
-                          <img
-                            src={comp.icon_url}
-                            alt=""
-                            className="h-8 w-8 flex-shrink-0 rounded-xl"
-                          />
+                          <img src={comp.icon_url} alt="" className="h-8 w-8 flex-shrink-0 rounded-xl" />
                         ) : (
                           <div className="h-8 w-8 flex-shrink-0 rounded-xl bg-gray-200 dark:bg-gray-700" />
                         )}
@@ -403,14 +538,10 @@ function KeywordDrawer({
                             </span>
                           )}
                           {comp.reviews != null && (
-                            <span className="text-xs text-gray-400">
-                              {fmtReviews(comp.reviews)}
-                            </span>
+                            <span className="text-xs text-gray-400">{fmtReviews(comp.reviews)}</span>
                           )}
                           {comp.rating != null && (
-                            <span className="text-xs text-amber-500">
-                              ★{comp.rating.toFixed(1)}
-                            </span>
+                            <span className="text-xs text-amber-500">★{comp.rating.toFixed(1)}</span>
                           )}
                         </div>
                       </div>
@@ -423,8 +554,8 @@ function KeywordDrawer({
               {detail.feature_gap_count > 0 && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/20">
                   <p className="text-sm text-amber-700 dark:text-amber-400">
-                    <span className="font-semibold">{detail.feature_gap_count}</span> user feature
-                    requests across apps competing for this keyword — opportunity to build what's missing.
+                    <span className="font-semibold">{detail.feature_gap_count}</span> user feature requests
+                    across competing apps — clear differentiation opportunity.
                   </p>
                 </div>
               )}
@@ -449,10 +580,9 @@ function KeywordDrawer({
                 </div>
               )}
 
-              {/* Last scanned */}
               {detail.last_scanned && (
                 <p className="text-xs text-gray-400">
-                  Last scanned: {new Date(detail.last_scanned).toLocaleString()}
+                  Last App Store scan: {new Date(detail.last_scanned).toLocaleString()}
                 </p>
               )}
             </>
@@ -467,14 +597,24 @@ function KeywordDrawer({
 // Sort control
 // ---------------------------------------------------------------------------
 
-type SortKey = 'opportunity_score' | 'feasibility_score' | 'search_volume' | 'difficulty' | 'trend' | 'apps_count';
+type SortKey =
+  | 'opportunity_score'
+  | 'feasibility_score'
+  | 'search_volume'
+  | 'difficulty'
+  | 'trend'
+  | 'trend_score'
+  | 'trend_growth'
+  | 'apps_count'
+  | 'dominance_score';
 
 const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: 'opportunity_score', label: 'Opportunity' },
   { key: 'feasibility_score', label: 'Feasibility' },
+  { key: 'trend_score', label: 'Trending' },
+  { key: 'trend_growth', label: 'Growth' },
   { key: 'search_volume', label: 'Volume' },
   { key: 'difficulty', label: 'Difficulty' },
-  { key: 'trend', label: 'Trend' },
   { key: 'apps_count', label: 'Competition' },
 ];
 
@@ -491,6 +631,7 @@ export default function KeywordsClient() {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(0);
   const [selectedTerm, setSelectedTerm] = useState<string | null>(null);
+  const [runningPipeline, setRunningPipeline] = useState(false);
   const limit = 50;
 
   const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -513,16 +654,13 @@ export default function KeywordsClient() {
         skip,
         limit,
       })
-        .then((r) => {
-          setData(r);
-        })
+        .then((r) => setData(r))
         .catch(() => setData({ keywords: [], total: 0, skip: 0, limit }))
         .finally(() => setLoading(false));
     },
     []
   );
 
-  // Initial load
   useEffect(() => {
     fetchData({ search, classification, sortBy, sortOrder, page });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -557,12 +695,26 @@ export default function KeywordsClient() {
     fetchData({ search, classification, sortBy, sortOrder, page: next });
   };
 
+  const handleRunPipeline = async () => {
+    setRunningPipeline(true);
+    try {
+      await triggerKeywordPipeline();
+      // Refresh after a short delay to pick up early results
+      setTimeout(() => {
+        fetchData({ search, classification, sortBy, sortOrder, page });
+        setRunningPipeline(false);
+      }, 3000);
+    } catch {
+      setRunningPipeline(false);
+    }
+  };
+
   const keywords = data.keywords ?? [];
   const totalPages = Math.ceil(data.total / limit);
 
-  // Stats for header row
   const easyCount = keywords.filter((k) => k.classification === 'easy').length;
-  const risingCount = keywords.filter((k) => k.trend > 3).length;
+  const risingCount = keywords.filter((k) => (k.trend_score ?? 0) > 30 || k.trend > 3).length;
+  const enrichedCount = keywords.filter((k) => (k.trend_score ?? 0) > 0).length;
   const avgDiff = keywords.length
     ? Math.round(keywords.reduce((s, k) => s + k.difficulty, 0) / keywords.length)
     : 0;
@@ -576,9 +728,22 @@ export default function KeywordsClient() {
             <div>
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Keywords</h1>
               <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                Keyword intelligence hub — discover, score, and prioritize App Store opportunities
+                Real keyword intelligence — Google Trends + App Store signals + unified scoring
               </p>
             </div>
+            <button
+              onClick={handleRunPipeline}
+              disabled={runningPipeline}
+              className={cn(
+                'flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors',
+                runningPipeline
+                  ? 'bg-indigo-100 text-indigo-400 cursor-not-allowed dark:bg-indigo-950 dark:text-indigo-600'
+                  : 'bg-indigo-600 text-white hover:bg-indigo-700'
+              )}
+            >
+              <RefreshCw className={cn('h-4 w-4', runningPipeline && 'animate-spin')} />
+              {runningPipeline ? 'Running…' : 'Refresh Intelligence'}
+            </button>
           </div>
 
           {/* Stats strip */}
@@ -596,6 +761,12 @@ export default function KeywordsClient() {
                 <p className="text-xs text-indigo-600 dark:text-indigo-400">Rising Demand</p>
                 <p className="text-xl font-bold text-indigo-700 dark:text-indigo-300">{risingCount}</p>
               </div>
+              {enrichedCount > 0 && (
+                <div className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-2.5 dark:border-violet-800 dark:bg-violet-950/30">
+                  <p className="text-xs text-violet-600 dark:text-violet-400">Google Trends Data</p>
+                  <p className="text-xl font-bold text-violet-700 dark:text-violet-300">{enrichedCount}</p>
+                </div>
+              )}
               <div className="rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-gray-700 dark:bg-gray-900">
                 <p className="text-xs text-gray-500">Avg Difficulty</p>
                 <p className="text-xl font-bold text-gray-900 dark:text-white">{avgDiff}</p>
@@ -722,7 +893,7 @@ export default function KeywordsClient() {
                         <p>
                           {search || classification
                             ? 'No keywords match your filters.'
-                            : 'No keywords tracked yet. Bootstrap the app to discover keywords.'}
+                            : 'No keywords yet — click "Refresh Intelligence" to discover keywords.'}
                         </p>
                       </td>
                     </tr>
@@ -733,12 +904,23 @@ export default function KeywordsClient() {
                         onClick={() => setSelectedTerm(kw.term)}
                         className={cn(
                           'cursor-pointer transition-colors hover:bg-indigo-50/50 dark:hover:bg-indigo-950/20',
-                          selectedTerm === kw.term &&
-                            'bg-indigo-50 dark:bg-indigo-950/30'
+                          selectedTerm === kw.term && 'bg-indigo-50 dark:bg-indigo-950/30'
                         )}
                       >
-                        <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">
-                          {kw.term}
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-gray-900 dark:text-white">{kw.term}</span>
+                            {kw.trend_score > 50 && (
+                              <span title="High Google Trends interest">
+                                <Activity className="h-3 w-3 text-indigo-400" />
+                              </span>
+                            )}
+                            {kw.trend_growth > 20 && (
+                              <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-xs text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400">
+                                +{Math.round(kw.trend_growth)}%
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-right text-gray-600 dark:text-gray-300">
                           {fmtVolume(kw.search_volume)}
@@ -749,7 +931,10 @@ export default function KeywordsClient() {
                           </div>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <TrendBadge trend={kw.trend} />
+                          <TrendBadge
+                            trend={kw.trend}
+                            trendScore={kw.trend_score > 0 ? kw.trend_score : undefined}
+                          />
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex justify-center">

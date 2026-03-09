@@ -341,6 +341,14 @@ class KeywordListItem(BaseModel):
     ads_presence: float  # 0.0–1.0 fraction of sponsored results
     feature_gap_count: int
     last_updated: Optional[datetime] = None
+    # External signal fields (populated by KeywordIntelligencePipeline)
+    trend_score: float = 0.0          # Google Trends average interest (0-100)
+    trend_growth: float = 0.0         # % growth last 4w vs prior 4w
+    trend_velocity: float = 0.0       # momentum: last week vs recent avg
+    dominance_score: float = 0.0      # top-app market dominance (0-100)
+    competition_score: float = 0.0    # DataForSEO competition index (0-100)
+    cpc: float = 0.0                  # cost per click (USD, from DataForSEO)
+    last_enriched: Optional[datetime] = None  # last external enrichment
 
 
 class KeywordListResponse(BaseModel):
@@ -348,6 +356,12 @@ class KeywordListResponse(BaseModel):
     total: int
     skip: int
     limit: int
+
+
+class GoogleTrendWeekPoint(BaseModel):
+    """Single weekly data point from Google Trends (for sparkline charts)."""
+    date: str           # ISO date string (Monday of week)
+    interest: int       # 0-100 relative interest
 
 
 class KeywordDetailResponse(BaseModel):
@@ -366,6 +380,15 @@ class KeywordDetailResponse(BaseModel):
     feature_gap_count: int
     market_fragmentation: float
     last_scanned: Optional[str] = None
+    # External signal fields
+    trend_score: float = 0.0
+    trend_growth: float = 0.0
+    trend_velocity: float = 0.0
+    dominance_score: float = 0.0
+    competition_score: float = 0.0
+    cpc: float = 0.0
+    last_enriched: Optional[datetime] = None
+    google_trend_points: List[GoogleTrendWeekPoint] = []  # sparkline data
 
 
 class KeywordTrendPoint(BaseModel):
@@ -378,6 +401,27 @@ class KeywordTrendPoint(BaseModel):
 class KeywordTrendResponse(BaseModel):
     term: str
     trend_points: List[KeywordTrendPoint]
+
+
+class TrendingKeywordItem(BaseModel):
+    """Keyword with strong rising trend signals — used on Trending/Opportunities pages."""
+    id: int
+    term: str
+    trend_score: float
+    trend_growth: float
+    trend_velocity: float
+    opportunity_score: float
+    feasibility_score: float
+    search_volume: int
+    difficulty: float
+    dominance_score: float
+    apps_count: int
+    classification: str
+
+
+class TrendingKeywordsResponse(BaseModel):
+    keywords: List[TrendingKeywordItem]
+    total: int
 
 
 class RankHistoryResponse(BaseModel):

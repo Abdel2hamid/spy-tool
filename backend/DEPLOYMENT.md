@@ -248,3 +248,85 @@ playwright install chromium
 # Start dev server
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
+
+---
+
+## Keyword Intelligence Pipeline
+
+The keyword intelligence pipeline enriches keywords with real demand signals from
+external sources. It runs automatically via the scheduler but can be triggered manually.
+
+### Environment Variables
+
+Add these to your Railway (or `.env`) environment:
+
+```env
+# Google Trends (enabled by default — no credentials needed)
+GOOGLE_TRENDS_ENABLED=true        # set to false if Google throttles pytrends
+
+# DataForSEO (optional — provides real search volumes)
+# Sign up free at https://dataforseo.com
+DATAFORSEO_ENABLED=false          # set to true to activate
+DATAFORSEO_USERNAME=your@email    # DataForSEO login email
+DATAFORSEO_PASSWORD=yourpassword  # DataForSEO API password
+```
+
+### What Each Source Provides
+
+| Source | Data | Cost | Rate Limit |
+|--------|------|------|------------|
+| Google Trends (pytrends) | trend_score, trend_growth, trend_velocity, weekly sparklines | Free | 5 keywords/request, ~2s delay |
+| Apple App Store (iTunes) | apps_count, dominance_score | Free | 10 concurrent, 0.5s delay |
+| DataForSEO | search_volume, difficulty, cpc, competition | ~$0.002/keyword | 50/batch |
+
+### Scheduler Jobs Added
+
+| Job ID | Interval | First Run | Purpose |
+|--------|----------|-----------|---------|
+| `keyword_intelligence` | 12h | +3min | Full pipeline: discover → trends → Apple → DataForSEO → score |
+| `keyword_scoring` | 6h | +70min | Score recompute only (no external API) |
+
+### Manual Trigger
+
+```bash
+curl -X POST https://your-backend.railway.app/api/v1/keywords/pipeline/run
+```
+
+Or click the "Refresh Intelligence" button on the Keywords page.
+
+### New Database Tables
+
+The pipeline creates these tables automatically on startup:
+
+```sql
+-- Weekly Google Trends interest data per keyword
+CREATE TABLE keyword_trends (
+    id SERIAL PRIMARY KEY,
+    keyword_id INTEGER REFERENCES keywords(id) ON DELETE CASCADE,
+    week_start TIMESTAMPTZ NOT NULL,
+    interest_score INTEGER DEFAULT 0,   -- 0-100 relative interest
+    captured_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (keyword_id, week_start)
+);
+```
+
+### Note for Existing Databases
+
+The `keywords` table gains 10 new columns. PostgreSQL `ALTER TABLE` is NOT run
+automatically by SQLAlchemy `create_all()` on existing tables. To add columns to
+a live Railway database:
+
+```sql
+ALTER TABLE keywords ADD COLUMN IF NOT EXISTS trend_score FLOAT DEFAULT 0;
+ALTER TABLE keywords ADD COLUMN IF NOT EXISTS trend_growth FLOAT DEFAULT 0;
+ALTER TABLE keywords ADD COLUMN IF NOT EXISTS trend_velocity FLOAT DEFAULT 0;
+ALTER TABLE keywords ADD COLUMN IF NOT EXISTS apps_count INTEGER DEFAULT 0;
+ALTER TABLE keywords ADD COLUMN IF NOT EXISTS dominance_score FLOAT DEFAULT 0;
+ALTER TABLE keywords ADD COLUMN IF NOT EXISTS competition_score FLOAT DEFAULT 0;
+ALTER TABLE keywords ADD COLUMN IF NOT EXISTS cpc FLOAT DEFAULT 0;
+ALTER TABLE keywords ADD COLUMN IF NOT EXISTS opportunity_score FLOAT DEFAULT 0;
+ALTER TABLE keywords ADD COLUMN IF NOT EXISTS feasibility_score FLOAT DEFAULT 0;
+ALTER TABLE keywords ADD COLUMN IF NOT EXISTS last_enriched TIMESTAMPTZ;
+```
+
+Run these once via Railway's Postgres console or a DB admin tool.

@@ -28,6 +28,9 @@ from app.models.schemas import (
     KeywordDetailResponse,
     KeywordTrendPoint,
     KeywordTrendResponse,
+    GoogleTrendWeekPoint,
+    TrendingKeywordItem,
+    TrendingKeywordsResponse,
     RankHistoryResponse,
     DashboardStatsResponse,
     ReviewResponse,
@@ -662,13 +665,20 @@ def get_keywords_enhanced(
     rows = q.limit(500).all()  # over-fetch; pagination applied after scoring
 
     items = []
-    for kw, apps_count in rows:
+    for kw, apps_count_raw in rows:
         vol = kw.search_volume or 0
         diff = float(kw.difficulty or 0)
         trend = float(kw.trend or 0)
-        opp = _kw_opportunity_score(vol, diff, trend, apps_count)
-        feas = _kw_feasibility_score(diff, apps_count, 0.0, 0, trend, False)
-        cls = _kw_classify(diff, apps_count, 0, False)
+        # Prefer pipeline-computed scores when available; fall back to legacy formulas
+        apps_count = int(kw.apps_count or 0) or int(apps_count_raw or 0)
+        opp = float(kw.opportunity_score or 0) or _kw_opportunity_score(vol, diff, trend, apps_count)
+        feas = float(kw.feasibility_score or 0) or _kw_feasibility_score(diff, apps_count, 0.0, 0, trend, False)
+        cls = _kw_classify(
+            diff,
+            apps_count,
+            0,
+            bool(kw.dominance_score and kw.dominance_score >= 80),
+        )
         items.append(
             KeywordListItem(
                 id=kw.id,
@@ -683,6 +693,14 @@ def get_keywords_enhanced(
                 ads_presence=0.0,
                 feature_gap_count=0,
                 last_updated=kw.last_updated,
+                # External signal fields
+                trend_score=float(kw.trend_score or 0),
+                trend_growth=float(kw.trend_growth or 0),
+                trend_velocity=float(kw.trend_velocity or 0),
+                dominance_score=float(kw.dominance_score or 0),
+                competition_score=float(kw.competition_score or 0),
+                cpc=float(kw.cpc or 0),
+                last_enriched=kw.last_enriched,
             )
         )
 
@@ -696,7 +714,10 @@ def get_keywords_enhanced(
         "opportunity_score": lambda x: x.opportunity_score,
         "feasibility_score": lambda x: x.feasibility_score,
         "trend": lambda x: x.trend,
+        "trend_score": lambda x: x.trend_score,
+        "trend_growth": lambda x: x.trend_growth,
         "apps_count": lambda x: x.apps_count,
+        "dominance_score": lambda x: x.dominance_score,
     }
     fn = _SORT_MAP.get(sort_by, lambda x: x.opportunity_score)
     items.sort(key=fn, reverse=(sort_order == "desc"))
@@ -707,6 +728,79 @@ def get_keywords_enhanced(
         skip=skip,
         limit=limit,
     )
+
+
+@router.get("/keywords/trending", response_model=TrendingKeywordsResponse)
+def get_trending_keywords(
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """
+    Returns keywords with the strongest rising trend signals (Google Trends velocity + score).
+    Used by Trending, Opportunities, and Niche Radar pages.
+    """
+    # Keywords with real trend data first; fall back to legacy trend field
+    rows = (
+        db.query(models.Keyword)
+        .filter(models.Keyword.opportunity_score > 0)
+        .order_by(
+            models.Keyword.trend_velocity.desc().nullslast(),
+            models.Keyword.trend_growth.desc().nullslast(),
+            models.Keyword.opportunity_score.desc().nullslast(),
+        )
+        .limit(limit * 2)  # over-fetch to allow classification filtering
+        .all()
+    )
+
+    items = []
+    for kw in rows:
+        apps_count = int(kw.apps_count or 0)
+        diff = float(kw.difficulty or 0)
+        dominance = float(kw.dominance_score or 0)
+        cls = _kw_classify(diff, apps_count, 0, dominance >= 80)
+        items.append(
+            TrendingKeywordItem(
+                id=kw.id,
+                term=kw.term,
+                trend_score=float(kw.trend_score or 0),
+                trend_growth=float(kw.trend_growth or 0),
+                trend_velocity=float(kw.trend_velocity or 0),
+                opportunity_score=float(kw.opportunity_score or 0),
+                feasibility_score=float(kw.feasibility_score or 0),
+                search_volume=int(kw.search_volume or 0),
+                difficulty=diff,
+                dominance_score=dominance,
+                apps_count=apps_count,
+                classification=cls,
+            )
+        )
+        if len(items) >= limit:
+            break
+
+    return TrendingKeywordsResponse(keywords=items, total=len(items))
+
+
+@router.post("/keywords/pipeline/run")
+async def trigger_keyword_pipeline(background_tasks: BackgroundTasks):
+    """
+    Manually trigger the full keyword intelligence pipeline.
+    Runs in the background; returns immediately with a status message.
+    """
+    async def _run():
+        from app.services.keyword_intelligence_pipeline import KeywordIntelligencePipeline
+        from app.database import SessionLocal
+        _db = SessionLocal()
+        try:
+            pipeline = KeywordIntelligencePipeline(_db)
+            summary = await pipeline.run_full_pipeline(max_keywords=300)
+            logger.info(f"Manual pipeline run complete: {summary}")
+        except Exception as e:
+            logger.error(f"Manual pipeline run failed: {e}")
+        finally:
+            _db.close()
+
+    background_tasks.add_task(asyncio.ensure_future, _run())
+    return {"status": "started", "message": "Keyword intelligence pipeline running in background"}
 
 
 @router.get("/keywords/{term}/detail", response_model=KeywordDetailResponse)
@@ -850,9 +944,47 @@ def get_keyword_detail(
                 ]
 
     top_reviews = max((c.reviews or 0 for c in top_competitors), default=0)
-    opp = _kw_opportunity_score(vol, diff, trend_val, apps_count)
-    feas = _kw_feasibility_score(diff, apps_count, ads_presence, feature_gap_count, trend_val, brand_dominated)
-    cls = _kw_classify(diff, apps_count, top_reviews, brand_dominated)
+
+    # Prefer pipeline-stored scores; fall back to legacy formulas
+    kw_apps_count = int(kw.apps_count or 0) if kw else 0
+    eff_apps_count = kw_apps_count or apps_count
+    kw_trend_score = float(kw.trend_score or 0) if kw else 0.0
+    kw_trend_growth = float(kw.trend_growth or 0) if kw else 0.0
+    kw_trend_velocity = float(kw.trend_velocity or 0) if kw else 0.0
+    kw_dominance = float(kw.dominance_score or 0) if kw else 0.0
+    kw_competition = float(kw.competition_score or 0) if kw else 0.0
+    kw_cpc = float(kw.cpc or 0) if kw else 0.0
+    kw_last_enriched = kw.last_enriched if kw else None
+
+    # Dominance from pipeline overrides brand detection for scoring
+    if kw_dominance >= 80:
+        brand_dominated = True
+
+    opp = float(kw.opportunity_score or 0) if kw else 0.0
+    if not opp:
+        opp = _kw_opportunity_score(vol, diff, trend_val, eff_apps_count)
+    feas = float(kw.feasibility_score or 0) if kw else 0.0
+    if not feas:
+        feas = _kw_feasibility_score(diff, eff_apps_count, ads_presence, feature_gap_count, trend_val, brand_dominated)
+    cls = _kw_classify(diff, eff_apps_count, top_reviews, brand_dominated)
+
+    # Google Trends sparkline points from keyword_trends table
+    google_trend_points: list = []
+    if kw_id:
+        trend_rows = (
+            db.query(models.KeywordTrend)
+            .filter(models.KeywordTrend.keyword_id == kw_id)
+            .order_by(models.KeywordTrend.week_start.asc())
+            .limit(16)
+            .all()
+        )
+        for tr in trend_rows:
+            google_trend_points.append(
+                GoogleTrendWeekPoint(
+                    date=tr.week_start.strftime("%Y-%m-%d"),
+                    interest=tr.interest_score or 0,
+                )
+            )
 
     return KeywordDetailResponse(
         id=kw_id,
@@ -863,13 +995,21 @@ def get_keyword_detail(
         opportunity_score=opp,
         feasibility_score=feas,
         classification=cls,
-        apps_count=apps_count,
+        apps_count=eff_apps_count,
         ads_presence=ads_presence,
         top_competitors=top_competitors,
         related_keywords=related_keywords,
         feature_gap_count=feature_gap_count,
         market_fragmentation=market_fragmentation,
         last_scanned=last_scanned,
+        trend_score=kw_trend_score,
+        trend_growth=kw_trend_growth,
+        trend_velocity=kw_trend_velocity,
+        dominance_score=kw_dominance,
+        competition_score=kw_competition,
+        cpc=kw_cpc,
+        last_enriched=kw_last_enriched,
+        google_trend_points=google_trend_points,
     )
 
 
