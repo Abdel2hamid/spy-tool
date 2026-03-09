@@ -781,26 +781,51 @@ def get_trending_keywords(
 
 
 @router.post("/keywords/pipeline/run")
-async def trigger_keyword_pipeline(background_tasks: BackgroundTasks):
+async def trigger_keyword_pipeline():
     """
     Manually trigger the full keyword intelligence pipeline.
-    Runs in the background; returns immediately with a status message.
+    Schedules the pipeline as a background asyncio task; returns immediately.
     """
     async def _run():
         from app.services.keyword_intelligence_pipeline import KeywordIntelligencePipeline
         from app.database import SessionLocal
         _db = SessionLocal()
         try:
+            logger.info("keyword_pipeline: manual run started")
             pipeline = KeywordIntelligencePipeline(_db)
             summary = await pipeline.run_full_pipeline(max_keywords=300)
-            logger.info(f"Manual pipeline run complete: {summary}")
+            logger.info(f"keyword_pipeline: manual run complete — {summary}")
         except Exception as e:
-            logger.error(f"Manual pipeline run failed: {e}")
+            logger.error(f"keyword_pipeline: manual run failed — {e}", exc_info=True)
         finally:
             _db.close()
 
-    background_tasks.add_task(asyncio.ensure_future, _run())
+    asyncio.create_task(_run())
     return {"status": "started", "message": "Keyword intelligence pipeline running in background"}
+
+
+@router.get("/keywords/pipeline/debug")
+def get_keyword_pipeline_debug(db: Session = Depends(get_db)):
+    """Return enrichment coverage stats for the keyword intelligence pipeline."""
+    from app.models.models import KeywordTrend
+    total = db.query(Keyword).count()
+    with_trend_score = db.query(Keyword).filter(Keyword.trend_score > 0).count()
+    with_trend_growth = db.query(Keyword).filter(Keyword.trend_growth != 0).count()
+    with_apple_data = db.query(Keyword).filter(Keyword.dominance_score > 0).count()
+    with_opportunity = db.query(Keyword).filter(Keyword.opportunity_score > 0).count()
+    with_feasibility = db.query(Keyword).filter(Keyword.feasibility_score > 0).count()
+    with_last_enriched = db.query(Keyword).filter(Keyword.last_enriched.isnot(None)).count()
+    trend_points = db.query(KeywordTrend).count()
+    return {
+        "total_keywords": total,
+        "with_trend_score": with_trend_score,
+        "with_trend_growth": with_trend_growth,
+        "with_apple_data": with_apple_data,
+        "with_opportunity_score": with_opportunity,
+        "with_feasibility_score": with_feasibility,
+        "with_last_enriched": with_last_enriched,
+        "trend_data_points": trend_points,
+    }
 
 
 @router.get("/keywords/{term}/detail", response_model=KeywordDetailResponse)

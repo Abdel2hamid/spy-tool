@@ -33,6 +33,27 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_app_freshness ON apps (freshness_score)",
     "CREATE INDEX IF NOT EXISTS idx_app_developer ON apps (developer)",
     "CREATE INDEX IF NOT EXISTS idx_app_primary_category ON apps (primary_category)",
+    # Keyword intelligence pipeline (Session 17)
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS trend_score FLOAT DEFAULT 0.0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS trend_growth FLOAT DEFAULT 0.0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS trend_velocity FLOAT DEFAULT 0.0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS apps_count INTEGER DEFAULT 0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS dominance_score FLOAT DEFAULT 0.0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS competition_score FLOAT DEFAULT 0.0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS cpc FLOAT DEFAULT 0.0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS opportunity_score FLOAT DEFAULT 0.0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS feasibility_score FLOAT DEFAULT 0.0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS last_enriched TIMESTAMPTZ",
+    # keyword_trends table (Session 17) — explicit DDL since create_all won't add new cols
+    """CREATE TABLE IF NOT EXISTS keyword_trends (
+        id SERIAL PRIMARY KEY,
+        keyword_id INTEGER NOT NULL REFERENCES keywords(id) ON DELETE CASCADE,
+        week_start TIMESTAMPTZ NOT NULL,
+        interest_score INTEGER DEFAULT 0,
+        captured_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(keyword_id, week_start)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_ktrend_keyword ON keyword_trends (keyword_id)",
 ]
 
 

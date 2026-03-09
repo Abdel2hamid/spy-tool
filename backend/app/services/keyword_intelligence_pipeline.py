@@ -738,6 +738,9 @@ class KeywordIntelligencePipeline:
         does not block subsequent phases.
         Returns summary dict.
         """
+        import time as _time
+        pipeline_start = _time.monotonic()
+
         summary = {
             "discovered": 0,
             "trends_updated": 0,
@@ -746,46 +749,58 @@ class KeywordIntelligencePipeline:
             "scored": 0,
         }
 
-        # Phase 1: Discover new keywords
+        logger.info("keyword_pipeline: [PHASE 1] keyword discovery — start")
+        t0 = _time.monotonic()
         try:
             summary["discovered"] = await self.discover_keywords()
         except Exception as e:
-            logger.error(f"Keyword discovery failed: {e}")
+            logger.error(f"keyword_pipeline: [PHASE 1] discovery failed — {e}", exc_info=True)
+        logger.info(f"keyword_pipeline: [PHASE 1] done in {_time.monotonic()-t0:.1f}s, discovered={summary['discovered']}")
 
         # Fetch all keywords up to max_keywords
         keywords = self.db.query(Keyword).limit(max_keywords).all()
+        logger.info(f"keyword_pipeline: loaded {len(keywords)} keywords for enrichment")
 
-        # Phase 2: Google Trends
+        logger.info("keyword_pipeline: [PHASE 2] Google Trends enrichment — start")
+        t0 = _time.monotonic()
         try:
             summary["trends_updated"] = self.enrich_with_trends(keywords)
         except Exception as e:
-            logger.error(f"Google Trends enrichment failed: {e}")
+            logger.error(f"keyword_pipeline: [PHASE 2] Google Trends failed — {e}", exc_info=True)
+        logger.info(f"keyword_pipeline: [PHASE 2] done in {_time.monotonic()-t0:.1f}s, updated={summary['trends_updated']}")
 
-        # Phase 3: Apple App Store signals
+        logger.info("keyword_pipeline: [PHASE 3] Apple signals enrichment — start")
+        t0 = _time.monotonic()
         try:
             summary["apple_updated"] = await self.enrich_with_apple_signals(keywords)
         except Exception as e:
-            logger.error(f"Apple signals enrichment failed: {e}")
+            logger.error(f"keyword_pipeline: [PHASE 3] Apple signals failed — {e}", exc_info=True)
+        logger.info(f"keyword_pipeline: [PHASE 3] done in {_time.monotonic()-t0:.1f}s, updated={summary['apple_updated']}")
 
         # Refresh keywords from DB before scoring (captures Apple signal updates)
         keywords = self.db.query(Keyword).limit(max_keywords).all()
 
-        # Phase 4: DataForSEO (optional)
+        logger.info("keyword_pipeline: [PHASE 4] DataForSEO enrichment — start")
+        t0 = _time.monotonic()
         try:
             summary["seo_updated"] = await self.enrich_with_dataforseo(keywords)
         except Exception as e:
-            logger.error(f"DataForSEO enrichment failed: {e}")
+            logger.error(f"keyword_pipeline: [PHASE 4] DataForSEO failed — {e}", exc_info=True)
+        logger.info(f"keyword_pipeline: [PHASE 4] done in {_time.monotonic()-t0:.1f}s, updated={summary['seo_updated']}")
 
         # Refresh again for scoring
         keywords = self.db.query(Keyword).limit(max_keywords).all()
 
-        # Phase 5: Recompute scores
+        logger.info("keyword_pipeline: [PHASE 5] score recompute — start")
+        t0 = _time.monotonic()
         try:
             summary["scored"] = self.recompute_scores(keywords)
         except Exception as e:
-            logger.error(f"Score recompute failed: {e}")
+            logger.error(f"keyword_pipeline: [PHASE 5] scoring failed — {e}", exc_info=True)
+        logger.info(f"keyword_pipeline: [PHASE 5] done in {_time.monotonic()-t0:.1f}s, scored={summary['scored']}")
 
-        logger.info(f"Keyword intelligence pipeline complete: {summary}")
+        elapsed = _time.monotonic() - pipeline_start
+        logger.info(f"keyword_pipeline: ALL PHASES COMPLETE in {elapsed:.1f}s — {summary}")
         return summary
 
     async def run_trends_only(self, max_keywords: int = 200) -> int:
