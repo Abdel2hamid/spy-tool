@@ -488,3 +488,40 @@ All three cases handled correctly:
 **Key Gotcha:** Bootstrap is idempotent — calling it twice while running returns 409. Calling it on a non-empty DB is safe (scrape/upsert logic skips existing records).
 
 ---
+
+
+---
+
+## Session: 2026-03-09 (Session 16 — Keywords Page Full Upgrade)
+
+**Summary:** Rewrote the Keywords page into a comprehensive keyword intelligence system with scoring, classification, competitor analysis, trend charts, and a detail drawer.
+
+**Features Added:**
+- Keyword classification: easy / medium / hard / impossible based on difficulty, apps_count, top competitor reviews, and brand domination
+- Opportunity Score (0–100): volume_pts(30) + difficulty_pts(30) + trend_pts(20) + competition_pts(20)
+- Feasibility Score (0–100): difficulty_inversion(25) + app_scarcity(25) + ads_clarity(20) + feature_gap_demand(15) + trend_momentum(15); -30 penalty if big-brand dominated
+- Brand exclusion: `_BIG_BRAND_DEVELOPERS` frozenset from engine.py; keywords dominated by Apple/Google/Meta/etc flagged as "impossible"
+- Keyword detail drawer: shows metrics grid, market fragmentation bar, position LineChart (reversed Y), ad intensity BarChart, top competitors with icons, feature gap alert, related keyword pills
+- Market fragmentation: `1.0 - max_single_app_share` from latest snapshot batch; high = fragmented/opportunity
+- Related keywords: find apps sharing the queried keyword, then collect their other keywords
+- Trend endpoint: Python-side grouping by day with `defaultdict` to avoid Boolean→Integer SQL cast complexity
+
+**New Backend Endpoints:**
+- `GET /keywords/enhanced` — enriched list with scoring, filter, sort, pagination; uses `apps_count_sq` subquery (single JOIN query)
+- `GET /keywords/{term}/detail` — full detail with competitors, related keywords, market fragmentation, last_scanned
+- `GET /keywords/{term}/trend` — position + sponsored_ratio trend data grouped by day
+
+**Files Modified:**
+- `backend/app/models/schemas.py` — Added 6 schemas: KeywordCompetitorItem, KeywordListItem, KeywordListResponse, KeywordDetailResponse, KeywordTrendPoint, KeywordTrendResponse
+- `backend/app/api/routes.py` — Added 4 helpers (_kw_opportunity_score, _kw_feasibility_score, _kw_classify, _is_big_brand_developer) + 3 new routes
+- `frontend/src/lib/api.ts` — Added 6 TypeScript interfaces + 3 API functions (getKeywordsEnhanced, getKeywordDetail, getKeywordTrend)
+- `frontend/src/app/keywords/page.tsx` — Simplified to pure `<KeywordsClient />` (removed server-side fetching)
+- `frontend/src/app/keywords/KeywordsClient.tsx` — Complete rewrite (~450 lines): ScoreRing, DifficultyDots, TrendBadge, ClassBadge sub-components; KeywordDrawer with Recharts LineChart + BarChart; 8-column table; debounced search (350ms); classification filter pills; sort controls with chevrons; pagination
+
+**Key Gotchas:**
+- `/keywords/enhanced` must be registered before any `{term}` param routes in FastAPI to avoid path conflicts
+- `ads_presence` is 0.0 in list endpoint (too expensive to compute per-keyword); fully computed in detail endpoint from latest snapshot batch
+- Recharts `LineChart` for position uses reversed Y-axis (`domain={['dataMax', 'dataMin']}`) — position 1 should appear at top
+- `apps_count_sq` subquery avoids N+1 queries for counting apps per keyword
+- `KeywordSearchSnapshot` `captured_at` index is critical for the "latest batch" window query in detail endpoint
+

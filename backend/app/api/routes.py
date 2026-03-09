@@ -22,6 +22,12 @@ from app.models.schemas import (
     TrendingAppResponse,
     OpportunityOfDayResponse,
     KeywordOpportunityResponse,
+    KeywordCompetitorItem,
+    KeywordListItem,
+    KeywordListResponse,
+    KeywordDetailResponse,
+    KeywordTrendPoint,
+    KeywordTrendResponse,
     RankHistoryResponse,
     DashboardStatsResponse,
     ReviewResponse,
@@ -41,7 +47,7 @@ from app.models.schemas import (
     ReviewIntelligenceResponse,
     AppAutopsyResponse,
 )
-from app.scoring.engine import ScoringEngine
+from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -533,6 +539,382 @@ def create_keyword(keyword: KeywordCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_keyword)
     return db_keyword
+
+
+# ---------------------------------------------------------------------------
+# Keyword Intelligence helpers
+# ---------------------------------------------------------------------------
+
+def _kw_opportunity_score(search_volume: int, difficulty: float, trend: float, apps_count: int) -> float:
+    """Composite keyword opportunity score 0–100."""
+    vol_pts = min(search_volume / 1000.0 * 3.0, 30.0)
+    diff_pts = (1.0 - difficulty / 100.0) * 30.0
+    trend_pts = min(max(trend, -10.0) + 10.0, 20.0)
+    if apps_count == 0:
+        comp_pts = 15.0
+    elif apps_count < 5:
+        comp_pts = 20.0
+    elif apps_count < 20:
+        comp_pts = 15.0
+    elif apps_count < 60:
+        comp_pts = 8.0
+    elif apps_count < 150:
+        comp_pts = 3.0
+    else:
+        comp_pts = 0.0
+    return round(min(vol_pts + diff_pts + trend_pts + comp_pts, 100.0), 1)
+
+
+def _kw_feasibility_score(
+    difficulty: float,
+    apps_count: int,
+    ads_presence: float,
+    feature_gap_count: int,
+    trend: float,
+    brand_dominated: bool,
+) -> float:
+    """Feasibility score 0–100 (can you actually win this keyword)."""
+    diff_pts = (1.0 - difficulty / 100.0) * 25.0
+    if apps_count < 5:
+        scar_pts = 25.0
+    elif apps_count < 15:
+        scar_pts = 20.0
+    elif apps_count < 40:
+        scar_pts = 12.0
+    elif apps_count < 100:
+        scar_pts = 5.0
+    else:
+        scar_pts = 0.0
+    ads_pts = (1.0 - min(ads_presence, 1.0)) * 20.0
+    gap_pts = min(feature_gap_count / 10.0 * 15.0, 15.0)
+    if trend > 5:
+        trend_pts = 15.0
+    elif trend > 0:
+        trend_pts = 10.0
+    elif trend > -5:
+        trend_pts = 5.0
+    else:
+        trend_pts = 0.0
+    score = diff_pts + scar_pts + ads_pts + gap_pts + trend_pts
+    if brand_dominated:
+        score = max(score - 30.0, 0.0)
+    return round(min(score, 100.0), 1)
+
+
+def _kw_classify(difficulty: float, apps_count: int, top_reviews: int, brand_dominated: bool) -> str:
+    if brand_dominated or difficulty > 80 or top_reviews > 500_000:
+        return "impossible"
+    if difficulty > 60 or top_reviews > 100_000 or apps_count > 150:
+        return "hard"
+    if difficulty > 30 or top_reviews > 10_000 or apps_count > 40:
+        return "medium"
+    return "easy"
+
+
+def _is_big_brand_developer(developer: str) -> bool:
+    dev_lower = (developer or "").strip().lower()
+    if dev_lower in _BIG_BRAND_DEVELOPERS:
+        return True
+    return any(len(b) > 5 and b in dev_lower for b in _BIG_BRAND_DEVELOPERS)
+
+
+# ---------------------------------------------------------------------------
+# Enhanced Keyword Intelligence Routes
+# ---------------------------------------------------------------------------
+
+@router.get("/keywords/enhanced", response_model=KeywordListResponse)
+def get_keywords_enhanced(
+    search: Optional[str] = Query(None),
+    classification: Optional[str] = Query(None),
+    sort_by: str = Query("opportunity_score"),
+    sort_order: str = Query("desc"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    min_volume: int = Query(0, ge=0),
+    max_difficulty: float = Query(100.0, ge=0, le=100),
+    db: Session = Depends(get_db),
+):
+    """Enhanced keyword list with opportunity/feasibility scoring and classification."""
+    # Apps-count per keyword via subquery
+    apps_count_sq = (
+        db.query(
+            models.AppKeyword.keyword_id,
+            func.count(models.AppKeyword.id).label("cnt"),
+        )
+        .group_by(models.AppKeyword.keyword_id)
+        .subquery("apps_cnt")
+    )
+
+    q = (
+        db.query(
+            models.Keyword,
+            func.coalesce(apps_count_sq.c.cnt, 0).label("apps_count"),
+        )
+        .outerjoin(apps_count_sq, apps_count_sq.c.keyword_id == models.Keyword.id)
+    )
+    if min_volume > 0:
+        q = q.filter(models.Keyword.search_volume >= min_volume)
+    if max_difficulty < 100:
+        q = q.filter(models.Keyword.difficulty <= max_difficulty)
+    if search:
+        q = q.filter(models.Keyword.term.ilike(f"%{search}%"))
+
+    rows = q.limit(500).all()  # over-fetch; pagination applied after scoring
+
+    items = []
+    for kw, apps_count in rows:
+        vol = kw.search_volume or 0
+        diff = float(kw.difficulty or 0)
+        trend = float(kw.trend or 0)
+        opp = _kw_opportunity_score(vol, diff, trend, apps_count)
+        feas = _kw_feasibility_score(diff, apps_count, 0.0, 0, trend, False)
+        cls = _kw_classify(diff, apps_count, 0, False)
+        items.append(
+            KeywordListItem(
+                id=kw.id,
+                term=kw.term,
+                search_volume=vol,
+                difficulty=diff,
+                trend=trend,
+                opportunity_score=opp,
+                feasibility_score=feas,
+                classification=cls,
+                apps_count=apps_count,
+                ads_presence=0.0,
+                feature_gap_count=0,
+                last_updated=kw.last_updated,
+            )
+        )
+
+    if classification:
+        items = [i for i in items if i.classification == classification]
+
+    _SORT_MAP = {
+        "term": lambda x: x.term.lower(),
+        "search_volume": lambda x: x.search_volume,
+        "difficulty": lambda x: x.difficulty,
+        "opportunity_score": lambda x: x.opportunity_score,
+        "feasibility_score": lambda x: x.feasibility_score,
+        "trend": lambda x: x.trend,
+        "apps_count": lambda x: x.apps_count,
+    }
+    fn = _SORT_MAP.get(sort_by, lambda x: x.opportunity_score)
+    items.sort(key=fn, reverse=(sort_order == "desc"))
+
+    return KeywordListResponse(
+        keywords=items[skip: skip + limit],
+        total=len(items),
+        skip=skip,
+        limit=limit,
+    )
+
+
+@router.get("/keywords/{term}/detail", response_model=KeywordDetailResponse)
+def get_keyword_detail(
+    term: str,
+    country: str = Query("us"),
+    db: Session = Depends(get_db),
+):
+    """Full keyword detail: competitors, ads presence, market fragmentation, related keywords."""
+    kw = db.query(models.Keyword).filter(models.Keyword.term == term).first()
+    vol = kw.search_volume if kw else 0
+    diff = float(kw.difficulty if kw else 0)
+    trend_val = float(kw.trend if kw else 0)
+    kw_id = kw.id if kw else None
+
+    apps_count = 0
+    if kw_id:
+        apps_count = (
+            db.query(func.count(models.AppKeyword.id))
+            .filter(models.AppKeyword.keyword_id == kw_id)
+            .scalar()
+        ) or 0
+
+    # Latest snapshot batch for this keyword
+    last_snap_time = (
+        db.query(func.max(models.KeywordSearchSnapshot.captured_at))
+        .filter(
+            models.KeywordSearchSnapshot.keyword == term,
+            models.KeywordSearchSnapshot.country == country,
+        )
+        .scalar()
+    )
+
+    top_competitors: list = []
+    ads_presence = 0.0
+    market_fragmentation = 0.5
+    last_scanned = None
+    brand_dominated = False
+
+    if last_snap_time:
+        last_scanned = last_snap_time.isoformat()
+        cutoff = last_snap_time - timedelta(hours=2)
+        latest_snaps = (
+            db.query(models.KeywordSearchSnapshot)
+            .filter(
+                models.KeywordSearchSnapshot.keyword == term,
+                models.KeywordSearchSnapshot.country == country,
+                models.KeywordSearchSnapshot.captured_at >= cutoff,
+            )
+            .order_by(models.KeywordSearchSnapshot.position)
+            .limit(20)
+            .all()
+        )
+
+        total_snaps = len(latest_snaps)
+        sponsored_count = sum(1 for s in latest_snaps if s.is_sponsored)
+        ads_presence = round(sponsored_count / total_snaps, 2) if total_snaps > 0 else 0.0
+
+        app_id_strs = [s.app_id for s in latest_snaps]
+        apps_by_id = {
+            a.app_id: a
+            for a in db.query(models.App).filter(models.App.app_id.in_(app_id_strs)).all()
+        }
+
+        appearances: dict = {}
+        for s in latest_snaps:
+            appearances[s.app_id] = appearances.get(s.app_id, 0) + 1
+        if appearances:
+            max_share = max(appearances.values()) / sum(appearances.values())
+            market_fragmentation = round(1.0 - max_share, 2)
+
+        for snap in latest_snaps[:12]:
+            app = apps_by_id.get(snap.app_id)
+            reviews = app.current_reviews if app else None
+            rating = app.current_rating if app else None
+            if app and _is_big_brand_developer(app.developer or ""):
+                brand_dominated = True
+            pos_weight = max(0, 10 - snap.position) / 10.0
+            rev_weight = min((reviews or 0) / 50_000.0, 1.0)
+            dom_score = round((pos_weight * 0.5 + rev_weight * 0.5) * 100.0, 1)
+            top_competitors.append(
+                KeywordCompetitorItem(
+                    app_id=snap.app_id,
+                    app_name=snap.app_name or "Unknown",
+                    developer=snap.developer or (app.developer if app else None),
+                    icon_url=snap.icon_url or (app.icon_url if app else None),
+                    position=snap.position,
+                    is_sponsored=snap.is_sponsored,
+                    reviews=reviews,
+                    rating=rating,
+                    dominance_score=dom_score,
+                )
+            )
+
+    # Feature gaps: aggregate across apps that rank for this keyword
+    feature_gap_count = 0
+    if kw_id:
+        app_ids_for_kw = [
+            ak.app_id
+            for ak in db.query(models.AppKeyword.app_id)
+            .filter(models.AppKeyword.keyword_id == kw_id)
+            .limit(50)
+            .all()
+        ]
+        if app_ids_for_kw:
+            feature_gap_count = (
+                db.query(func.count(models.FeatureGap.id))
+                .filter(models.FeatureGap.app_id.in_(app_ids_for_kw))
+                .scalar()
+            ) or 0
+
+    # Related keywords: keywords that share apps with this one
+    related_keywords: list = []
+    if kw_id:
+        shared_app_ids = [
+            ak.app_id
+            for ak in db.query(models.AppKeyword.app_id)
+            .filter(models.AppKeyword.keyword_id == kw_id)
+            .limit(20)
+            .all()
+        ]
+        if shared_app_ids:
+            rel_kw_ids = [
+                ak.keyword_id
+                for ak in db.query(models.AppKeyword.keyword_id)
+                .filter(
+                    models.AppKeyword.app_id.in_(shared_app_ids),
+                    models.AppKeyword.keyword_id != kw_id,
+                )
+                .distinct()
+                .limit(12)
+                .all()
+            ]
+            if rel_kw_ids:
+                related_keywords = [
+                    k.term
+                    for k in db.query(models.Keyword)
+                    .filter(models.Keyword.id.in_(rel_kw_ids))
+                    .limit(8)
+                    .all()
+                ]
+
+    top_reviews = max((c.reviews or 0 for c in top_competitors), default=0)
+    opp = _kw_opportunity_score(vol, diff, trend_val, apps_count)
+    feas = _kw_feasibility_score(diff, apps_count, ads_presence, feature_gap_count, trend_val, brand_dominated)
+    cls = _kw_classify(diff, apps_count, top_reviews, brand_dominated)
+
+    return KeywordDetailResponse(
+        id=kw_id,
+        term=term,
+        search_volume=vol,
+        difficulty=diff,
+        trend=trend_val,
+        opportunity_score=opp,
+        feasibility_score=feas,
+        classification=cls,
+        apps_count=apps_count,
+        ads_presence=ads_presence,
+        top_competitors=top_competitors,
+        related_keywords=related_keywords,
+        feature_gap_count=feature_gap_count,
+        market_fragmentation=market_fragmentation,
+        last_scanned=last_scanned,
+    )
+
+
+@router.get("/keywords/{term}/trend", response_model=KeywordTrendResponse)
+def get_keyword_trend_data(
+    term: str,
+    country: str = Query("us"),
+    days: int = Query(30, ge=7, le=90),
+    db: Session = Depends(get_db),
+):
+    """Keyword trend: daily apps_count, avg_position, sponsored_ratio over time."""
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    rows = (
+        db.query(models.KeywordSearchSnapshot)
+        .filter(
+            models.KeywordSearchSnapshot.keyword == term,
+            models.KeywordSearchSnapshot.country == country,
+            models.KeywordSearchSnapshot.captured_at >= cutoff,
+        )
+        .order_by(models.KeywordSearchSnapshot.captured_at)
+        .all()
+    )
+
+    from collections import defaultdict
+    day_data: dict = defaultdict(list)
+    for row in rows:
+        day = row.captured_at.strftime("%Y-%m-%d") if row.captured_at else "unknown"
+        day_data[day].append(row)
+
+    trend_points = []
+    for day in sorted(day_data.keys()):
+        day_rows = day_data[day]
+        app_ids = {r.app_id for r in day_rows}
+        sponsored = sum(1 for r in day_rows if r.is_sponsored)
+        avg_pos = sum(r.position for r in day_rows) / len(day_rows)
+        trend_points.append(
+            KeywordTrendPoint(
+                date=day,
+                apps_count=len(app_ids),
+                avg_position=round(avg_pos, 1),
+                sponsored_ratio=round(sponsored / len(day_rows), 2) if day_rows else 0.0,
+            )
+        )
+
+    return KeywordTrendResponse(term=term, trend_points=trend_points)
 
 
 @router.get("/opportunities", response_model=List[OpportunityResponse])

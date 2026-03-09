@@ -75,6 +75,63 @@ export interface KeywordOpportunity {
   current_apps: number;
 }
 
+// ---------------------------------------------------------------------------
+// Enhanced Keyword Intelligence types
+// ---------------------------------------------------------------------------
+
+export interface KeywordCompetitorItem {
+  app_id: string;
+  app_name: string;
+  developer: string | null;
+  icon_url: string | null;
+  position: number;
+  is_sponsored: boolean;
+  reviews: number | null;
+  rating: number | null;
+  dominance_score: number;
+}
+
+export interface KeywordListItem {
+  id: number;
+  term: string;
+  search_volume: number;
+  difficulty: number;
+  trend: number;
+  opportunity_score: number;
+  feasibility_score: number;
+  classification: 'easy' | 'medium' | 'hard' | 'impossible';
+  apps_count: number;
+  ads_presence: number;
+  feature_gap_count: number;
+  last_updated: string | null;
+}
+
+export interface KeywordListResponse {
+  keywords: KeywordListItem[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+export interface KeywordDetail extends KeywordListItem {
+  top_competitors: KeywordCompetitorItem[];
+  related_keywords: string[];
+  market_fragmentation: number;
+  last_scanned: string | null;
+}
+
+export interface KeywordTrendPoint {
+  date: string;
+  apps_count: number;
+  avg_position: number;
+  sponsored_ratio: number;
+}
+
+export interface KeywordTrendResponse {
+  term: string;
+  trend_points: KeywordTrendPoint[];
+}
+
 export interface RankHistory {
   dates: string[];
   ranks: number[];
@@ -357,6 +414,49 @@ export async function getCategories(): Promise<Category[]> {
 
 export async function getKeywords(limit: number = 50): Promise<Keyword[]> {
   return fetchApi<Keyword[]>(`/keywords?limit=${limit}`);
+}
+
+export async function getKeywordsEnhanced(params: {
+  search?: string;
+  classification?: string;
+  sort_by?: string;
+  sort_order?: string;
+  skip?: number;
+  limit?: number;
+  min_volume?: number;
+  max_difficulty?: number;
+}): Promise<KeywordListResponse> {
+  const q = new URLSearchParams();
+  if (params.search) q.set('search', params.search);
+  if (params.classification) q.set('classification', params.classification);
+  if (params.sort_by) q.set('sort_by', params.sort_by);
+  if (params.sort_order) q.set('sort_order', params.sort_order);
+  if (params.skip != null) q.set('skip', String(params.skip));
+  if (params.limit != null) q.set('limit', String(params.limit));
+  if (params.min_volume != null) q.set('min_volume', String(params.min_volume));
+  if (params.max_difficulty != null) q.set('max_difficulty', String(params.max_difficulty));
+  const res = await fetch(`${API_BASE}/keywords/enhanced?${q}`, { cache: 'no-store' });
+  if (!res.ok) return { keywords: [], total: 0, skip: 0, limit: 50 };
+  const data = await res.json();
+  return {
+    keywords: Array.isArray(data?.keywords) ? data.keywords : [],
+    total: data?.total ?? 0,
+    skip: data?.skip ?? 0,
+    limit: data?.limit ?? 50,
+  };
+}
+
+export async function getKeywordDetail(term: string): Promise<KeywordDetail | null> {
+  const res = await fetch(`${API_BASE}/keywords/${encodeURIComponent(term)}/detail`, { cache: 'no-store' });
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function getKeywordTrend(term: string, days = 30): Promise<KeywordTrendResponse> {
+  const res = await fetch(`${API_BASE}/keywords/${encodeURIComponent(term)}/trend?days=${days}`, { cache: 'no-store' });
+  if (!res.ok) return { term, trend_points: [] };
+  const data = await res.json();
+  return { term: data?.term ?? term, trend_points: Array.isArray(data?.trend_points) ? data.trend_points : [] };
 }
 
 export async function getRankings(

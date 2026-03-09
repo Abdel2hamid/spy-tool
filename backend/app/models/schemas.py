@@ -312,6 +312,74 @@ class KeywordOpportunityResponse(BaseModel):
     current_apps: int
 
 
+# ---------------------------------------------------------------------------
+# Enhanced Keyword Intelligence (keyword intelligence module)
+# ---------------------------------------------------------------------------
+
+class KeywordCompetitorItem(BaseModel):
+    app_id: str
+    app_name: str
+    developer: Optional[str] = None
+    icon_url: Optional[str] = None
+    position: int
+    is_sponsored: bool
+    reviews: Optional[int] = None
+    rating: Optional[float] = None
+    dominance_score: float = 0.0
+
+
+class KeywordListItem(BaseModel):
+    id: int
+    term: str
+    search_volume: int
+    difficulty: float
+    trend: float
+    opportunity_score: float
+    feasibility_score: float
+    classification: str  # 'easy' | 'medium' | 'hard' | 'impossible'
+    apps_count: int
+    ads_presence: float  # 0.0–1.0 fraction of sponsored results
+    feature_gap_count: int
+    last_updated: Optional[datetime] = None
+
+
+class KeywordListResponse(BaseModel):
+    keywords: List[KeywordListItem]
+    total: int
+    skip: int
+    limit: int
+
+
+class KeywordDetailResponse(BaseModel):
+    id: Optional[int] = None
+    term: str
+    search_volume: int
+    difficulty: float
+    trend: float
+    opportunity_score: float
+    feasibility_score: float
+    classification: str
+    apps_count: int
+    ads_presence: float
+    top_competitors: List[KeywordCompetitorItem]
+    related_keywords: List[str]
+    feature_gap_count: int
+    market_fragmentation: float
+    last_scanned: Optional[str] = None
+
+
+class KeywordTrendPoint(BaseModel):
+    date: str
+    apps_count: int
+    avg_position: float
+    sponsored_ratio: float
+
+
+class KeywordTrendResponse(BaseModel):
+    term: str
+    trend_points: List[KeywordTrendPoint]
+
+
 class RankHistoryResponse(BaseModel):
     dates: List[str]
     ranks: List[int]
