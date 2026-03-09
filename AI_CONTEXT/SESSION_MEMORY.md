@@ -217,3 +217,32 @@ Also created: `PRODUCT_STRATEGY_REPORT.md` at repository root (product strategy 
 **Key Gotcha (corrected):** When the Railway service root is set to `backend/`, Nixpacks resolves all config files relative to `backend/`. A `runtime.txt` at the repo root is ignored. All three version-pin files (`runtime.txt`, `.python-version`, `nixpacks.toml`) must live inside `backend/`. `nixpacks.toml` is the most reliable override because it explicitly sets the Nix package (`python311`) and the start command.
 
 ---
+
+## Session: 2026-03-09 (Session 8 — Dashboard API Mismatch Fix)
+
+**Summary:** Fixed dashboard showing no data on Railway due to Next.js rewrite proxy pointing to hardcoded `localhost:8000` instead of the deployed backend URL.
+
+**Root Cause:**
+- Browser calls relative URLs: `fetch('/api/v1/dashboard/stats')`
+- `next.config.js` rewrites `/api/:path*` → `http://localhost:8000/api/:path*`
+- On Railway, `localhost:8000` is unreachable (backend is a separate service at a different URL)
+- All API calls silently failed; dashboard `.catch()` returned zeros — looked like "no data"
+- "Direct requests to guessed endpoints return `{"detail":"Not Found"}`" = manual tests hit the backend without the `/api/v1` prefix
+
+**Fix:**
+- `frontend/next.config.js`: rewrite destination changed from hardcoded `http://localhost:8000` to `${process.env.BACKEND_URL || 'http://localhost:8000'}/api/:path*`
+- `BACKEND_URL` is a **server-side** env var (NOT `NEXT_PUBLIC_`) — set it in Railway Frontend service to the backend Railway URL (no trailing slash, no `/api/v1`)
+
+**Files Modified:**
+- `frontend/next.config.js` — rewrite destination now uses `BACKEND_URL` env var
+- `backend/DEPLOYMENT.md` — added Frontend service variables section explaining `BACKEND_URL`
+
+**Key Gotchas:**
+- `BACKEND_URL` must NOT include trailing slash or path: `https://backend-xxx.railway.app` ✓
+- `NEXT_PUBLIC_API_URL` should NOT be set on Railway (leave unset so it defaults to `/api/v1`)
+- If `NEXT_PUBLIC_API_URL` IS set, it must include `/api/v1`: `https://backend-xxx.railway.app/api/v1`; without it every endpoint returns 404
+- All routing is: Browser → `/api/v1/X` → Next.js proxy → `$BACKEND_URL/api/v1/X` → FastAPI
+
+**Next Railway Step:** In Railway → Frontend Service → Variables, add `BACKEND_URL=https://your-backend-service.railway.app` then redeploy the frontend.
+
+---

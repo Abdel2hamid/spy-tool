@@ -70,7 +70,9 @@ Set this in **Railway → Service → Settings → Deploy → Start Command**.
 
 ## Required Environment Variables
 
-Set these in **Railway → Service → Variables**:
+### Backend service variables
+
+Set these in **Railway → Backend Service → Variables**:
 
 | Variable | Example | Notes |
 |----------|---------|-------|
@@ -82,6 +84,25 @@ Set these in **Railway → Service → Variables**:
 The `DATABASE_URL` from Railway Postgres is in the format
 `postgresql://...` — the app strips any `+asyncpg` suffix automatically,
 so both formats work.
+
+### Frontend service variables
+
+Set these in **Railway → Frontend Service → Variables**:
+
+| Variable | Example | Notes |
+|----------|---------|-------|
+| `BACKEND_URL` | `https://backend-production-xxxx.railway.app` | **Required** — no trailing slash, no `/api/v1` |
+
+`BACKEND_URL` is a **server-side** env var read by `next.config.js` at runtime to
+proxy `/api/*` requests to the backend. Do not prefix it with `NEXT_PUBLIC_`.
+
+**Important:** The frontend browser code always calls relative URLs (`/api/v1/...`).
+The Next.js server rewrites those to `$BACKEND_URL/api/v1/...` on the server side.
+You do NOT need to set `NEXT_PUBLIC_API_URL` on Railway — leave it unset.
+
+If you set `NEXT_PUBLIC_API_URL` on Railway, it must include the full path with
+`/api/v1` (e.g. `https://backend-xxx.railway.app/api/v1`), otherwise all
+endpoint calls will 404 because they append routes like `/dashboard/stats` to it.
 
 ---
 
