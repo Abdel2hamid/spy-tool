@@ -394,15 +394,20 @@ export async function getFilteredApps(filters: AppFilters = {}): Promise<AppList
 // ---------------------------------------------------------------------------
 
 async function fetchApi<T>(endpoint: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${endpoint}`, {
-    next: { revalidate: 60 },
-  });
-  
-  if (!res.ok) {
-    throw new Error(`API error: ${res.status}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const res = await fetch(`${API_BASE}${endpoint}`, {
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      throw new Error(`API error: ${res.status}`);
+    }
+    return res.json();
+  } finally {
+    clearTimeout(timeout);
   }
-  
-  return res.json();
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {

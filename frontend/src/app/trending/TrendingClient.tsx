@@ -1,19 +1,23 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AppShell } from '@/components';
 import { TrendingAppCard } from '@/components/TrendingAppCard';
-import { TrendingApp } from '@/lib/api';
+import { TrendingApp, getTrendingApps } from '@/lib/api';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { TrendingUp, Search } from 'lucide-react';
 
-interface TrendingClientProps {
-  initialApps: TrendingApp[];
-}
-
-export default function TrendingClient({ initialApps }: TrendingClientProps) {
-  const [apps] = useState<TrendingApp[]>(Array.isArray(initialApps) ? initialApps : []);
+export default function TrendingClient() {
+  const [apps, setApps] = useState<TrendingApp[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    getTrendingApps(20)
+      .then((data) => setApps(Array.isArray(data) ? data : []))
+      .catch(() => setApps([]))
+      .finally(() => setLoading(false));
+  }, []);
 
   const filteredApps = apps.filter((app) =>
     (app.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -46,7 +50,13 @@ export default function TrendingClient({ initialApps }: TrendingClientProps) {
           </div>
         </div>
 
-        {filteredApps.length > 0 ? (
+        {loading ? (
+          <div className="space-y-3">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="h-20 animate-pulse rounded-xl bg-gray-200 dark:bg-gray-800" />
+            ))}
+          </div>
+        ) : filteredApps.length > 0 ? (
           <div className="space-y-3">
             {filteredApps.map((app) => (
               <TrendingAppCard key={app.id} app={app} />

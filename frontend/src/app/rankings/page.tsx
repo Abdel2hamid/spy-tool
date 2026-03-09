@@ -1,5 +1,7 @@
 'use client';
 
+export const dynamic = 'force-dynamic';
+
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components';
 import { getRankHistory, RankHistory, getApps, App } from '@/lib/api';

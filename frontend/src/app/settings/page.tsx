@@ -1,5 +1,7 @@
 'use client';
 
+export const dynamic = 'force-dynamic';
+
 import { useState } from 'react';
 import { AppShell } from '@/components';
 import { Settings, Database, Bell, Shield, Palette, RefreshCw } from 'lucide-react';

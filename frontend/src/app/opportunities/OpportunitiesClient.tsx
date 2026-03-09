@@ -1,30 +1,52 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { AppShell } from '@/components';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { OpportunityOfDayCard } from '@/components/OpportunityOfDayCard';
 import { SimpleChart } from '@/components/Charts';
-import { OpportunityOfDay, KeywordOpportunity } from '@/lib/api';
+import { OpportunityOfDay, KeywordOpportunity, getOpportunityOfDay, getKeywordOpportunities } from '@/lib/api';
 import { Search, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-interface OpportunitiesClientProps {
-  initialOpportunity: OpportunityOfDay | null;
-  initialKeywordOpps: KeywordOpportunity[];
-}
+export default function OpportunitiesClient() {
+  const [opportunity, setOpportunity] = useState<OpportunityOfDay | null>(null);
+  const [keywordOpportunities, setKeywordOpportunities] = useState<KeywordOpportunity[]>([]);
+  const [loading, setLoading] = useState(true);
 
-export default function OpportunitiesClient({ 
-  initialOpportunity, 
-  initialKeywordOpps 
-}: OpportunitiesClientProps) {
-  const opportunity = initialOpportunity;
-  const keywordOpportunities = Array.isArray(initialKeywordOpps) ? initialKeywordOpps : [];
+  useEffect(() => {
+    async function fetchData() {
+      const [opp, kwOpps] = await Promise.all([
+        getOpportunityOfDay().catch(() => null),
+        getKeywordOpportunities().then((r) => (Array.isArray(r) ? r : [])).catch(() => []),
+      ]);
+      setOpportunity(opp ?? null);
+      setKeywordOpportunities(kwOpps);
+      setLoading(false);
+    }
+    fetchData();
+  }, []);
 
   const chartData = keywordOpportunities.map((kw) => ({
     name: (kw.keyword || '').slice(0, 12),
     score: kw.opportunity_score || 0,
     difficulty: kw.difficulty || 0,
   }));
+
+  if (loading) {
+    return (
+      <AppShell>
+        <div className="space-y-6">
+          <div className="h-8 w-48 animate-pulse rounded bg-gray-200 dark:bg-gray-800" />
+          <div className="h-48 animate-pulse rounded-xl bg-gray-200 dark:bg-gray-800" />
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <div className="h-64 animate-pulse rounded-xl bg-gray-200 dark:bg-gray-800" />
+            <div className="h-64 animate-pulse rounded-xl bg-gray-200 dark:bg-gray-800" />
+          </div>
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
     <ErrorBoundary>

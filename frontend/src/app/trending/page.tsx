@@ -1,16 +1,7 @@
-import { getTrendingApps } from '@/lib/api';
+export const dynamic = 'force-dynamic';
+
 import TrendingClient from './TrendingClient';
 
-async function getData() {
-  try {
-    const trending = await getTrendingApps(20);
-    return { trending: Array.isArray(trending) ? trending : [] };
-  } catch {
-    return { trending: [] };
-  }
-}
-
-export default async function Page() {
-  const { trending } = await getData();
-  return <TrendingClient initialApps={trending} />;
+export default function Page() {
+  return <TrendingClient />;
 }
