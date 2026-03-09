@@ -213,18 +213,32 @@ class GoogleTrendsCollector:
         if len(keywords) > 5:
             keywords = keywords[:5]
 
+        logger.info(f"GoogleTrends: fetching batch of {len(keywords)}: {keywords}")
+
         try:
             pt = self._get_pytrends()
             pt.build_payload(keywords, cat=0, timeframe=timeframe, geo="US")
             df = pt.interest_over_time()
         except ImportError:
+            logger.error("GoogleTrends: pytrends NOT INSTALLED — run: pip install pytrends==4.9.2")
             return {}
         except Exception as e:
-            logger.warning(f"Google Trends fetch failed for {keywords}: {e}")
+            logger.error(
+                f"GoogleTrends: FETCH FAILED for {keywords} — {type(e).__name__}: {e}. "
+                "This often means Google is rate-limiting or blocking this IP (common on cloud hosts)."
+            )
             return {}
 
         if df is None or df.empty:
+            logger.warning(
+                f"GoogleTrends: EMPTY DataFrame for {keywords} — "
+                "Google may be blocking this IP, returning no data, or the keywords have zero search interest."
+            )
             return {}
+
+        missing = [kw for kw in keywords if kw not in df.columns]
+        if missing:
+            logger.warning(f"GoogleTrends: keywords missing from response columns: {missing} (got: {list(df.columns)})")
 
         results = {}
         for kw in keywords:
@@ -543,12 +557,15 @@ class KeywordIntelligencePipeline:
             logger.info("All keywords have fresh trend data — skipping")
             return 0
 
-        logger.info(f"Enriching {len(stale)} keywords with Google Trends (batches of 5)")
+        logger.info(f"GoogleTrends: enriching {len(stale)} stale keywords in batches of 5")
         updated = 0
+        batch_num = 0
 
         for i in range(0, len(stale), 5):
             batch = stale[i:i + 5]
             terms = [kw.term for kw in batch]
+            batch_num += 1
+            batch_hits = 0
             try:
                 trend_data = self.trends_collector.fetch_batch(terms)
                 for kw in batch:
@@ -560,20 +577,30 @@ class KeywordIntelligencePipeline:
                         kw.last_enriched = datetime.utcnow()
                         self._save_trend_points(kw.id, data.get("weekly_data", []))
                         updated += 1
+                        batch_hits += 1
+                        logger.debug(
+                            f"GoogleTrends: '{kw.term}' → score={data['trend_score']:.1f} "
+                            f"growth={data['trend_growth']:.1f} velocity={data['trend_velocity']:.1f} "
+                            f"points={len(data.get('weekly_data', []))}"
+                        )
+                    else:
+                        logger.debug(f"GoogleTrends: '{kw.term}' → NO DATA returned")
                 self.db.commit()
+                logger.info(f"GoogleTrends: batch {batch_num} done — {batch_hits}/{len(batch)} keywords got data, committed")
             except Exception as e:
-                logger.warning(f"Trends batch {terms} failed: {e}")
+                logger.error(f"GoogleTrends: batch {batch_num} {terms} EXCEPTION: {type(e).__name__}: {e}", exc_info=True)
                 try:
                     self.db.rollback()
                 except Exception:
                     pass
                 time.sleep(5.0)
 
-        logger.info(f"Google Trends enrichment: {updated}/{len(stale)} keywords updated")
+        logger.info(f"GoogleTrends enrichment complete: {updated}/{len(stale)} keywords updated")
         return updated
 
     def _save_trend_points(self, keyword_id: int, weekly_data: List[Dict]):
         """Upsert weekly trend data points into keyword_trends table."""
+        saved = 0
         for point in weekly_data:
             date_str = point.get("date")
             interest = point.get("interest", 0)
@@ -582,6 +609,7 @@ class KeywordIntelligencePipeline:
             try:
                 week_start = datetime.strptime(date_str, "%Y-%m-%d")
             except ValueError:
+                logger.warning(f"Trend point: bad date format '{date_str}' for kw_id={keyword_id}")
                 continue
             try:
                 stmt = (
@@ -597,8 +625,11 @@ class KeywordIntelligencePipeline:
                     )
                 )
                 self.db.execute(stmt)
+                saved += 1
             except Exception as e:
-                logger.warning(f"Trend point save failed (kw_id={keyword_id}, date={date_str}): {e}")
+                logger.error(f"Trend point save FAILED (kw_id={keyword_id}, date={date_str}): {type(e).__name__}: {e}")
+        if saved:
+            logger.debug(f"Trend points: queued {saved} upserts for kw_id={keyword_id}")
 
     # ------------------------------------------------------------------
     # Phase 3: Apple App Store signal enrichment
@@ -607,35 +638,67 @@ class KeywordIntelligencePipeline:
     async def enrich_with_apple_signals(self, keywords: List[Keyword]) -> int:
         """
         Fetch iTunes search signals for each keyword concurrently (chunks of 10).
-        Returns count of keywords updated.
+        Sets last_enriched on every processed keyword (marks pipeline attempt).
+        Returns count of keywords that received Apple data.
         """
         updated = 0
+        batch_num = 0
+        logger.info(f"Apple signals: enriching {len(keywords)} keywords in batches of 10")
 
         for i in range(0, len(keywords), 10):
             batch = keywords[i:i + 10]
+            batch_num += 1
             tasks = [self.apple_collector.fetch(kw.term) for kw in batch]
             try:
                 results = await asyncio.gather(*tasks, return_exceptions=True)
+                batch_success = 0
+                batch_errors = 0
+                batch_empty = 0
+                now = datetime.utcnow()
+
                 for kw, result in zip(batch, results):
                     if isinstance(result, Exception):
-                        logger.warning(f"Apple signals failed for '{kw.term}': {result}")
+                        logger.warning(f"Apple signals: '{kw.term}' raised {type(result).__name__}: {result}")
+                        batch_errors += 1
                         continue
+
+                    # Mark this keyword as pipeline-processed regardless of iTunes results
+                    kw.last_enriched = now
+
                     if not result:
+                        # Empty dict = HTTP error from iTunes
+                        logger.warning(f"Apple signals: '{kw.term}' → HTTP error (empty result from iTunes)")
+                        batch_empty += 1
                         continue
-                    kw.dominance_score = result.get("dominance_score", 0.0)
+
+                    apps_count = result.get("apps_count", 0)
+                    dominance = result.get("dominance_score", 0.0)
+                    kw.dominance_score = dominance
                     # Use max of stored vs fresh apps_count
-                    kw.apps_count = max(kw.apps_count or 0, result.get("apps_count", 0))
+                    kw.apps_count = max(kw.apps_count or 0, apps_count)
                     updated += 1
+                    batch_success += 1
+
+                    logger.debug(
+                        f"Apple signals: '{kw.term}' → apps_count={apps_count} "
+                        f"dominance={dominance:.1f} top_app='{result.get('top_app_name', '')}'"
+                    )
+
                 self.db.commit()
+                logger.info(
+                    f"Apple signals: batch {batch_num} ({len(batch)} keywords) — "
+                    f"{batch_success} enriched, {batch_empty} empty iTunes results, "
+                    f"{batch_errors} errors — committed"
+                )
             except Exception as e:
-                logger.warning(f"Apple signals batch failed: {e}")
+                logger.error(f"Apple signals: batch {batch_num} EXCEPTION: {type(e).__name__}: {e}", exc_info=True)
                 try:
                     self.db.rollback()
                 except Exception:
                     pass
             await asyncio.sleep(0.5)
 
-        logger.info(f"Apple signals enrichment: {updated}/{len(keywords)} keywords updated")
+        logger.info(f"Apple signals enrichment complete: {updated}/{len(keywords)} keywords received data")
         return updated
 
     # ------------------------------------------------------------------
@@ -700,7 +763,11 @@ class KeywordIntelligencePipeline:
         using whatever signals are available (graceful fallback).
         Returns count of keywords scored.
         """
+        logger.info(f"recompute_scores: scoring {len(keywords)} keywords")
         updated = 0
+        failed = 0
+        high_opp = 0  # opportunity_score >= 40
+
         for kw in keywords:
             try:
                 opp = _compute_opportunity_score(
@@ -720,11 +787,28 @@ class KeywordIntelligencePipeline:
                 kw.opportunity_score = opp
                 kw.feasibility_score = feas
                 updated += 1
+                if opp >= 40:
+                    high_opp += 1
+                logger.debug(
+                    f"recompute_scores: '{kw.term}' → opp={opp:.1f} feas={feas:.1f} "
+                    f"(trend={kw.trend_score or 0:.1f} apps={kw.apps_count or 0} dom={kw.dominance_score or 0:.1f})"
+                )
             except Exception as e:
-                logger.warning(f"Score recompute failed for '{kw.term}': {e}")
+                failed += 1
+                logger.error(f"recompute_scores: FAILED for '{getattr(kw, 'term', '?')}': {type(e).__name__}: {e}")
 
-        self.db.commit()
-        logger.info(f"Keyword scoring: {updated} keywords scored")
+        try:
+            self.db.commit()
+            logger.info(
+                f"recompute_scores: scored={updated} failed={failed} high_opp(>=40)={high_opp} — committed"
+            )
+        except Exception as e:
+            logger.error(f"recompute_scores: DB COMMIT FAILED: {type(e).__name__}: {e}", exc_info=True)
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
+
         return updated
 
     # ------------------------------------------------------------------

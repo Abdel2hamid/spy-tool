@@ -579,3 +579,39 @@ All three cases handled correctly:
 - `/keywords/trending` must be registered BEFORE `/keywords/{term}/detail` — already done
 - `tasks.py` ScoringWorker now calls `pipeline.recompute_scores()` on every hourly scoring run (no external API calls — fast)
 
+
+
+---
+
+## Session: 2026-03-09 (Session 18 — Keyword Pipeline Enrichment Fixes)
+
+**Summary:** Debugged and fixed keyword intelligence pipeline producing zero enrichment data; found 3 root causes.
+
+**Root Causes Found:**
+
+1. **Stale keyword deletion bug (`tasks.py`)** — `update_opportunities()` ran every hour and deleted ALL keywords with no `AppKeyword` entries, including every seed keyword added by the pipeline. On fresh deployments with no legacy app-keyword associations, ALL pipeline keywords were deleted within 65 minutes.
+
+2. **Google Trends silent failure** — pytrends returns empty DataFrames when cloud/Railway IPs are blocked by Google. Code returned `{}` with only a `warning` log — no visibility into WHY data was missing.
+
+3. **`last_enriched` never set on Apple signals** — Apple signals phase ran fine but didn't set `last_enriched` on processed keywords, so pipeline health debug showed 0 enriched keywords even when Apple data was written.
+
+**Fixes Made:**
+
+**`backend/app/workers/tasks.py`:**
+- Changed stale keyword deletion to only remove keywords that are: (a) no app links AND (b) `last_enriched IS NULL` AND (c) `last_updated < 24h ago`. Seed keywords added by pipeline are preserved until they've had at least 24h to be enriched.
+
+**`backend/app/services/keyword_intelligence_pipeline.py`:**
+- `GoogleTrendsCollector.fetch_batch()`: Added `logger.error` for each failure mode (ImportError, Exception, empty df, missing keyword columns)
+- `enrich_with_trends()`: Per-keyword hit/miss DEBUG logs; per-batch summary INFO logs with counts; changed exception logging to `logger.error` with `exc_info=True`
+- `_save_trend_points()`: Added saved-row count debug log; changed failure logging to `logger.error`
+- `enrich_with_apple_signals()`: Sets `kw.last_enriched = now` for EVERY processed keyword (marks pipeline attempt even when iTunes returns 0 results); added per-batch stats (enriched/empty/errors); changed exceptions to `logger.error` with `exc_info=True`
+- `recompute_scores()`: Added per-keyword DEBUG log with computed scores and input signals; commit wrapped in try/except with error logging; summary includes `high_opp(>=40)` count
+
+**`backend/app/api/routes.py`:**
+- Enhanced `GET /keywords/pipeline/debug` to return: `last_pipeline_run_at` (max last_enriched), `google_trends_enabled`, `dataforseo_enabled`, `with_app_links`, `apple_signals_success_count` (apps_count > 0), `with_dominance_score`, `keyword_trends_rows`, `google_trends_success_count`
+
+**Key Gotchas:**
+- On Railway, Google Trends via pytrends will likely always fail (Google blocks cloud IPs). Set `GOOGLE_TRENDS_ENABLED=false` to skip it and use only Apple signals + scoring.
+- Apple signals (`enrich_with_apple_signals`) now sets `last_enriched` on ALL processed keywords, not just Google Trends successes. This is the correct behavior — marks that the pipeline attempted enrichment.
+- The 24h cutoff in stale keyword deletion means seed keywords are preserved for at least 24h, giving the pipeline time to enrich them before any cleanup.
+

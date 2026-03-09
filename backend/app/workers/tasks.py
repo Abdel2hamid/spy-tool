@@ -465,17 +465,24 @@ class ScoringWorker:
     def update_opportunities(self):
         logger.info("Updating opportunity scores")
 
-        # Remove junk / test keywords that have no apps linked to them
+        # Remove truly orphaned keywords: no app links, never pipeline-enriched, and >24h old.
+        # Pipeline seed keywords have no AppKeyword entries by design — preserve them so
+        # the keyword intelligence pipeline can enrich and score them.
+        cutoff_24h = datetime.utcnow() - timedelta(hours=24)
         stale = (
             self.db.query(Keyword)
             .outerjoin(AppKeyword, AppKeyword.keyword_id == Keyword.id)
-            .filter(AppKeyword.id.is_(None))
+            .filter(
+                AppKeyword.id.is_(None),            # no app associations
+                Keyword.last_enriched.is_(None),    # never enriched by intelligence pipeline
+                Keyword.last_updated < cutoff_24h,  # at least 24 h old
+            )
             .all()
         )
-        for kw in stale:
-            logger.info(f"Removing stale keyword: '{kw.term}'")
-            self.db.delete(kw)
         if stale:
+            logger.info(f"Removing {len(stale)} orphaned keywords (no apps, no enrichment, >24h old)")
+            for kw in stale:
+                self.db.delete(kw)
             self.db.commit()
 
         engine = ScoringEngine(self.db)

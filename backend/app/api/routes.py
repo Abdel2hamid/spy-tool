@@ -808,23 +808,49 @@ async def trigger_keyword_pipeline():
 def get_keyword_pipeline_debug(db: Session = Depends(get_db)):
     """Return enrichment coverage stats for the keyword intelligence pipeline."""
     from app.models.models import KeywordTrend
+    from sqlalchemy import func as sqlfunc
+    from app.config import settings as cfg
+
     total = db.query(Keyword).count()
-    with_trend_score = db.query(Keyword).filter(Keyword.trend_score > 0).count()
+    with_app_links = (
+        db.query(Keyword)
+        .join(AppKeyword, AppKeyword.keyword_id == Keyword.id)
+        .distinct()
+        .count()
+    )
+    # Google Trends enrichment
+    google_trends_success_count = db.query(Keyword).filter(Keyword.trend_score > 0).count()
     with_trend_growth = db.query(Keyword).filter(Keyword.trend_growth != 0).count()
-    with_apple_data = db.query(Keyword).filter(Keyword.dominance_score > 0).count()
+    # Apple signals enrichment (apps_count > 0 means iTunes returned results)
+    apple_signals_success_count = db.query(Keyword).filter(Keyword.apps_count > 0).count()
+    with_dominance = db.query(Keyword).filter(Keyword.dominance_score > 0).count()
+    # Scoring
     with_opportunity = db.query(Keyword).filter(Keyword.opportunity_score > 0).count()
     with_feasibility = db.query(Keyword).filter(Keyword.feasibility_score > 0).count()
+    # Pipeline activity
     with_last_enriched = db.query(Keyword).filter(Keyword.last_enriched.isnot(None)).count()
-    trend_points = db.query(KeywordTrend).count()
+    last_run_at = db.query(sqlfunc.max(Keyword.last_enriched)).scalar()
+    # Trend time-series data
+    keyword_trends_rows = db.query(KeywordTrend).count()
+
     return {
         "total_keywords": total,
-        "with_trend_score": with_trend_score,
+        "with_app_links": with_app_links,
+        # Google Trends
+        "google_trends_enabled": cfg.google_trends_enabled,
+        "google_trends_success_count": google_trends_success_count,
         "with_trend_growth": with_trend_growth,
-        "with_apple_data": with_apple_data,
+        "keyword_trends_rows": keyword_trends_rows,
+        # Apple signals
+        "apple_signals_success_count": apple_signals_success_count,
+        "with_dominance_score": with_dominance,
+        # Scoring
         "with_opportunity_score": with_opportunity,
         "with_feasibility_score": with_feasibility,
+        # Pipeline health
         "with_last_enriched": with_last_enriched,
-        "trend_data_points": trend_points,
+        "last_pipeline_run_at": last_run_at.isoformat() if last_run_at else None,
+        "dataforseo_enabled": cfg.dataforseo_enabled,
     }
 
 
