@@ -1,7 +1,7 @@
 import asyncio
 import logging
-from datetime import datetime
-from typing import List
+from datetime import datetime, timedelta
+from typing import List, Optional
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models.models import App, Category, Ranking, Keyword, AppKeyword, Review, AppVersion
@@ -11,6 +11,37 @@ from app.scoring.engine import ScoringEngine
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _compute_freshness_score(release_date: Optional[datetime]) -> float:
+    """Convert a release_date into a 0-100 freshness score.
+
+    100 = released <30 days ago (very high priority)
+     80 = released <60 days ago
+     60 = released <90 days ago  (medium priority)
+     40 = released <180 days ago
+     20 = released <365 days ago
+      0 = older than 1 year      (normal priority)
+    """
+    if not release_date:
+        return 0.0
+    now = datetime.utcnow()
+    # Normalise to naive UTC for arithmetic
+    rd = release_date.replace(tzinfo=None) if release_date.tzinfo else release_date
+    age_days = (now - rd).days
+    if age_days < 0:
+        return 100.0
+    if age_days < 30:
+        return 100.0
+    if age_days < 60:
+        return 80.0
+    if age_days < 90:
+        return 60.0
+    if age_days < 180:
+        return 40.0
+    if age_days < 365:
+        return 20.0
+    return 0.0
 
 
 class ScraperWorker:
@@ -236,7 +267,10 @@ class ScraperWorker:
                 app.release_date = details.get("release_date")
             if details.get("last_updated"):
                 app.last_updated = details.get("last_updated")
-            
+
+            # Freshness score — recomputed on every full scrape
+            app.freshness_score = _compute_freshness_score(app.release_date)
+
             self.db.commit()
             self.db.refresh(app)
             
@@ -322,7 +356,12 @@ class ScraperWorker:
         responsibility of the heavier scrape_all_tracked_apps() job).
         """
         logger.info("Starting quick refresh for all tracked apps (uncapped)")
-        apps = self.db.query(App).all()
+        # Fresh apps first — they benefit most from frequent updates
+        apps = (
+            self.db.query(App)
+            .order_by(App.freshness_score.desc().nullslast(), App.created_at.desc())
+            .all()
+        )
         logger.info(f"Quick refresh: {len(apps)} apps to process")
 
         success_count = 0
@@ -389,7 +428,12 @@ class ScraperWorker:
     async def scrape_all_tracked_apps(self):
         logger.info("Starting scrape for all tracked apps (uncapped)")
 
-        apps = self.db.query(App).all()
+        # Process fresh apps (high freshness_score) before older ones
+        apps = (
+            self.db.query(App)
+            .order_by(App.freshness_score.desc().nullslast(), App.created_at.desc())
+            .all()
+        )
         app_ids = [app.app_id for app in apps]
 
         logger.info(f"Found {len(app_ids)} tracked apps to scrape")
@@ -440,7 +484,14 @@ class ScoringWorker:
         logger.info("Updating keyword metrics from app data")
         engine.update_keyword_metrics()
         
-        apps = self.db.query(App).filter(App.current_rank.isnot(None)).limit(100).all()
+        # Process fresh apps first — new apps need opportunity scores quickly
+        apps = (
+            self.db.query(App)
+            .filter(App.current_rank.isnot(None))
+            .order_by(App.freshness_score.desc().nullslast(), App.current_rank.asc())
+            .limit(200)
+            .all()
+        )
         
         for app in apps:
             keywords = self.db.query(AppKeyword).join(Keyword).filter(

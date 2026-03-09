@@ -369,6 +369,8 @@ class DashboardStatsResponse(BaseModel):
     total_keywords: int
     trending_apps_count: int
     opportunities_count: int
+    new_apps_last_30_days: Optional[int] = 0
+    new_apps_last_90_days: Optional[int] = 0
 
 
 # ---------------------------------------------------------------------------

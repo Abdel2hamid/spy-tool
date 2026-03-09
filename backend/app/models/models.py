@@ -51,6 +51,8 @@ class App(Base):
     install_confidence = Column(Float)
     estimated_revenue_monthly_min = Column(Float)
     estimated_revenue_monthly_max = Column(Float)
+    # Freshness: 100 = released <30d ago, 0 = >1yr old. Updated on every scrape.
+    freshness_score = Column(Float, default=0.0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -65,7 +67,17 @@ class App(Base):
     feature_gaps = relationship("FeatureGap", back_populates="app", cascade="all, delete-orphan")
 
     __table_args__ = (
+        # Composite index used by filtered list queries
         Index("idx_app_category_rank", "category_id", "current_rank"),
+        # Individual column indexes for sort / filter performance
+        Index("idx_app_rating", "current_rating"),
+        Index("idx_app_reviews", "current_reviews"),
+        Index("idx_app_rank", "current_rank"),
+        Index("idx_app_release_date", "release_date"),
+        Index("idx_app_created_at", "created_at"),
+        Index("idx_app_freshness", "freshness_score"),
+        Index("idx_app_developer", "developer"),
+        Index("idx_app_primary_category", "primary_category"),
     )
 
 

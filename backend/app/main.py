@@ -22,8 +22,17 @@ _MIGRATIONS = [
     "ALTER TABLE apps ADD COLUMN IF NOT EXISTS install_confidence FLOAT",
     "ALTER TABLE apps ADD COLUMN IF NOT EXISTS estimated_revenue_monthly_min FLOAT",
     "ALTER TABLE apps ADD COLUMN IF NOT EXISTS estimated_revenue_monthly_max FLOAT",
-    # Discovery engine tables (Session 11) — handled by create_all, but listed here for clarity
-    # (create_all creates them if absent; these are no-ops for existing installs)
+    # Freshness priority system (Session 12)
+    "ALTER TABLE apps ADD COLUMN IF NOT EXISTS freshness_score FLOAT DEFAULT 0.0",
+    # Performance indexes (Session 12) — CREATE INDEX IF NOT EXISTS is idempotent
+    "CREATE INDEX IF NOT EXISTS idx_app_rating ON apps (current_rating)",
+    "CREATE INDEX IF NOT EXISTS idx_app_reviews ON apps (current_reviews)",
+    "CREATE INDEX IF NOT EXISTS idx_app_rank ON apps (current_rank)",
+    "CREATE INDEX IF NOT EXISTS idx_app_release_date ON apps (release_date)",
+    "CREATE INDEX IF NOT EXISTS idx_app_created_at ON apps (created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_app_freshness ON apps (freshness_score)",
+    "CREATE INDEX IF NOT EXISTS idx_app_developer ON apps (developer)",
+    "CREATE INDEX IF NOT EXISTS idx_app_primary_category ON apps (primary_category)",
 ]
 
 

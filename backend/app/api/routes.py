@@ -47,26 +47,60 @@ from app.scoring.feature_gaps import FeatureGapAnalyzer
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# ---------------------------------------------------------------------------
+# Dashboard stats — in-process TTL cache (60 s) to avoid repeated COUNT(*)
+# on large tables at every page load.
+# ---------------------------------------------------------------------------
+_DASHBOARD_CACHE: dict = {}
+_DASHBOARD_CACHE_TTL = 60  # seconds
+
 
 @router.get("/dashboard/stats", response_model=DashboardStatsResponse)
 def get_dashboard_stats(db: Session = Depends(get_db)):
+    import time
+    now = time.monotonic()
+    cached = _DASHBOARD_CACHE.get("stats")
+    if cached and now - cached["ts"] < _DASHBOARD_CACHE_TTL:
+        return cached["data"]
+
     total_apps = db.query(func.count(models.App.id)).scalar() or 0
     total_keywords = db.query(func.count(models.Keyword.id)).scalar() or 0
-    
+
     cutoff = datetime.utcnow() - timedelta(days=7)
-    trending_count = db.query(func.count(func.distinct(models.Ranking.app_id))).filter(
-        models.Ranking.recorded_at >= cutoff,
-        models.Ranking.rank_velocity > 0
-    ).scalar() or 0
-    
+    trending_count = (
+        db.query(func.count(func.distinct(models.Ranking.app_id)))
+        .filter(
+            models.Ranking.recorded_at >= cutoff,
+            models.Ranking.rank_velocity > 0,
+        )
+        .scalar() or 0
+    )
+
     opportunities_count = db.query(func.count(models.Opportunity.id)).scalar() or 0
-    
-    return {
+
+    # Freshness metrics — apps released in last 30/90 days
+    now_dt = datetime.utcnow()
+    new_30d = (
+        db.query(func.count(models.App.id))
+        .filter(models.App.release_date >= now_dt - timedelta(days=30))
+        .scalar() or 0
+    )
+    new_90d = (
+        db.query(func.count(models.App.id))
+        .filter(models.App.release_date >= now_dt - timedelta(days=90))
+        .scalar() or 0
+    )
+
+    data = {
         "total_apps_tracked": total_apps,
         "total_keywords": total_keywords,
         "trending_apps_count": trending_count,
-        "opportunities_count": opportunities_count
+        "opportunities_count": opportunities_count,
+        "new_apps_last_30_days": new_30d,
+        "new_apps_last_90_days": new_90d,
     }
+    _DASHBOARD_CACHE["stats"] = {"ts": now, "data": data}
+    return data
 
 
 _VALID_SORT_FIELDS = {
@@ -85,6 +119,8 @@ _AI_TERMS = ["%ai%", "%artificial intelligence%", "%machine learning%",
 
 @router.get("/apps", response_model=AppListResponse)
 def get_apps(
+    # ── pagination: page/limit (1-based) OR legacy skip/limit ────────────
+    page: int = Query(1, ge=1),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     # ── text search ──────────────────────────────────────────────────────
@@ -110,6 +146,9 @@ def get_apps(
     updated_before: Optional[str] = None,
     released_after: Optional[str] = None,
     released_before: Optional[str] = None,
+    # ── freshness filter ─────────────────────────────────────────────────
+    fresh_only: Optional[bool] = None,   # True = released in last 30 days
+    min_freshness_score: Optional[float] = Query(None, ge=0, le=100),
     # ── opportunity scoring ───────────────────────────────────────────────
     min_success_probability: Optional[float] = Query(None, ge=0, le=100),
     # ── ai filter ────────────────────────────────────────────────────────
@@ -127,7 +166,11 @@ def get_apps(
     """
     Return a paginated, filtered list of tracked apps.
     All filters are optional and composable.
+    Supports page/limit (1-based) or legacy skip/limit.
     """
+    # page param takes precedence over raw skip when page > 1
+    effective_skip = (page - 1) * limit if page > 1 else skip
+
     query = db.query(models.App)
 
     # ── full-text search across name / subtitle / developer / description ─
@@ -248,17 +291,28 @@ def get_apps(
         )
         query = query.filter(models.App.id.in_(fg_ids))
 
+    # ── freshness filters ─────────────────────────────────────────────────
+    if fresh_only:
+        cutoff_30d = datetime.utcnow() - timedelta(days=30)
+        query = query.filter(models.App.release_date >= cutoff_30d)
+    if min_freshness_score is not None:
+        query = query.filter(models.App.freshness_score >= min_freshness_score)
+
     # ── sorting ──────────────────────────────────────────────────────────
-    sort_col = _VALID_SORT_FIELDS.get(sort_by or "", models.App.created_at)
+    _VALID_SORT_FIELDS_LOCAL = {
+        **_VALID_SORT_FIELDS,
+        "freshness_score": models.App.freshness_score,
+    }
+    sort_col = _VALID_SORT_FIELDS_LOCAL.get(sort_by or "", models.App.created_at)
     if sort_order == "asc":
         query = query.order_by(sort_col.asc().nullslast())
     else:
         query = query.order_by(sort_col.desc().nullslast())
 
     total = query.count()
-    apps = query.offset(skip).limit(limit).all()
+    apps = query.offset(effective_skip).limit(limit).all()
 
-    return {"apps": apps, "total": total, "skip": skip, "limit": limit}
+    return {"apps": apps, "total": total, "skip": effective_skip, "limit": limit}
 
 
 @router.get("/apps/{app_id}", response_model=AppResponse)

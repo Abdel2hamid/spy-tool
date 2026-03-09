@@ -165,6 +165,77 @@ POST /api/v1/admin/discovery/process-queue# scrape queue now
 
 ---
 
+## Performance & Scalability (Session 12)
+
+### Database Indexes
+
+Added via `_run_migrations()` on every startup (idempotent `CREATE INDEX IF NOT EXISTS`):
+
+| Index | Column(s) | Purpose |
+|-------|-----------|---------|
+| `idx_app_rating` | `apps.current_rating` | Fast sort/filter by rating |
+| `idx_app_reviews` | `apps.current_reviews` | Fast sort/filter by review count |
+| `idx_app_rank` | `apps.current_rank` | Fast sort/filter by chart rank |
+| `idx_app_release_date` | `apps.release_date` | Freshness filter, `fresh_only=true` |
+| `idx_app_created_at` | `apps.created_at` | Discovery timeline queries |
+| `idx_app_freshness` | `apps.freshness_score` | Fresh-first ordering in workers |
+| `idx_app_developer` | `apps.developer` | Developer filter / brand exclusion |
+| `idx_app_primary_category` | `apps.primary_category` | Category filter |
+
+### Dashboard Stats Cache
+
+`GET /api/v1/dashboard/stats` caches its response for **60 seconds** in-process.
+This avoids repeated `COUNT(*)` full-table scans on large datasets.
+
+New fields returned:
+- `new_apps_last_30_days` — apps with `release_date` within last 30 days
+- `new_apps_last_90_days` — apps with `release_date` within last 90 days
+
+### Freshness Priority System
+
+Every app now has a `freshness_score` column (0–100):
+
+| Score | Release age |
+|-------|-------------|
+| 100 | < 30 days |
+| 80 | < 60 days |
+| 60 | < 90 days |
+| 40 | < 180 days |
+| 20 | < 365 days |
+| 0 | > 1 year |
+
+**How freshness affects processing order:**
+
+1. **Discovery queue** — keyword search now fetches `releaseDate` from iTunes API.
+   Apps released < 30 days get `priority=5`, < 90 days get `priority=4`, older get `priority=2`.
+   Chart discoveries remain at `priority=1`.
+
+2. **Queue processor** — sorts by `priority DESC, added_at DESC` so the freshest,
+   most-recently discovered apps are scraped first within each priority tier.
+
+3. **Full scrape worker** — `scrape_all_tracked_apps()` orders apps by
+   `freshness_score DESC` so newly released apps get details updated first.
+
+4. **Quick refresh worker** — same ordering.
+
+5. **Opportunity scoring** — processes fresh apps (high `freshness_score`) before
+   mature ones so new entrants appear in dashboards quickly.
+
+### Pagination
+
+`GET /api/v1/apps` now supports a `page` query param (1-based) in addition to `skip`:
+```
+GET /api/v1/apps?page=2&limit=50
+```
+`skip` still works for backward compatibility.
+
+New filter params:
+- `fresh_only=true` — only apps released in the last 30 days
+- `min_freshness_score=60` — only apps with freshness ≥ 60 (i.e. released < 90 days)
+- `sort_by=freshness_score` — sort by freshness descending
+
+---
+
 ## Local Development
 
 ```bash

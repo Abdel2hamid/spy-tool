@@ -267,6 +267,63 @@ class DiscoveryEngine:
             return []
 
     @staticmethod
+    def _fetch_keyword_with_dates(keyword: str) -> List[dict]:
+        """iTunes Search API → list of {app_id, release_date} dicts (up to 200).
+
+        Returns release_date as a datetime object when available, so the
+        caller can assign higher queue priority to recently released apps.
+        """
+        try:
+            encoded = urllib.parse.quote(keyword)
+            url = (
+                f"https://itunes.apple.com/search"
+                f"?term={encoded}&entity=software&limit=200&country=us"
+            )
+            req = urllib.request.Request(url, headers={"User-Agent": _UA})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            results = []
+            for r in data.get("results", []):
+                if not r.get("trackId"):
+                    continue
+                rd = None
+                raw_date = r.get("releaseDate") or r.get("currentVersionReleaseDate")
+                if raw_date:
+                    try:
+                        rd = datetime.fromisoformat(raw_date.rstrip("Z"))
+                    except Exception:
+                        pass
+                results.append({"app_id": str(r["trackId"]), "release_date": rd})
+            return results
+        except Exception as exc:
+            logger.warning(f"[DISC] Keyword '{keyword}' (with dates) failed: {exc}")
+            return []
+
+    @staticmethod
+    def _freshness_priority(release_date: Optional[datetime]) -> int:
+        """Map a release_date to a queue priority level.
+
+        Very fresh apps get priority=5 so they jump to the front of the
+        scrape queue — they're most likely to generate useful signals.
+
+        Priority scale:
+          5 = released <30 days  (very high / fresh)
+          4 = released <90 days  (medium / recent)
+          2 = older / unknown    (normal keyword priority)
+        """
+        if not release_date:
+            return 2
+        rd = release_date.replace(tzinfo=None) if release_date.tzinfo else release_date
+        age_days = (datetime.utcnow() - rd).days
+        if age_days < 0:
+            return 5
+        if age_days < 30:
+            return 5
+        if age_days < 90:
+            return 4
+        return 2
+
+    @staticmethod
     def _fetch_developer_apps(developer_id: str) -> List[str]:
         """iTunes artist lookup → all app IDs by that developer (up to 200)."""
         try:
@@ -342,8 +399,8 @@ class DiscoveryEngine:
     async def run_keyword_discovery(self) -> int:
         """
         Run keyword search for all DISCOVERY_KEYWORDS not yet run today.
-        Keywords get priority=2 (higher than charts) because search results
-        are most aligned with what users are actually looking for.
+        Assigns per-app queue priority based on release_date freshness:
+          priority=5 (fresh <30d) | 4 (recent <90d) | 2 (older/unknown)
         Returns total new IDs enqueued.
         """
         total_new = 0
@@ -351,11 +408,22 @@ class DiscoveryEngine:
             key = f"keyword:{kw}"
             if self._ran_today(key):
                 continue
-            ids = await asyncio.to_thread(self._fetch_keyword, kw)
-            new = self.enqueue(ids, source=key, priority=2)
+            app_infos = await asyncio.to_thread(self._fetch_keyword_with_dates, kw)
+            new = 0
+            for info in app_infos:
+                prio = self._freshness_priority(info["release_date"])
+                new += self.enqueue([info["app_id"]], source=key, priority=prio)
             self._mark_progress(key, new)
             total_new += new
-            logger.info(f"[DISC] keyword '{kw}': {len(ids)} found, {new} queued")
+            fresh_count = sum(
+                1 for i in app_infos
+                if i["release_date"] and
+                (datetime.utcnow() - (i["release_date"].replace(tzinfo=None) if i["release_date"].tzinfo else i["release_date"])).days < 30
+            )
+            logger.info(
+                f"[DISC] keyword '{kw}': {len(app_infos)} found, "
+                f"{new} queued ({fresh_count} fresh <30d)"
+            )
             await asyncio.sleep(0.2)
         return total_new
 
@@ -421,12 +489,14 @@ class DiscoveryEngine:
         """
         from app.workers.tasks import ScraperWorker
 
+        # Priority desc (fresh apps = 5 first), then newest added_at within
+        # the same priority tier (recently discovered apps are likely newer).
         pending = (
             self.db.query(DiscoveryQueue)
             .filter(DiscoveryQueue.status == "pending")
             .order_by(
                 DiscoveryQueue.priority.desc(),
-                DiscoveryQueue.added_at.asc(),
+                DiscoveryQueue.added_at.desc(),
             )
             .limit(batch_size)
             .all()
@@ -486,6 +556,8 @@ class DiscoveryEngine:
             hour=0, minute=0, second=0, microsecond=0
         )
         yesterday_start = today_start - timedelta(days=1)
+        ago_30d = today_start - timedelta(days=30)
+        ago_90d = today_start - timedelta(days=90)
 
         total_apps = self.db.query(App).count()
         new_today = (
@@ -496,6 +568,17 @@ class DiscoveryEngine:
         new_yesterday = (
             self.db.query(App)
             .filter(App.created_at >= yesterday_start, App.created_at < today_start)
+            .count()
+        )
+        # Apps whose App Store release_date is within the freshness windows
+        new_apps_last_30_days = (
+            self.db.query(App)
+            .filter(App.release_date.isnot(None), App.release_date >= ago_30d)
+            .count()
+        )
+        new_apps_last_90_days = (
+            self.db.query(App)
+            .filter(App.release_date.isnot(None), App.release_date >= ago_90d)
             .count()
         )
 
@@ -540,6 +623,8 @@ class DiscoveryEngine:
             "total_apps_in_db": total_apps,
             "new_apps_today": new_today,
             "new_apps_yesterday": new_yesterday,
+            "new_apps_last_30_days": new_apps_last_30_days,
+            "new_apps_last_90_days": new_apps_last_90_days,
             "queue_pending": pending_queue,
             "queue_scraping": scraping_queue,
             "queue_done": done_queue,
