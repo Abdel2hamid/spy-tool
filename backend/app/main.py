@@ -54,6 +54,10 @@ _MIGRATIONS = [
         UNIQUE(keyword_id, week_start)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_ktrend_keyword ON keyword_trends (keyword_id)",
+    # Keyword discovery engine (Session 21)
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS keyword_source VARCHAR(50)",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS discovered_from VARCHAR(255)",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ",
 ]
 
 

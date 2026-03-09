@@ -807,29 +807,29 @@ async def trigger_keyword_pipeline():
 @router.get("/keywords/pipeline/debug")
 def get_keyword_pipeline_debug(db: Session = Depends(get_db)):
     """Return enrichment coverage stats for the keyword intelligence pipeline."""
-    from app.models.models import KeywordTrend
+    from app.models.models import KeywordTrend, Keyword as KW, AppKeyword as AKW
     from sqlalchemy import func as sqlfunc
     from app.config import settings as cfg
 
-    total = db.query(Keyword).count()
+    total = db.query(KW).count()
     with_app_links = (
-        db.query(Keyword)
-        .join(AppKeyword, AppKeyword.keyword_id == Keyword.id)
+        db.query(KW)
+        .join(AKW, AKW.keyword_id == KW.id)
         .distinct()
         .count()
     )
     # Google Trends enrichment
-    google_trends_success_count = db.query(Keyword).filter(Keyword.trend_score > 0).count()
-    with_trend_growth = db.query(Keyword).filter(Keyword.trend_growth != 0).count()
+    google_trends_success_count = db.query(KW).filter(KW.trend_score > 0).count()
+    with_trend_growth = db.query(KW).filter(KW.trend_growth != 0).count()
     # Apple signals enrichment (apps_count > 0 means iTunes returned results)
-    apple_signals_success_count = db.query(Keyword).filter(Keyword.apps_count > 0).count()
-    with_dominance = db.query(Keyword).filter(Keyword.dominance_score > 0).count()
+    apple_signals_success_count = db.query(KW).filter(KW.apps_count > 0).count()
+    with_dominance = db.query(KW).filter(KW.dominance_score > 0).count()
     # Scoring
-    with_opportunity = db.query(Keyword).filter(Keyword.opportunity_score > 0).count()
-    with_feasibility = db.query(Keyword).filter(Keyword.feasibility_score > 0).count()
+    with_opportunity = db.query(KW).filter(KW.opportunity_score > 0).count()
+    with_feasibility = db.query(KW).filter(KW.feasibility_score > 0).count()
     # Pipeline activity
-    with_last_enriched = db.query(Keyword).filter(Keyword.last_enriched.isnot(None)).count()
-    last_run_at = db.query(sqlfunc.max(Keyword.last_enriched)).scalar()
+    with_last_enriched = db.query(KW).filter(KW.last_enriched.isnot(None)).count()
+    last_run_at = db.query(sqlfunc.max(KW.last_enriched)).scalar()
     # Trend time-series data
     keyword_trends_rows = db.query(KeywordTrend).count()
 
@@ -851,6 +851,52 @@ def get_keyword_pipeline_debug(db: Session = Depends(get_db)):
         "with_last_enriched": with_last_enriched,
         "last_pipeline_run_at": last_run_at.isoformat() if last_run_at else None,
         "dataforseo_enabled": cfg.dataforseo_enabled,
+    }
+
+
+@router.post("/keywords/discovery/run")
+async def run_keyword_discovery():
+    """
+    Trigger the keyword discovery engine in the background.
+    Runs all three phases (static expansion, Apple suggestions, metadata phrases)
+    and inserts new keywords into the keywords table.
+    """
+    async def _run():
+        from app.services.keyword_discovery_engine import KeywordDiscoveryEngine
+        from app.database import SessionLocal
+        _db = SessionLocal()
+        try:
+            engine = KeywordDiscoveryEngine(_db)
+            stats = await engine.run_keyword_discovery()
+            logger.info(
+                f"[API] keyword discovery complete — "
+                f"inserted={stats['inserted']}, skipped={stats['skipped']}, "
+                f"candidates={stats['candidates']}"
+            )
+        except Exception as exc:
+            logger.error(f"[API] keyword discovery error: {exc}", exc_info=True)
+        finally:
+            _db.close()
+
+    asyncio.create_task(_run())
+    return {"status": "started", "message": "Keyword discovery engine running in background"}
+
+
+@router.get("/keywords/discovery/status")
+def get_keyword_discovery_status(db: Session = Depends(get_db)):
+    """Return discovery engine stats: total keywords, discovery_engine sourced, recently added."""
+    from sqlalchemy import func as sqlfunc
+
+    total = db.query(models.Keyword).count()
+    from_engine = db.query(models.Keyword).filter(models.Keyword.keyword_source == "discovery_engine").count()
+    from_user = db.query(models.Keyword).filter(models.Keyword.keyword_source == "user").count()
+    last_added = db.query(sqlfunc.max(models.Keyword.first_seen_at)).scalar()
+
+    return {
+        "total_keywords": total,
+        "from_discovery_engine": from_engine,
+        "from_user": from_user,
+        "last_discovery_run": last_added.isoformat() if last_added else None,
     }
 
 

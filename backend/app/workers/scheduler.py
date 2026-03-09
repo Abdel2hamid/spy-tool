@@ -12,6 +12,7 @@ Job schedule:
   hourly_reviews_ratings     1 h      1 h         Quick refresh (rating/reviews for all apps)
   hourly_scoring             1 h      65 min      Recompute scores + daily report
   full_metadata              6 h      6 h         Full metadata refresh for all tracked apps
+  keyword_discovery          24 h     20 min      Keyword expansion engine (10k-100k keywords)
 
 Discovery jobs have short first-run delays so coverage starts building
 immediately after deploy without waiting for the bootstrap endpoint.
@@ -331,6 +332,39 @@ async def job_keyword_scoring():
 
 
 # ---------------------------------------------------------------------------
+# Job: every 24 h — keyword expansion engine (discover 10k-100k new keywords)
+# ---------------------------------------------------------------------------
+
+async def job_keyword_discovery():
+    """
+    Run the keyword discovery engine to generate new keyword candidates:
+    - Phase A: static alphabet/modifier expansion (~11k candidates)
+    - Phase B: Apple MZSearchHints autocomplete suggestions (~21k)
+    - Phase C: iTunes app metadata n-gram extraction (~39k)
+    Persists new keywords to the keywords table for enrichment by the
+    keyword_intelligence pipeline.
+    """
+    job_id = "keyword_discovery"
+    t0 = _log_start(job_id)
+    try:
+        from app.services.keyword_discovery_engine import KeywordDiscoveryEngine
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            engine = KeywordDiscoveryEngine(db)
+            stats = await engine.run_keyword_discovery()
+            _log_done(
+                job_id, t0,
+                f"seeds={stats['seeds']}, candidates={stats['candidates']}, "
+                f"inserted={stats['inserted']}, skipped={stats['skipped']}"
+            )
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+# ---------------------------------------------------------------------------
 # Scheduler setup
 # ---------------------------------------------------------------------------
 
@@ -475,6 +509,21 @@ def setup_scheduler() -> AsyncIOScheduler:
         ),
         id="keyword_scoring",
         name="Every 6h: Keyword Scoring",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── every 24 h: keyword discovery engine ─────────────────────────────────
+    # First run: 20 min after startup so new keywords are available for
+    # the intelligence pipeline's next scheduled run.
+    scheduler.add_job(
+        job_keyword_discovery,
+        trigger=IntervalTrigger(
+            hours=24,
+            start_date=now + timedelta(minutes=20),
+            timezone="UTC",
+        ),
+        id="keyword_discovery",
+        name="Every 24h: Keyword Discovery Engine",
         **_JOB_DEFAULTS,
     )
 

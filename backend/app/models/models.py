@@ -201,6 +201,10 @@ class Keyword(Base):
     feasibility_score = Column(Float, default=0.0)  # 0-100 indie entry feasibility
     # Housekeeping
     last_enriched = Column(DateTime(timezone=True)) # last time external data was fetched
+    # Discovery metadata
+    keyword_source = Column(String(50))             # 'seed' | 'discovery_engine' | 'user'
+    discovered_from = Column(String(255))           # which seed term led to this keyword
+    first_seen_at = Column(DateTime(timezone=True)) # when first inserted by discovery engine
 
     apps = relationship("AppKeyword", back_populates="keyword")
     trends = relationship("KeywordTrend", back_populates="keyword", cascade="all, delete-orphan")
