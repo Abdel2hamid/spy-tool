@@ -1,5 +1,24 @@
 # Railway Deployment Guide
 
+## Python Version
+
+Railway must use **Python 3.11** (not 3.12 or 3.13).
+
+`pydantic-core` (Pydantic v2's compiled Rust extension) does not have a
+pre-built wheel for Python 3.13 at the pinned versions in `requirements.txt`.
+Attempting to build from source fails on Railway's build infrastructure.
+
+The fix is a `runtime.txt` file at the **repository root** (not inside `backend/`):
+
+```
+python-3.11.9
+```
+
+Railway's Nixpacks builder reads this file to pin the Python version.
+Do **not** move it into `backend/` — Railway looks for it at the repo root.
+
+---
+
 ## Requirements Files
 
 | File | When to use |

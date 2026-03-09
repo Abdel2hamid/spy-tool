@@ -195,3 +195,25 @@ Also created: `PRODUCT_STRATEGY_REPORT.md` at repository root (product strategy 
 - `appstore_backup.py` is a stale unused file (never imported) — it still has a top-level Playwright import but causes no issues since it's never imported
 
 ---
+
+## Session: 2026-03-09 (Session 7 — Railway Python Version Pin)
+
+**Summary:** Fixed Railway build failure caused by Python 3.13 breaking pydantic-core by pinning the environment to Python 3.11.9.
+
+**Bug Fixed:**
+- Railway defaulted to Python 3.13; `pydantic-core` (Pydantic v2 compiled Rust extension) has no pre-built wheel for 3.13 at pinned versions → build failure.
+
+**Fix Applied:**
+- Created `runtime.txt` at **repository root** (`/appstore-spy-tool/runtime.txt`) containing exactly `python-3.11.9`
+- Railway Nixpacks builder reads this file to pin the Python version
+- Updated `backend/DEPLOYMENT.md` with a "Python Version" section explaining the constraint
+
+**Files Created:**
+- `runtime.txt` (repo root, NOT inside `backend/`) — `python-3.11.9`
+
+**Files Modified:**
+- `backend/DEPLOYMENT.md` — added Python Version section at top
+
+**Key Gotcha:** `runtime.txt` must be at the repository root. Railway does NOT look inside `backend/` for it. Moving it into `backend/` has no effect.
+
+---
