@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { AppShell } from '@/components';
 import { TrendingAppCard } from '@/components/TrendingAppCard';
 import { TrendingApp } from '@/lib/api';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { TrendingUp, Search } from 'lucide-react';
 
 interface TrendingClientProps {
@@ -11,7 +12,7 @@ interface TrendingClientProps {
 }
 
 export default function TrendingClient({ initialApps }: TrendingClientProps) {
-  const [apps] = useState<TrendingApp[]>(initialApps);
+  const [apps] = useState<TrendingApp[]>(Array.isArray(initialApps) ? initialApps : []);
   const [searchQuery, setSearchQuery] = useState('');
 
   const filteredApps = apps.filter((app) =>
@@ -20,6 +21,7 @@ export default function TrendingClient({ initialApps }: TrendingClientProps) {
   );
 
   return (
+    <ErrorBoundary>
     <AppShell>
       <div className="space-y-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -60,5 +62,6 @@ export default function TrendingClient({ initialApps }: TrendingClientProps) {
         )}
       </div>
     </AppShell>
+    </ErrorBoundary>
   );
 }

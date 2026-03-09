@@ -1,13 +1,34 @@
-// Normalize to always include /api/v1.
-// NEXT_PUBLIC_API_URL can be the backend origin alone
-// (https://backend.railway.app) or include the path (…/api/v1) — both work.
-// Unset → relative '/api/v1' → goes through the Next.js rewrite proxy.
-const _rawBase = (process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/+$/, '');
-const API_BASE = _rawBase === ''
-  ? '/api/v1'
-  : _rawBase.endsWith('/api/v1')
-    ? _rawBase
-    : `${_rawBase}/api/v1`;
+// ---------------------------------------------------------------------------
+// API base URL — resolved correctly for both server and client contexts.
+//
+// Priority order:
+//   1. BACKEND_URL   (server-side Railway env var, origin only)
+//   2. NEXT_PUBLIC_API_URL  (build-time var, can be origin or full path)
+//   3. localhost:8000 fallback for local dev
+//
+// Relative paths (/api/v1) only work in browser context; Node fetch requires
+// an absolute URL. Server components use BACKEND_URL to avoid this.
+// ---------------------------------------------------------------------------
+function _resolveApiBase(): string {
+  const isServer = typeof window === 'undefined';
+
+  if (isServer) {
+    // Prefer the server-side Railway variable (full backend origin)
+    const backendUrl = process.env.BACKEND_URL?.replace(/\/+$/, '');
+    if (backendUrl) return `${backendUrl}/api/v1`;
+  }
+
+  // Normalise NEXT_PUBLIC_API_URL (may or may not include /api/v1)
+  const raw = (process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/+$/, '');
+  if (raw !== '') {
+    return raw.endsWith('/api/v1') ? raw : `${raw}/api/v1`;
+  }
+
+  // No env vars set — relative for browser, localhost for server (dev)
+  return isServer ? 'http://localhost:8000/api/v1' : '/api/v1';
+}
+
+const API_BASE = _resolveApiBase();
 
 export interface DashboardStats {
   total_apps_tracked: number;

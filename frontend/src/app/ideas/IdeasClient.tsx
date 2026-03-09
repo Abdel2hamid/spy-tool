@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AppIdea, AppIdeaListResponse, getIdeas, generateIdeas } from '@/lib/api';
 import { AppShell } from '@/components';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import {
   Lightbulb, Sparkles, RefreshCw, Package, Key,
   Globe, Zap, TrendingUp, Search,
@@ -121,9 +122,9 @@ function IdeaCard({ idea }: { idea: AppIdea }) {
         <div className="border-t border-gray-100 dark:border-gray-800" />
 
         {/* Reasoning bullets */}
-        {idea.reasoning.length > 0 && (
+        {(idea.reasoning?.length ?? 0) > 0 && (
           <ul className="space-y-1.5">
-            {idea.reasoning.map((r, i) => (
+            {(idea.reasoning ?? []).map((r, i) => (
               <li key={i} className="flex items-start gap-2 text-xs text-gray-600 dark:text-gray-400">
                 <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-gray-300 dark:bg-gray-600" />
                 {r}
@@ -146,7 +147,7 @@ function IdeaCard({ idea }: { idea: AppIdea }) {
               {idea.primary_keyword}
             </span>
           )}
-          {idea.related_app_ids.length > 0 && (
+          {(idea.related_app_ids?.length ?? 0) > 0 && (
             <span className="ml-auto text-xs text-gray-400 dark:text-gray-600">
               {idea.related_app_ids.length} app{idea.related_app_ids.length !== 1 ? 's' : ''}
             </span>
@@ -244,6 +245,7 @@ export default function IdeasClient() {
   };
 
   return (
+    <ErrorBoundary>
     <AppShell>
       <div className="space-y-6">
 
@@ -376,5 +378,6 @@ export default function IdeasClient() {
         )}
       </div>
     </AppShell>
+    </ErrorBoundary>
   );
 }

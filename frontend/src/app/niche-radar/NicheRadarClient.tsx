@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components/AppShell';
 import { getNicheRadar, NicheRadarItem } from '@/lib/api';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Radar, TrendingUp, Zap, Search, RefreshCw } from 'lucide-react';
 
 const SIGNAL_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
@@ -50,7 +51,7 @@ function NicheCard({ niche }: { niche: NicheRadarItem }) {
       </p>
 
       <div className="flex flex-wrap items-center gap-2 pt-1">
-        {niche.keywords.slice(0, 3).map((kw) => (
+        {(niche.keywords ?? []).slice(0, 3).map((kw) => (
           <span
             key={kw}
             className="rounded-md bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-400"
@@ -87,8 +88,8 @@ export default function NicheRadarClient() {
     setError(null);
     try {
       const data = await getNicheRadar(30);
-      setNiches(data.niches);
-      setScannedAt(data.scanned_at);
+      setNiches(Array.isArray(data?.niches) ? data.niches : []);
+      setScannedAt(data?.scanned_at ?? null);
     } catch (e) {
       setError('Failed to load niche radar data');
     } finally {
@@ -101,6 +102,7 @@ export default function NicheRadarClient() {
   const filtered = filter === 'all' ? niches : niches.filter((n) => n.signal_type === filter);
 
   return (
+    <ErrorBoundary>
     <AppShell>
       <div className="space-y-6 p-6">
         {/* Header */}
@@ -199,5 +201,6 @@ export default function NicheRadarClient() {
         )}
       </div>
     </AppShell>
+    </ErrorBoundary>
   );
 }

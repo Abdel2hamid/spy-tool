@@ -301,6 +301,94 @@ All three cases handled correctly:
 
 ---
 
+## Session: 2026-03-09 (Session 12 — Opportunity of the Day: Big Brand Exclusion + Feasibility Scoring)
+
+**Summary:** Fixed "Opportunity of the Day" to never surface apps dominated by major companies; rewrote scoring to 45% attractiveness + 55% feasibility.
+
+**Root Cause:**
+- `generate_opportunity_of_day()` ranked purely by `attractiveness_score` → ChatGPT, Gemini, and other mega-apps with high ratings and reviews always won.
+
+**Changes Made:**
+- Added module-level constants to `engine.py`: `_BIG_BRAND_DEVELOPERS` (frozenset, 60+ brands), `_BIG_BRAND_APP_KEYWORDS` (tuple of brand name fragments), dominance thresholds (`_BEHEMOTH_REVIEWS=500000`, `_ENTRENCHED_REVIEWS=100000`, `_CHART_DOMINATOR_REVIEWS=50000`)
+- Added 4 methods to `ScoringEngine`:
+  - `_is_excluded_big_brand(app)` → `(bool, reason_str)` — O(1) frozenset lookup + substring match
+  - `_is_dominated_market(app)` → `(bool, reason_str)` — 3 thresholds: behemoth, entrenched+4.5★, chart dominator+rank≤3
+  - `calculate_feasibility_score(app, competition_score)` → `(float, dict)` — 5-component 100pt system: review scarcity (25), keyword competition (25), feature gap count (20), rating weakness (15), rank accessibility (15)
+  - `_generate_winnability_recommendation(feasibility, details)` → human-readable text
+- Rewrote `generate_opportunity_of_day()`: hard exclusions first → `combined = attractiveness*0.45 + feasibility*0.55`
+- Extended `OpportunityOfDayResponse` schema with optional fields: `attractiveness_score`, `feasibility_score`, `feasibility_details`
+
+**Files Modified:**
+- `backend/app/scoring/engine.py` — exclusion constants, 4 new methods, updated generate_opportunity_of_day
+- `backend/app/models/schemas.py` — extended OpportunityOfDayResponse
+
+---
+
+## Session: 2026-03-09 (Session 13 — Performance + Freshness Priority System)
+
+**Summary:** Added DB indexes, dashboard caching, pagination, freshness scoring, and discovery queue priority for newly released apps.
+
+**Changes Made:**
+- `App` model: added `freshness_score` column + 8 new DB indexes (rating, reviews, rank, release_date, created_at, freshness, developer, primary_category)
+- `main.py`: idempotent migrations for `freshness_score` column + all 8 indexes (`ALTER TABLE ADD COLUMN IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`)
+- `routes.py`: 60-second TTL in-process dashboard cache (`_DASHBOARD_CACHE` dict + `time.monotonic()`), `page` param for 1-based pagination, `fresh_only`/`min_freshness_score` filters, `sort_by=freshness_score`, `new_apps_last_30_days`/`new_apps_last_90_days` in dashboard stats
+- `tasks.py`: `_compute_freshness_score(release_date)` (100=<30d, 80=<60d, 60=<90d, 40=<180d, 20=<365d, 0=>1yr), saves after scrape, workers ordered by `freshness_score DESC NULLS LAST`, `update_opportunities()` limit 100→200 + ordered by freshness
+- `discovery_engine.py`: `_fetch_keyword_with_dates()` (fetches `releaseDate` from iTunes), `_freshness_priority()` (priority 5=<30d, 4=<90d, 2=older), queue processing ordered by `priority DESC, added_at DESC`, metrics now include `new_apps_last_30_days`/`new_apps_last_90_days`
+- `schemas.py`: `DashboardStatsResponse` extended with `new_apps_last_30_days`, `new_apps_last_90_days`
+- `backend/DEPLOYMENT.md`: added Performance & Scalability section
+
+**Files Modified:**
+- `backend/app/models/models.py` — freshness_score column + 8 indexes
+- `backend/app/main.py` — 9 migrations
+- `backend/app/api/routes.py` — cache, pagination, freshness filters, new stats fields
+- `backend/app/workers/tasks.py` — freshness compute + ordering
+- `backend/app/workers/discovery_engine.py` — freshness-aware discovery
+- `backend/app/models/schemas.py` — DashboardStatsResponse extended
+- `backend/DEPLOYMENT.md` — performance docs
+
+---
+
+## Session: 2026-03-09 (Session 14 — Frontend Crash Fixes)
+
+**Summary:** Fixed 5 frontend pages crashing (Trending, Opportunities, AI Opportunities, Niche Radar, Keywords) due to wrong API URL construction and missing null guards.
+
+**Root Causes:**
+1. Server page files used `process.env.NEXT_PUBLIC_API_URL` without `/api/v1` suffix normalization → all fetches returned `{"detail":"Not Found"}` (valid JSON, so `.catch()` didn't fire)
+2. Error objects were passed as array props → `.filter()/.map()/.slice()` crashed at runtime
+3. `api.ts` used relative `/api/v1` in server context → Node fetch requires absolute URLs
+4. `idea.reasoning` and `idea.related_app_ids` could be null → `.length` crash
+5. `niche.keywords` could be null → `.slice()` crash
+
+**Fixes Applied:**
+- `api.ts`: replaced `API_BASE` constant with `_resolveApiBase()` — detects server vs browser context, uses `BACKEND_URL` env var on server, `NEXT_PUBLIC_API_URL` on client, normalizes trailing slashes and `/api/v1` suffix
+- `trending/page.tsx`, `opportunities/page.tsx`, `keywords/page.tsx`: rewrote to use api.ts functions (which have correct URL handling) instead of raw `fetch()`
+- All 5 client components: added `Array.isArray(x) ? x : []` guards in useState initializers
+- `IdeasClient.tsx`: `(idea.reasoning?.length ?? 0) > 0`, `(idea.reasoning ?? []).map(...)`, `(idea.related_app_ids?.length ?? 0) > 0`
+- `NicheRadarClient.tsx`: `Array.isArray(data?.niches) ? data.niches : []`, `(niche.keywords ?? []).slice(0, 3)`, `data?.scanned_at ?? null`
+- Created `frontend/src/components/ErrorBoundary.tsx` — React class component with `getDerivedStateFromError`, "Something went wrong" fallback with AlertTriangle icon and "Try again" button
+- Wrapped all 5 broken client components with `<ErrorBoundary>`
+
+**Files Modified:**
+- `frontend/src/lib/api.ts` — `_resolveApiBase()` server/client context detection
+- `frontend/src/app/trending/page.tsx` — use api.ts functions
+- `frontend/src/app/opportunities/page.tsx` — use api.ts functions
+- `frontend/src/app/keywords/page.tsx` — use api.ts functions
+- `frontend/src/app/trending/TrendingClient.tsx` — Array.isArray guard + ErrorBoundary
+- `frontend/src/app/opportunities/OpportunitiesClient.tsx` — Array.isArray guard + ErrorBoundary
+- `frontend/src/app/keywords/KeywordsClient.tsx` — Array.isArray guards + ErrorBoundary
+- `frontend/src/app/ideas/IdeasClient.tsx` — null-safe reasoning/related_app_ids + ErrorBoundary
+- `frontend/src/app/niche-radar/NicheRadarClient.tsx` — null-safe niches/keywords + ErrorBoundary
+
+**Files Created:**
+- `frontend/src/components/ErrorBoundary.tsx` — React error boundary component
+
+**Key Gotchas:**
+- `BACKEND_URL` (no `NEXT_PUBLIC_` prefix) is used only in server context (Node); `NEXT_PUBLIC_API_URL` is baked into the browser bundle at build time
+- When `.catch(() => [])` wraps a `fetch()` that returns valid JSON (like a 404 with `{"detail":"Not Found"}`), the catch never fires — the response must check `r.ok` before calling `.json()`
+- All client components must defensively guard array props; server-side fetch failures silently produce error objects that look truthy but are not arrays
+
+---
+
 ## Session: 2026-03-09 (Session 11 — Large-Scale Discovery Engine)
 
 **Summary:** Removed all app caps, built a perpetual large-scale discovery engine covering all App Store categories × 20 countries × 3 chart types + 100+ keyword searches + developer expansion.

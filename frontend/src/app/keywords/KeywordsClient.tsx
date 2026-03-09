@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { AppShell } from '@/components';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { SimpleChart } from '@/components/Charts';
 import { Keyword, KeywordOpportunity } from '@/lib/api';
 import { Search, TrendingUp, TrendingDown, BarChart3 } from 'lucide-react';
@@ -16,8 +17,8 @@ export default function KeywordsClient({
   initialKeywords, 
   initialKeywordOpps 
 }: KeywordsClientProps) {
-  const [keywords] = useState<Keyword[]>(initialKeywords || []);
-  const [keywordOpps] = useState<KeywordOpportunity[]>(initialKeywordOpps || []);
+  const [keywords] = useState<Keyword[]>(Array.isArray(initialKeywords) ? initialKeywords : []);
+  const [keywordOpps] = useState<KeywordOpportunity[]>(Array.isArray(initialKeywordOpps) ? initialKeywordOpps : []);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'opportunities'>('all');
 
@@ -32,6 +33,7 @@ export default function KeywordsClient({
   }));
 
   return (
+    <ErrorBoundary>
     <AppShell>
       <div className="space-y-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -207,5 +209,6 @@ export default function KeywordsClient({
         </div>
       </div>
     </AppShell>
+    </ErrorBoundary>
   );
 }

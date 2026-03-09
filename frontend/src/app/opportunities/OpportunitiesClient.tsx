@@ -1,6 +1,7 @@
 'use client';
 
 import { AppShell } from '@/components';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { OpportunityOfDayCard } from '@/components/OpportunityOfDayCard';
 import { SimpleChart } from '@/components/Charts';
 import { OpportunityOfDay, KeywordOpportunity } from '@/lib/api';
@@ -17,7 +18,7 @@ export default function OpportunitiesClient({
   initialKeywordOpps 
 }: OpportunitiesClientProps) {
   const opportunity = initialOpportunity;
-  const keywordOpportunities = initialKeywordOpps || [];
+  const keywordOpportunities = Array.isArray(initialKeywordOpps) ? initialKeywordOpps : [];
 
   const chartData = keywordOpportunities.map((kw) => ({
     name: (kw.keyword || '').slice(0, 12),
@@ -26,6 +27,7 @@ export default function OpportunitiesClient({
   }));
 
   return (
+    <ErrorBoundary>
     <AppShell>
       <div className="space-y-6">
         <div>
@@ -189,5 +191,6 @@ export default function OpportunitiesClient({
         </div>
       </div>
     </AppShell>
+    </ErrorBoundary>
   );
 }
