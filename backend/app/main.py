@@ -16,11 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 _MIGRATIONS = [
+    # Platform upgrade columns (Session 5)
     "ALTER TABLE apps ADD COLUMN IF NOT EXISTS estimated_installs_min INTEGER",
     "ALTER TABLE apps ADD COLUMN IF NOT EXISTS estimated_installs_max INTEGER",
     "ALTER TABLE apps ADD COLUMN IF NOT EXISTS install_confidence FLOAT",
     "ALTER TABLE apps ADD COLUMN IF NOT EXISTS estimated_revenue_monthly_min FLOAT",
     "ALTER TABLE apps ADD COLUMN IF NOT EXISTS estimated_revenue_monthly_max FLOAT",
+    # Discovery engine tables (Session 11) — handled by create_all, but listed here for clarity
+    # (create_all creates them if absent; these are no-ops for existing installs)
 ]
 
 

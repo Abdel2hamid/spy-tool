@@ -108,7 +108,7 @@ class AppStoreScraper:
             logger.error(f"Error searching for '{keyword}': {e}")
         return results
 
-    async def get_search_results(self, keyword: str, limit: int = 50) -> List[Dict]:
+    async def get_search_results(self, keyword: str, limit: int = 200) -> List[Dict]:
         return await asyncio.to_thread(self._search_sync, keyword, limit)
 
     def _get_top_charts_sync(self, chart_type: str, genre_id: str, limit: int) -> List[Dict]:
@@ -168,7 +168,7 @@ class AppStoreScraper:
             logger.error(f"Error fetching top charts ({chart_type}/{genre_id}): {e}")
         return results
 
-    async def get_top_charts(self, chart_type: str = "topfree", category: str = None, limit: int = 100) -> List[Dict]:
+    async def get_top_charts(self, chart_type: str = "topfree", category: str = None, limit: int = 200) -> List[Dict]:
         genre_id = _category_to_genre_id(category)
         return await asyncio.to_thread(self._get_top_charts_sync, chart_type, genre_id, limit)
 

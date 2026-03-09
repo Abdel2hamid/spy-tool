@@ -8,7 +8,6 @@ from app.models.models import App, Category, Ranking, Keyword, AppKeyword, Revie
 from app.scrapers.appstore import AppStoreScraper
 from app.scrapers.app_details import AppStoreAppScraper
 from app.scoring.engine import ScoringEngine
-from app.config import settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -84,26 +83,14 @@ class ScraperWorker:
         self.db.commit()
     
     async def scrape_search_results(self, keywords: List[str]):
-        cap = settings.max_test_apps
-        logger.info(f"Starting search results scrape for {len(keywords)} keywords (cap={cap})")
+        logger.info(f"Starting search results scrape for {len(keywords)} keywords (uncapped)")
 
         for keyword in keywords:
-            # Stop discovering new apps once we hit the cap.
-            current_total = self.db.query(App).count()
-            if cap and current_total >= cap:
-                logger.info(f"App cap reached ({current_total}/{cap}) — skipping keyword '{keyword}'")
-                continue
-
             try:
-                results = await self.scraper.get_search_results(keyword, limit=50)
+                results = await self.scraper.get_search_results(keyword, limit=200)
                 logger.info(f"Found {len(results)} results for '{keyword}'")
 
                 for i, result in enumerate(results):
-                    # Re-check inside the loop so we stop mid-keyword too.
-                    if cap and self.db.query(App).count() >= cap:
-                        logger.info(f"App cap reached mid-keyword '{keyword}' — stopping")
-                        break
-
                     app = self.get_or_create_app(result)
                     
                     existing_keyword = self.db.query(Keyword).filter(
@@ -143,8 +130,7 @@ class ScraperWorker:
         if categories is None:
             categories = [None]  # None → "all" genres in the RSS API
 
-        cap = settings.max_test_apps
-        logger.info(f"Starting top charts scrape: {len(chart_types)} chart types (cap={cap})")
+        logger.info(f"Starting top charts scrape: {len(chart_types)} chart types (uncapped)")
 
         for chart_type in chart_types:
             for category in categories:
@@ -154,15 +140,11 @@ class ScraperWorker:
 
                     new_apps_added = 0
                     for result in results:
-                        # Check if this app already exists in DB
                         existing_app = self.db.query(App).filter(
                             App.app_id == result["app_id"]
                         ).first()
 
                         if existing_app is None:
-                            # Only create new app if under cap
-                            if cap and self.db.query(App).count() >= cap:
-                                continue  # skip new apps, but keep processing for ranking updates
                             app = self.get_or_create_app(result)
                             new_apps_added += 1
                         else:
@@ -339,12 +321,9 @@ class ScraperWorker:
         Intentionally skips version history HTML scraping (that is the
         responsibility of the heavier scrape_all_tracked_apps() job).
         """
-        cap = settings.max_test_apps
-        logger.info("Starting quick refresh for all tracked apps")
+        logger.info("Starting quick refresh for all tracked apps (uncapped)")
         apps = self.db.query(App).all()
-        if cap:
-            apps = apps[:cap]
-        logger.info(f"Quick refresh: {len(apps)} apps to process (cap={cap})")
+        logger.info(f"Quick refresh: {len(apps)} apps to process")
 
         success_count = 0
         for app in apps:
@@ -408,15 +387,12 @@ class ScraperWorker:
         return success_count
 
     async def scrape_all_tracked_apps(self):
-        cap = settings.max_test_apps
-        logger.info("Starting scrape for all tracked apps")
+        logger.info("Starting scrape for all tracked apps (uncapped)")
 
         apps = self.db.query(App).all()
-        if cap:
-            apps = apps[:cap]
         app_ids = [app.app_id for app in apps]
 
-        logger.info(f"Found {len(app_ids)} tracked apps to scrape (cap={cap})")
+        logger.info(f"Found {len(app_ids)} tracked apps to scrape")
         
         success_count = 0
         for app_id in app_ids:
@@ -606,28 +582,52 @@ class ScoringWorker:
 async def run_scrape_task():
     """
     Full pipeline:
-    1. Keyword search results  → discover / update apps in DB
-    2. Top charts              → skipped gracefully if broken
-    3. Full app details        → metadata, versions, reviews for every tracked app
+    1. Keyword discovery  → discover apps via 100+ keywords (via DiscoveryEngine)
+    2. Chart discovery    → top charts all categories (via DiscoveryEngine)
+    3. Queue processing   → scrape full details for every queued app
+    4. Full refresh       → update details for already-tracked apps
+
+    Falls back to legacy direct scrape if DiscoveryEngine is unavailable.
     """
+    from app.workers.discovery_engine import DISCOVERY_KEYWORDS
+    from app.database import SessionLocal
+
     worker = ScraperWorker()
     await worker.initialize()
 
     try:
-        # --- Phase 1: keyword search ---
-        keywords = ["productivity", "ai", "chat", "fitness", "finance", "education", "game"]
-        logger.info(f"Phase 1: scraping search results for {len(keywords)} keywords")
-        await worker.scrape_search_results(keywords)
+        # --- Phase 1: keyword search (legacy path keeps existing apps updated) ---
+        seed_keywords = [
+            "productivity", "ai", "chat", "fitness", "finance",
+            "education", "game", "health", "travel", "music",
+            "budget", "meditation", "recipe", "weather", "news",
+        ]
+        logger.info(f"Phase 1: keyword search for {len(seed_keywords)} seed keywords")
+        await worker.scrape_search_results(seed_keywords)
 
-        # --- Phase 2: top charts (best-effort) ---
-        logger.info("Phase 2: scraping top charts (best-effort)")
+        # --- Phase 2: top charts across all genres (best-effort) ---
+        logger.info("Phase 2: top charts across all chart types")
         try:
-            await worker.scrape_top_charts()
+            await worker.scrape_top_charts(
+                chart_types=["topfree", "toppaid", "topgrossing"],
+                categories=None,   # None = all-genres; per-category handled by discovery engine
+            )
         except Exception as e:
             logger.warning(f"Top charts scrape failed, skipping: {e}")
 
-        # --- Phase 3: full details for all tracked apps ---
-        logger.info("Phase 3: scraping full details for all tracked apps")
+        # --- Phase 3: process discovery queue (if any items queued by engine) ---
+        logger.info("Phase 3: processing discovery queue")
+        try:
+            db = SessionLocal()
+            from app.workers.discovery_engine import DiscoveryEngine
+            engine = DiscoveryEngine(db)
+            await engine.process_queue(batch_size=50)
+            db.close()
+        except Exception as e:
+            logger.warning(f"Discovery queue processing failed: {e}")
+
+        # --- Phase 4: full details for all tracked apps ---
+        logger.info("Phase 4: full details refresh for all tracked apps")
         success_count = await worker.scrape_all_tracked_apps()
         logger.info(f"Pipeline complete — {success_count} apps fully scraped")
 

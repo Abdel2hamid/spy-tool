@@ -293,6 +293,49 @@ class KeywordSearchSnapshot(Base):
     )
 
 
+class DiscoveryQueue(Base):
+    """
+    Persistent queue of app IDs awaiting full scrape.
+    Populated by chart/keyword/developer discovery; drained by queue_processor job.
+    """
+    __tablename__ = "discovery_queue"
+
+    id = Column(Integer, primary_key=True, index=True)
+    app_id = Column(String(100), unique=True, nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    # pending → scraping → done | failed
+    priority = Column(Integer, nullable=False, default=0, index=True)
+    # higher priority → processed first; keyword hits get priority=2, chart=1
+    source = Column(String(255))          # e.g. "chart:topfreeapplications:us:6007"
+    failed_attempts = Column(Integer, default=0)
+    added_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    processed_at = Column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("idx_dq_status_priority", "status", "priority"),
+        Index("idx_dq_added_at", "added_at"),
+    )
+
+
+class DiscoveryProgress(Base):
+    """
+    Tracks which discovery sources (charts, keywords, developers) have
+    already been scanned, so the crawler resumes where it left off.
+    """
+    __tablename__ = "discovery_progress"
+
+    id = Column(Integer, primary_key=True, index=True)
+    source_key = Column(String(255), unique=True, nullable=False, index=True)
+    # e.g. "chart:topfreeapplications:us:6007" or "keyword:fitness"
+    last_run = Column(DateTime(timezone=True))
+    apps_found = Column(Integer, default=0)   # cumulative IDs found from this source
+
+    __table_args__ = (
+        Index("idx_dp_source_key", "source_key"),
+        Index("idx_dp_last_run", "last_run"),
+    )
+
+
 class AppIdea(Base):
     __tablename__ = "app_ideas"
 

@@ -1,19 +1,23 @@
 """
-Recurring scraping and scoring scheduler.
+Recurring scraping, scoring, and discovery scheduler.
 
-Job schedule (first run is offset from startup because the lifespan already
-runs a full scrape; subsequent runs follow the interval exactly):
+Job schedule:
 
-  Job ID                  Interval  First run after startup
-  ──────────────────────  ────────  ─────────────────────────────
-  hourly_reviews_ratings    1 h     1 h   (ratings, review count, new reviews)
-  hourly_scoring            1 h     65 min (trails the reviews job by 5 min)
-  full_metadata             6 h     6 h   (full metadata + version history)
-  discovery                12 h    12 h   (keyword search + top charts)
+  Job ID                   Interval  First run   Purpose
+  ───────────────────────  ────────  ──────────  ─────────────────────────────────────────
+  discovery_keywords         6 h      2 min       100+ keyword search → queue
+  discovery_charts           2 h      5 min       Charts × all genres × 20 countries → queue
+  discovery_developer        12 h     10 min      Developer expansion → queue
+  queue_processor            30 min   15 min      Process discovery queue (full scrape)
+  hourly_reviews_ratings     1 h      1 h         Quick refresh (rating/reviews for all apps)
+  hourly_scoring             1 h      65 min      Recompute scores + daily report
+  full_metadata              6 h      6 h         Full metadata refresh for all tracked apps
+
+Discovery jobs have short first-run delays so coverage starts building
+immediately after deploy without waiting for the bootstrap endpoint.
 
 To change an interval: edit the `hours=` / `minutes=` in setup_scheduler().
 To disable a job:      comment out its scheduler.add_job() call.
-To add a job:          define an async job function and add it below.
 """
 
 import asyncio
@@ -141,39 +145,103 @@ async def job_full_metadata():
 
 
 # ---------------------------------------------------------------------------
-# Job: every 12 h — app discovery
+# Job: every 6 h — keyword discovery (100+ keywords → discovery queue)
 # ---------------------------------------------------------------------------
 
-_DISCOVERY_KEYWORDS = [
-    "productivity", "ai", "chat", "fitness", "finance",
-    "education", "game", "health", "travel", "music",
-]
-
-
-async def job_discovery():
+async def job_discovery_keywords():
     """
-    Discover new apps via keyword search results and top charts.
-    Newly found apps are added to the DB and picked up by subsequent
-    metadata/review jobs.
+    Run keyword search for all 100+ DISCOVERY_KEYWORDS not yet run today.
+    Newly found app IDs are enqueued in discovery_queue for full scraping.
     """
-    job_id = "discovery"
+    job_id = "discovery_keywords"
     t0 = _log_start(job_id)
-    from app.workers.tasks import ScraperWorker
-
-    worker = ScraperWorker()
-    await worker.initialize()
     try:
-        await worker.scrape_search_results(_DISCOVERY_KEYWORDS)
-        logger.info(f"[SCHEDULER]    {job_id}: keyword search done, attempting top charts")
+        from app.workers.discovery_engine import DiscoveryEngine
+        from app.database import SessionLocal
+        db = SessionLocal()
         try:
-            await worker.scrape_top_charts()
-        except Exception as exc:
-            logger.warning(f"[SCHEDULER]    {job_id}: top charts skipped — {exc}")
-        _log_done(job_id, t0)
+            engine = DiscoveryEngine(db)
+            new_ids = await engine.run_keyword_discovery()
+            _log_done(job_id, t0, f"{new_ids} new app IDs queued")
+        finally:
+            db.close()
     except Exception as exc:
         _log_fail(job_id, exc)
-    finally:
-        await worker.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# Job: every 2 h — chart discovery (all genres × all countries → queue)
+# ---------------------------------------------------------------------------
+
+async def job_discovery_charts():
+    """
+    Fetch the next batch of (chart × genre × country) combinations not yet
+    run today. Each batch processes 12 chart pages → up to 2,400 app IDs.
+    """
+    job_id = "discovery_charts"
+    t0 = _log_start(job_id)
+    try:
+        from app.workers.discovery_engine import DiscoveryEngine
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            engine = DiscoveryEngine(db)
+            new_ids = await engine.run_chart_discovery_batch(batch_size=12)
+            _log_done(job_id, t0, f"{new_ids} new app IDs queued")
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+# ---------------------------------------------------------------------------
+# Job: every 12 h — developer expansion (all apps per developer → queue)
+# ---------------------------------------------------------------------------
+
+async def job_discovery_developer():
+    """
+    For recently added apps whose developer hasn't been expanded yet,
+    fetch all other apps by that developer and enqueue them.
+    """
+    job_id = "discovery_developer"
+    t0 = _log_start(job_id)
+    try:
+        from app.workers.discovery_engine import DiscoveryEngine
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            engine = DiscoveryEngine(db)
+            new_ids = await engine.run_developer_expansion(limit=100)
+            _log_done(job_id, t0, f"{new_ids} new app IDs queued via developer expansion")
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+# ---------------------------------------------------------------------------
+# Job: every 30 min — queue processor (scrape queued app IDs)
+# ---------------------------------------------------------------------------
+
+async def job_queue_processor():
+    """
+    Pick up to 25 pending items from the discovery queue, scrape full
+    details (metadata + versions + reviews), persist to apps table.
+    """
+    job_id = "queue_processor"
+    t0 = _log_start(job_id)
+    try:
+        from app.workers.discovery_engine import DiscoveryEngine
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            engine = DiscoveryEngine(db)
+            scraped = await engine.process_queue(batch_size=25)
+            _log_done(job_id, t0, f"{scraped} apps fully scraped from queue")
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -211,8 +279,64 @@ def setup_scheduler() -> AsyncIOScheduler:
     """
     now = datetime.utcnow()
 
+    # ── Discovery: keyword search (100+ keywords → queue) — every 6 h ──────
+    # First run: 2 min after startup so discovery begins immediately on deploy.
+    scheduler.add_job(
+        job_discovery_keywords,
+        trigger=IntervalTrigger(
+            hours=6,
+            start_date=now + timedelta(minutes=2),
+            timezone="UTC",
+        ),
+        id="discovery_keywords",
+        name="Every 6h: Keyword Discovery → Queue",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── Discovery: chart scraping (all genres × countries → queue) — every 2 h
+    # First run: 5 min after startup; each run processes 12 chart pages.
+    # Full coverage of all charts takes ~44 runs (~88 h) cycling continuously.
+    scheduler.add_job(
+        job_discovery_charts,
+        trigger=IntervalTrigger(
+            hours=2,
+            start_date=now + timedelta(minutes=5),
+            timezone="UTC",
+        ),
+        id="discovery_charts",
+        name="Every 2h: Chart Discovery → Queue",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── Discovery: developer expansion — every 12 h ────────────────────────
+    # First run: 10 min after startup.
+    scheduler.add_job(
+        job_discovery_developer,
+        trigger=IntervalTrigger(
+            hours=12,
+            start_date=now + timedelta(minutes=10),
+            timezone="UTC",
+        ),
+        id="discovery_developer",
+        name="Every 12h: Developer Expansion → Queue",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── Queue processor: full scrape of queued app IDs — every 30 min ──────
+    # First run: 15 min after startup (enough time for keywords/charts to queue some IDs).
+    scheduler.add_job(
+        job_queue_processor,
+        trigger=IntervalTrigger(
+            minutes=30,
+            start_date=now + timedelta(minutes=15),
+            timezone="UTC",
+        ),
+        id="queue_processor",
+        name="Every 30min: Process Discovery Queue",
+        **_JOB_DEFAULTS,
+    )
+
     # ── every 1 h: quick reviews & ratings refresh ─────────────────────────
-    # First run: 1 h after startup (startup already ran a full scrape)
     scheduler.add_job(
         job_hourly_reviews_ratings,
         trigger=IntervalTrigger(
@@ -226,7 +350,6 @@ def setup_scheduler() -> AsyncIOScheduler:
     )
 
     # ── every 1 h: scoring recompute ───────────────────────────────────────
-    # First run: 65 min after startup so it trails the reviews job by 5 min
     scheduler.add_job(
         job_hourly_scoring,
         trigger=IntervalTrigger(
@@ -252,21 +375,7 @@ def setup_scheduler() -> AsyncIOScheduler:
         **_JOB_DEFAULTS,
     )
 
-    # ── every 12 h: app discovery ──────────────────────────────────────────
-    scheduler.add_job(
-        job_discovery,
-        trigger=IntervalTrigger(
-            hours=12,
-            start_date=now + timedelta(hours=12),
-            timezone="UTC",
-        ),
-        id="discovery",
-        name="Every 12h: App Discovery",
-        **_JOB_DEFAULTS,
-    )
-
-    # ── every 6 h: keyword rank tracking ───────────────────────────────────
-    # First run: 30 min after startup (light enough to run early)
+    # ── every 6 h: keyword rank tracking (App Store search scraping) ────────
     scheduler.add_job(
         job_keyword_rank_tracker,
         trigger=IntervalTrigger(
@@ -280,5 +389,5 @@ def setup_scheduler() -> AsyncIOScheduler:
     )
 
     registered = [j.id for j in scheduler.get_jobs()]
-    logger.info(f"[SCHEDULER] Registered jobs: {registered}")
+    logger.info(f"[SCHEDULER] Registered {len(registered)} jobs: {registered}")
     return scheduler

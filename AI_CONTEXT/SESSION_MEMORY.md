@@ -299,6 +299,69 @@ All three cases handled correctly:
 **Files Modified:**
 - `backend/app/api/routes.py` — added bootstrap endpoints, fixed imports
 
+---
+
+## Session: 2026-03-09 (Session 11 — Large-Scale Discovery Engine)
+
+**Summary:** Removed all app caps, built a perpetual large-scale discovery engine covering all App Store categories × 20 countries × 3 chart types + 100+ keyword searches + developer expansion.
+
+**Limits Removed:**
+- `cap = settings.max_test_apps` guard removed from all 4 ScraperWorker methods
+- `if cap: apps = apps[:cap]` slicing removed from `scrape_quick_refresh_all` + `scrape_all_tracked_apps`
+- `if cap and ... >= cap: continue/break` guards removed from `scrape_search_results` + `scrape_top_charts`
+- `from app.config import settings` import removed from tasks.py (no longer needed)
+- Search limit raised: 50 → 200 (appstore.py `get_search_results`)
+- Chart limit raised: 100 → 200 (appstore.py `get_top_charts`)
+
+**New Models:**
+- `DiscoveryQueue` — persistent queue of app IDs awaiting full scrape (status: pending/scraping/done/failed, priority, source, failed_attempts, added_at, processed_at)
+- `DiscoveryProgress` — tracks which chart/keyword/developer source was last scanned (prevents re-fetching same source multiple times per day)
+
+**New File: `backend/app/workers/discovery_engine.py`**
+- `DiscoveryEngine` class with 4 discovery methods:
+  - `run_chart_discovery_batch(batch_size)` — all 21 genres × 20 countries × 3 chart types; processes `batch_size` slots per call, resumable via DiscoveryProgress
+  - `run_keyword_discovery()` — 100+ keywords via iTunes Search API (200 results each)
+  - `run_developer_expansion(limit)` — all apps by each known developer via iTunes artist lookup
+  - `process_queue(batch_size)` — drains discovery_queue with full scrape; priority: higher priority first, then FIFO
+  - `get_metrics()` — live counts: total_apps, new_today, queue_pending/done/failed, sources_scanned, coverage_pct
+
+**New Scheduler Jobs (4 added):**
+- `discovery_keywords` — every 6h, first run +2min
+- `discovery_charts` — every 2h, first run +5min
+- `discovery_developer` — every 12h, first run +10min
+- `queue_processor` — every 30min, first run +15min
+
+**Total scheduler jobs:** was 5, now 8
+
+**New API Endpoints (4 added):**
+- `GET /api/v1/admin/discovery/metrics`
+- `POST /api/v1/admin/discovery/run-charts?batch_size=20`
+- `POST /api/v1/admin/discovery/run-keywords`
+- `POST /api/v1/admin/discovery/process-queue?batch_size=25`
+
+**Discovery Coverage (theoretical maximum per day):**
+- Charts: 3 × 21 × 20 = 1,260 unique chart feeds × 200 apps = 252,000 app IDs/day
+- Keywords: 100+ × 200 results = 20,000 app IDs/day
+- Total unique after dedup: ~50,000–100,000 new IDs/day → queue grows continuously
+
+**Key Design Decisions:**
+- `enqueue()` does single-query dedup vs both `apps` and `discovery_queue` tables
+- `_ran_today()` prevents re-scanning same source within a day
+- Keyword hits get priority=2 (higher than chart hits priority=1) — search results are more intent-aligned
+- `failed_attempts < 3` retry logic; after 3 failures status → "failed" (skipped)
+- `run_scrape_task()` (bootstrap) now also calls discovery engine + processes 50 from queue
+
+**Files Modified:**
+- `backend/app/models/models.py` — DiscoveryQueue + DiscoveryProgress models
+- `backend/app/workers/tasks.py` — all caps removed, settings import removed, run_scrape_task expanded
+- `backend/app/workers/scheduler.py` — 4 new jobs, updated docstring
+- `backend/app/scrapers/appstore.py` — limits raised to 200
+- `backend/app/api/routes.py` — 4 new admin/discovery endpoints
+- `backend/DEPLOYMENT.md` — Discovery Engine section added
+
+**Files Created:**
+- `backend/app/workers/discovery_engine.py`
+
 **Bootstrap instructions for Railway:**
 1. Open `https://your-backend.railway.app/docs`
 2. `POST /api/v1/admin/bootstrap` → click Execute

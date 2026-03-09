@@ -131,6 +131,40 @@ service with `requirements-dev.txt` + `playwright install chromium`.
 
 ---
 
+## Discovery Engine & Growth
+
+The system continuously expands App Store coverage via 4 discovery sources
+running on a perpetual schedule:
+
+| Job | Interval | First run | What it does |
+|-----|----------|-----------|-------------|
+| `discovery_keywords` | 6 h | +2 min | 100+ keywords → iTunes Search API (200 results each) |
+| `discovery_charts` | 2 h | +5 min | Top charts for all 21 genres × 3 chart types × 20 countries (12 pages/run) |
+| `discovery_developer` | 12 h | +10 min | All apps by each known developer |
+| `queue_processor` | 30 min | +15 min | Scrapes full details for queued app IDs (25/run) |
+
+**All caps removed.** `MAX_TEST_APPS` is ignored. No per-run limits.
+
+**Growth trajectory:**
+- Day 1: ~5,000–15,000 apps discovered, ~1,200 fully scraped
+- Week 1: ~50,000–100,000 apps discovered, ~8,000 fully scraped
+- Month 1: ~500,000+ app IDs in queue, growing continuously
+
+**Monitor progress:**
+```
+GET /api/v1/admin/discovery/metrics
+```
+
+**Manually accelerate:**
+```
+POST /api/v1/admin/bootstrap              # full one-shot pipeline
+POST /api/v1/admin/discovery/run-keywords # keyword discovery now
+POST /api/v1/admin/discovery/run-charts   # chart discovery now
+POST /api/v1/admin/discovery/process-queue# scrape queue now
+```
+
+---
+
 ## Local Development
 
 ```bash

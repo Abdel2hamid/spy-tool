@@ -831,6 +831,63 @@ def bootstrap_status(db: Session = Depends(get_db)):
     }
 
 
+@router.get("/admin/discovery/metrics")
+def get_discovery_metrics(db: Session = Depends(get_db)):
+    """
+    Live discovery engine metrics:
+    - Total apps in DB and new apps added today/yesterday
+    - Discovery queue counts (pending / scraping / done / failed)
+    - Number of sources (chart+keyword+developer combinations) scanned today vs total
+    - Estimated coverage percentage
+
+    Use this to monitor how fast the catalog is growing.
+    """
+    from app.workers.discovery_engine import DiscoveryEngine
+    engine = DiscoveryEngine(db)
+    return engine.get_metrics()
+
+
+@router.post("/admin/discovery/run-charts")
+async def trigger_chart_discovery(
+    batch_size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """
+    Manually trigger a chart discovery batch (up to `batch_size` chart pages).
+    Useful after first deploy or when you want to accelerate coverage.
+    """
+    from app.workers.discovery_engine import DiscoveryEngine
+    engine = DiscoveryEngine(db)
+    new_ids = await engine.run_chart_discovery_batch(batch_size=batch_size)
+    return {"status": "ok", "new_ids_queued": new_ids}
+
+
+@router.post("/admin/discovery/run-keywords")
+async def trigger_keyword_discovery(db: Session = Depends(get_db)):
+    """
+    Manually trigger keyword discovery for all 100+ keywords not yet run today.
+    """
+    from app.workers.discovery_engine import DiscoveryEngine
+    engine = DiscoveryEngine(db)
+    new_ids = await engine.run_keyword_discovery()
+    return {"status": "ok", "new_ids_queued": new_ids}
+
+
+@router.post("/admin/discovery/process-queue")
+async def trigger_queue_processing(
+    batch_size: int = Query(25, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """
+    Manually process up to `batch_size` items from the discovery queue
+    (full scrape: metadata + versions + reviews).
+    """
+    from app.workers.discovery_engine import DiscoveryEngine
+    engine = DiscoveryEngine(db)
+    scraped = await engine.process_queue(batch_size=batch_size)
+    return {"status": "ok", "apps_scraped": scraped}
+
+
 @router.post("/scrape/all")
 async def scrape_all_apps(db: Session = Depends(get_db)):
     from app.workers.tasks import ScraperWorker
