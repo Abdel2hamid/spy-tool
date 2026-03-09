@@ -1,4 +1,3 @@
-import numpy as np
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from sqlalchemy.orm import Session

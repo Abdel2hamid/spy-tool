@@ -2,9 +2,17 @@ import asyncio
 import urllib.parse
 import urllib.request
 import json
-from typing import List, Dict, Optional
-from playwright.async_api import async_playwright, Page, Browser
+from typing import Any, List, Dict, Optional
 import logging
+
+# Playwright is an optional dev dependency — only needed for keyword rank tracking.
+# The core scraping paths (iTunes API, RSS feeds) work without it.
+try:
+    from playwright.async_api import async_playwright
+    _PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    async_playwright = None  # type: ignore[assignment]
+    _PLAYWRIGHT_AVAILABLE = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -52,13 +60,16 @@ def _category_to_genre_id(category: Optional[str]) -> str:
 
 class AppStoreScraper:
     def __init__(self):
-        self.browser: Optional[Browser] = None
-        self.page: Optional[Page] = None
+        self.browser: Optional[Any] = None
+        self.page: Optional[Any] = None
         self.base_url = "https://apps.apple.com"
 
     async def init(self):
-        playwright = await async_playwright().start()
-        self.browser = await playwright.chromium.launch(headless=True)
+        if not _PLAYWRIGHT_AVAILABLE:
+            logger.warning("Playwright not installed — AppStoreScraper.init() skipped")
+            return
+        pw = await async_playwright().start()
+        self.browser = await pw.chromium.launch(headless=True)
         self.page = await self.browser.new_page(
             user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
         )

@@ -1,0 +1,22 @@
+# Development / full-feature requirements
+# Install with: pip install -r requirements-dev.txt
+# This includes everything in requirements.txt PLUS heavy scraping tools
+
+-r requirements.txt
+
+# Playwright — required for keyword rank tracking (App Store search scraping)
+# After install, also run: playwright install chromium
+playwright==1.41.0
+
+# Data science — numpy used only as a dead import in scoring/engine.py (safe to omit)
+numpy==1.26.3
+scikit-learn==1.4.0
+
+# Faster HTML parsing (optional; falls back to html.parser)
+lxml==5.1.0
+
+# Async PostgreSQL driver (not needed — sync SQLAlchemy + psycopg2 is used)
+asyncpg==0.29.0
+
+# Alembic — only needed if running manual schema migrations locally
+alembic==1.13.1

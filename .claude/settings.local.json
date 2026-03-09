@@ -138,7 +138,8 @@
       "Bash(source venv/bin/activate && pip install anthropic -q && pip show anthropic | grep Version)",
       "Bash(cd /Users/abdelhamid/appstore-spy-tool/frontend && npx tsc --noEmit 2>&1 | head -50)",
       "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -c \"\nfrom app.models.models import App, AppIdea\nfrom app.models.schemas import InstallEstimateResponse, RevenueEstimateResponse, KeywordHistoryResponse, NicheRadarResponse, ReviewIntelligenceResponse, AppAutopsyResponse\nfrom app.services.install_estimator import InstallEstimator\nfrom app.services.revenue_estimator import RevenueEstimator\nfrom app.services.keyword_history import KeywordHistoryService\nfrom app.services.niche_radar import NicheRadarEngine\nfrom app.services.review_intelligence import ReviewIntelligenceService\nfrom app.services.app_autopsy import AppAutopsyService\nprint\\('All imports OK'\\)\n\" 2>&1)",
-      "Bash(python3 -c \"\nfrom app.api.routes import router\nprint\\(f'Routes loaded OK — {len\\(router.routes\\)} routes registered'\\)\n\" 2>&1)"
+      "Bash(python3 -c \"\nfrom app.api.routes import router\nprint\\(f'Routes loaded OK — {len\\(router.routes\\)} routes registered'\\)\n\" 2>&1)",
+      "Bash(python3 -c \"\n# Simulate production env: pretend playwright/numpy/sklearn are not installed\nimport sys\n\n# Block these packages from importing\nclass BlockedImport:\n    def find_module\\(self, name, path=None\\):\n        if name in \\('playwright', 'numpy', 'sklearn', 'lxml', 'asyncpg', 'alembic'\\):\n            return self\n    def load_module\\(self, name\\):\n        raise ImportError\\(f'[BLOCKED] {name} not installed in production'\\)\n\nsys.meta_path.insert\\(0, BlockedImport\\(\\)\\)\n\n# Now try to boot the app\nfrom app.main import app\nprint\\('Boot OK — production import chain is clean'\\)\nprint\\(f'Routes: {len\\(app.routes\\)} registered'\\)\n\" 2>&1)"
     ]
   }
 }

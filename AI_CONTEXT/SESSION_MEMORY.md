@@ -160,3 +160,38 @@ At the end of a session (or when asked to "remember"), append a new entry using 
 Also created: `PRODUCT_STRATEGY_REPORT.md` at repository root (product strategy analysis).
 
 ---
+
+## Session: 2026-03-08 (Session 6 — Railway Deployment Prep)
+
+**Summary:** Slimmed requirements for fast Railway builds by splitting into prod vs dev packages and fixing module-level Playwright/numpy imports.
+
+**Changes Made:**
+- Removed `numpy`, `scikit-learn`, `playwright`, `lxml`, `asyncpg`, `alembic` from production `requirements.txt`
+- Created `requirements-dev.txt` (includes all heavy packages for local dev)
+- Fixed `appstore.py`: module-level `from playwright.async_api import ...` replaced with guarded try/except + lazy import inside `init()`. Type hints changed to `Optional[Any]`.
+- Removed dead `import numpy as np` from `scoring/engine.py` (numpy was never used)
+- Created `Procfile` for Railway: `web: uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- Created `DEPLOYMENT.md` explaining which requirements file Railway uses, env vars, and what's excluded
+
+**Files Modified:**
+- `backend/requirements.txt` — production slim (8 packages, no Playwright/numpy/sklearn)
+- `backend/app/scrapers/appstore.py` — lazy Playwright import
+- `backend/app/scoring/engine.py` — removed dead numpy import
+
+**Files Created:**
+- `backend/requirements-dev.txt` — full dev deps
+- `backend/Procfile` — Railway start command
+- `backend/DEPLOYMENT.md` — Railway deployment guide
+
+**Verified:** `python3` boot test with playwright/numpy/sklearn/lxml/asyncpg/alembic blocked → clean boot, 45 routes registered.
+
+**Railway Commands:**
+- Build: `pip install -r requirements.txt` (auto-detected)
+- Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+
+**Notes / Gotchas:**
+- Keyword rank tracking (Playwright job) will log an error and skip gracefully when Playwright isn't installed — API is unaffected
+- `DATABASE_URL` env var from Railway Postgres is `postgresql://...` — the app strips `+asyncpg` suffix automatically so both formats work
+- `appstore_backup.py` is a stale unused file (never imported) — it still has a top-level Playwright import but causes no issues since it's never imported
+
+---
