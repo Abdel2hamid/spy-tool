@@ -273,3 +273,38 @@ All three cases handled correctly:
 - `frontend/src/lib/api.ts` — `API_BASE` normalization
 
 ---
+
+## Session: 2026-03-09 (Session 10 — Bootstrap Endpoint for Empty Railway DB)
+
+**Summary:** Added `POST /api/v1/admin/bootstrap` to populate a fresh Railway database in one call.
+
+**Root Cause of Empty Dashboard:**
+- Railway Postgres is freshly provisioned → zero rows in all tables
+- Scheduler `discovery` job first runs +12h after deploy, `full_metadata` +6h
+- `POST /scrape/all` is useless on an empty DB (no apps to scrape)
+- No endpoint existed to seed the database from scratch
+
+**New Endpoints Added (`backend/app/api/routes.py`):**
+- `POST /api/v1/admin/bootstrap` — runs full pipeline in background (discovery → full scrape → scoring), returns immediately. Returns 409 if already running.
+- `GET /api/v1/admin/bootstrap/status` — shows `bootstrap_running`, total_apps, keywords, reviews counts
+
+**Pipeline in bootstrap:**
+1. `run_scrape_task()` — keyword search (10 keywords × 50 results) + top charts + full details for every discovered app
+2. `run_scoring_task()` — opportunities, market weakness, feature gaps, ideas, install/revenue estimates
+
+**Other fixes in routes.py:**
+- Added `BackgroundTasks` to fastapi imports
+- Moved `import asyncio` to module-level (removed duplicate inline imports)
+
+**Files Modified:**
+- `backend/app/api/routes.py` — added bootstrap endpoints, fixed imports
+
+**Bootstrap instructions for Railway:**
+1. Open `https://your-backend.railway.app/docs`
+2. `POST /api/v1/admin/bootstrap` → click Execute
+3. Poll `GET /api/v1/admin/bootstrap/status` every minute to track progress
+4. When `total_apps > 0`, refresh the dashboard
+
+**Key Gotcha:** Bootstrap is idempotent — calling it twice while running returns 409. Calling it on a non-empty DB is safe (scrape/upsert logic skips existing records).
+
+---

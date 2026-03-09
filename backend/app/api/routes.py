@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_
 from typing import List, Optional
 from datetime import datetime, timedelta
+import asyncio
 import logging
 
 from app.database import get_db
@@ -755,10 +756,84 @@ def analyze_feature_gaps(app_id: int, db: Session = Depends(get_db)):
     }
 
 
+# ---------------------------------------------------------------------------
+# Admin bootstrap — populates an empty database from scratch
+# ---------------------------------------------------------------------------
+
+_bootstrap_running = False
+
+
+@router.post("/admin/bootstrap")
+async def bootstrap_database(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    **One-shot bootstrap for a fresh / empty Railway database.**
+
+    Runs the full pipeline in the background and returns immediately:
+      1. Discovery  — keyword search (10 keywords × 50 results) + top charts
+      2. Full scrape — metadata, versions, reviews for every discovered app
+      3. Scoring     — opportunities, market weakness, feature gaps, ideas,
+                       install/revenue estimates
+
+    Call this once after first deploy. Check GET /dashboard/stats to see
+    progress. The job runs for ~5–15 minutes depending on Railway capacity.
+
+    Returns 409 if a bootstrap is already running.
+    """
+    global _bootstrap_running
+    if _bootstrap_running:
+        raise HTTPException(
+            status_code=409,
+            detail="Bootstrap already running — wait for it to complete then check /dashboard/stats",
+        )
+
+    total_apps_before = db.query(models.App).count()
+
+    async def _run():
+        global _bootstrap_running
+        _bootstrap_running = True
+        try:
+            from app.workers.tasks import run_scrape_task, run_scoring_task
+            logger.info("[BOOTSTRAP] Starting full pipeline on empty database")
+            await run_scrape_task()
+            logger.info("[BOOTSTRAP] Scrape complete — running scoring")
+            await asyncio.to_thread(run_scoring_task)
+            logger.info("[BOOTSTRAP] Bootstrap complete")
+        except Exception as exc:
+            logger.error(f"[BOOTSTRAP] Failed: {exc}", exc_info=True)
+        finally:
+            _bootstrap_running = False
+
+    background_tasks.add_task(_run)
+
+    return {
+        "status": "started",
+        "apps_in_db_before": total_apps_before,
+        "message": (
+            "Bootstrap pipeline started in background. "
+            "Phase 1 (discovery) takes ~2–3 min, Phase 2 (full scrape) ~5–10 min. "
+            "Poll GET /api/v1/dashboard/stats to track progress."
+        ),
+        "poll_url": "/api/v1/dashboard/stats",
+    }
+
+
+@router.get("/admin/bootstrap/status")
+def bootstrap_status(db: Session = Depends(get_db)):
+    """Check whether a bootstrap is running and how many apps are in the DB."""
+    return {
+        "bootstrap_running": _bootstrap_running,
+        "total_apps": db.query(models.App).count(),
+        "total_keywords": db.query(models.Keyword).count(),
+        "total_reviews": db.query(models.Review).count(),
+    }
+
+
 @router.post("/scrape/all")
 async def scrape_all_apps(db: Session = Depends(get_db)):
     from app.workers.tasks import ScraperWorker
-    import asyncio
     
     logger.info("Manual scrape all triggered via API")
     
@@ -782,7 +857,6 @@ async def scrape_all_apps(db: Session = Depends(get_db)):
 @router.post("/apps/{app_id}/refresh")
 async def scrape_single_app(app_id: int, db: Session = Depends(get_db)):
     from app.workers.tasks import ScraperWorker
-    import asyncio
 
     app = db.query(models.App).filter(models.App.id == app_id).first()
     if not app:
