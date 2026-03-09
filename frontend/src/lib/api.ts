@@ -1,4 +1,13 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
+// Normalize to always include /api/v1.
+// NEXT_PUBLIC_API_URL can be the backend origin alone
+// (https://backend.railway.app) or include the path (…/api/v1) — both work.
+// Unset → relative '/api/v1' → goes through the Next.js rewrite proxy.
+const _rawBase = (process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/+$/, '');
+const API_BASE = _rawBase === ''
+  ? '/api/v1'
+  : _rawBase.endsWith('/api/v1')
+    ? _rawBase
+    : `${_rawBase}/api/v1`;
 
 export interface DashboardStats {
   total_apps_tracked: number;

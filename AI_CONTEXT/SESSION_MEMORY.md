@@ -246,3 +246,30 @@ Also created: `PRODUCT_STRATEGY_REPORT.md` at repository root (product strategy 
 **Next Railway Step:** In Railway → Frontend Service → Variables, add `BACKEND_URL=https://your-backend-service.railway.app` then redeploy the frontend.
 
 ---
+
+## Session: 2026-03-09 (Session 9 — API_BASE normalization fix)
+
+**Summary:** Fixed `api.ts` `API_BASE` to always include `/api/v1` regardless of whether `NEXT_PUBLIC_API_URL` contains it or not.
+
+**Root Cause:**
+- `const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/v1'`
+- If Railway sets `NEXT_PUBLIC_API_URL=https://backend.railway.app` (no `/api/v1`), every call becomes `https://backend.railway.app/dashboard/stats` — missing prefix → FastAPI 404 on all dashboard endpoints
+
+**Fix (`frontend/src/lib/api.ts` line 1):**
+```js
+const _rawBase = (process.env.NEXT_PUBLIC_API_URL ?? '').replace(/\/+$/, '');
+const API_BASE = _rawBase === ''
+  ? '/api/v1'
+  : _rawBase.endsWith('/api/v1')
+    ? _rawBase
+    : `${_rawBase}/api/v1`;
+```
+All three cases handled correctly:
+- Unset → `/api/v1` (relative, through Next.js proxy)
+- `https://backend.railway.app` → `https://backend.railway.app/api/v1` ✓
+- `https://backend.railway.app/api/v1` → `https://backend.railway.app/api/v1` ✓ (idempotent)
+
+**Files Modified:**
+- `frontend/src/lib/api.ts` — `API_BASE` normalization
+
+---
