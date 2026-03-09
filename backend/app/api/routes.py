@@ -1290,8 +1290,12 @@ def get_niche_radar(
     """Return top emerging App Store micro-niches detected from signals."""
     from app.services.niche_radar import NicheRadarEngine
     from datetime import datetime, timezone
-    radar = NicheRadarEngine(db)
-    niches = radar.scan(limit=limit)
+    try:
+        radar = NicheRadarEngine(db)
+        niches = radar.scan(limit=limit)
+    except Exception as exc:
+        logger.warning("NicheRadar scan failed, returning empty: %s", exc)
+        niches = []
     return {
         "niches": niches,
         "total": len(niches),

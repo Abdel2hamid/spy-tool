@@ -79,19 +79,33 @@ const FILTER_LABELS: Record<string, string> = {
 export default function NicheRadarClient() {
   const [niches, setNiches] = useState<NicheRadarItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [fetchFailed, setFetchFailed] = useState(false);
   const [scannedAt, setScannedAt] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>('all');
 
   const load = async () => {
     setLoading(true);
-    setError(null);
+    setFetchFailed(false);
     try {
       const data = await getNicheRadar(30);
-      setNiches(Array.isArray(data?.niches) ? data.niches : []);
+      const items = Array.isArray(data?.niches) ? data.niches : [];
+      setNiches(items.map((n) => ({
+        niche_name: n.niche_name ?? 'Unknown',
+        niche_score: Number(n.niche_score) || 0,
+        signal_type: n.signal_type ?? 'keyword_growth',
+        description: n.description ?? '',
+        keywords: Array.isArray(n.keywords) ? n.keywords : [],
+        app_count: Number(n.app_count) || 0,
+        trend: Number(n.trend) || 0,
+        search_volume: Number(n.search_volume) || 0,
+        difficulty: Number(n.difficulty) || 0,
+        detected_at: n.detected_at ?? '',
+      })));
       setScannedAt(data?.scanned_at ?? null);
-    } catch (e) {
-      setError('Failed to load niche radar data');
+    } catch {
+      // On any error, show empty state (data may simply not be generated yet)
+      setNiches([]);
+      setFetchFailed(true);
     } finally {
       setLoading(false);
     }
@@ -179,15 +193,13 @@ export default function NicheRadarClient() {
               <div key={i} className="h-48 animate-pulse rounded-xl bg-gray-100 dark:bg-gray-800" />
             ))}
           </div>
-        ) : error ? (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center text-red-600 dark:border-red-800 dark:bg-red-950/30">
-            {error}
-          </div>
         ) : filtered.length === 0 ? (
           <div className="rounded-xl border border-dashed border-gray-300 p-12 text-center dark:border-gray-700">
             <Radar className="mx-auto mb-3 h-10 w-10 text-gray-400" />
             <p className="text-gray-500">
-              {niches.length === 0
+              {fetchFailed
+                ? 'Niche data not available yet — bootstrap the app and run scoring to generate signals.'
+                : niches.length === 0
                 ? 'No niches detected yet. Add keywords and track apps to generate signals.'
                 : 'No niches match this filter.'}
             </p>

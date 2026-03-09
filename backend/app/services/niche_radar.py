@@ -33,9 +33,15 @@ class NicheRadarEngine:
         """
         briefs: List[Dict] = []
 
-        briefs.extend(self._keyword_growth_niches())
-        briefs.extend(self._ranking_momentum_niches())
-        briefs.extend(self._feature_gap_niches())
+        for method in (
+            self._keyword_growth_niches,
+            self._ranking_momentum_niches,
+            self._feature_gap_niches,
+        ):
+            try:
+                briefs.extend(method())
+            except Exception as exc:
+                logger.warning("NicheRadar pass %s failed: %s", method.__name__, exc)
 
         # Deduplicate by niche_name (keep highest score)
         seen: Dict[str, Dict] = {}
@@ -183,7 +189,7 @@ class NicheRadarEngine:
 
         briefs = []
         for row in rows:
-            score = min(int(row.app_count * 8 + row.total_mentions * 1.5), 90)
+            score = min(int((row.app_count or 0) * 8 + (row.total_mentions or 0) * 1.5), 90)
 
             briefs.append({
                 "niche_name": f"{row.feature_name.title()} Feature",

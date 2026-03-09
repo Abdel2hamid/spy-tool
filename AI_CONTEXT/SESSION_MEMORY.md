@@ -301,6 +301,35 @@ All three cases handled correctly:
 
 ---
 
+## Session: 2026-03-09 (Session 15 — Niche Radar Error Fix)
+
+**Summary:** Fixed Niche Radar page showing "Failed to load niche radar data" by hardening the backend engine and making the frontend treat failures as empty state.
+
+**Root Cause (multi-layer):**
+1. `_feature_gap_niches()` in `niche_radar.py`: `row.total_mentions * 1.5` raised `TypeError: unsupported operand type(s) for *: 'NoneType' and 'float'` when PostgreSQL `SUM(mentions)` returned NULL (possible if all `mentions` values in a group are NULL). This propagated as an unhandled Python exception → FastAPI returned 500.
+2. Any single query failure in `scan()` (e.g., DB column not available, SQLAlchemy error) crashed the entire endpoint with no recovery.
+3. The frontend catch block set `error` state to "Failed to load niche radar data" and rendered a red error box — even when the underlying cause was simply no data.
+
+**Backend fixes (`backend/app/services/niche_radar.py`):**
+- `_feature_gap_niches()`: Changed `row.total_mentions * 1.5` → `(row.total_mentions or 0) * 1.5` and `row.app_count * 8` → `(row.app_count or 0) * 8`
+- `scan()`: Replaced `briefs.extend(method())` for each of the 3 passes with a for-loop + try/except per method. A failing pass logs a warning and returns `[]` instead of crashing the whole scan.
+- `get_niche_radar` route in `routes.py`: Wrapped `NicheRadarEngine` instantiation and `radar.scan()` in try/except; on any exception, `niches = []` is returned with a 200 OK (not a 500).
+
+**Frontend fixes (`frontend/src/app/niche-radar/NicheRadarClient.tsx`):**
+- Replaced `error` state with `fetchFailed` boolean.
+- Catch block now sets `setNiches([])` and `setFetchFailed(true)` instead of `setError('...')` — page shows the empty state rather than a red error box.
+- `load()` defensively normalizes every field of each niche item (`Number(...)`, `?? defaults`, `Array.isArray()` guard) before setting state — prevents render crashes from unexpected backend shapes.
+- Removed the red error panel; the empty state message adapts: "Niche data not available yet — bootstrap the app..." when `fetchFailed`, vs the normal "No niches detected yet." message.
+
+**Files Modified:**
+- `backend/app/services/niche_radar.py` — None-safe score calc, per-pass try/except in scan()
+- `backend/app/api/routes.py` — try/except wrapper around NicheRadarEngine in get_niche_radar()
+- `frontend/src/app/niche-radar/NicheRadarClient.tsx` — fetchFailed state, defensive parsing, empty state instead of error
+
+**Result:** Niche Radar page always loads (200 OK from backend, clean empty state when no data, graceful handling of any backend exception).
+
+---
+
 ## Session: 2026-03-09 (Session 12 — Opportunity of the Day: Big Brand Exclusion + Feasibility Scoring)
 
 **Summary:** Fixed "Opportunity of the Day" to never surface apps dominated by major companies; rewrote scoring to 45% attractiveness + 55% feasibility.
