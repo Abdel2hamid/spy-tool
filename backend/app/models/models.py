@@ -471,12 +471,14 @@ class AppDiscoveredKeyword(Base):
     id = Column(Integer, primary_key=True, index=True)
     app_id = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
     keyword = Column(String(255), nullable=False)
-    source = Column(String(50))           # 'autocomplete' | 'prefix' | 'suffix'
+    source = Column(String(50))           # 'autocomplete'|'prefix'|'suffix'|'alphabet'|'competitor'
     source_keyword = Column(String(255))  # which seed keyword generated this
     search_volume = Column(Integer, default=0)
     difficulty = Column(Float, default=0.0)
     traffic_score = Column(Float, default=0.0)
     app_rank = Column(Integer)            # app's position in iTunes results; None if absent
+    competitor_rank = Column(Integer)     # best competitor position in top-10; None if unknown
+    keyword_gap = Column(Boolean, default=False)  # True when competitor ≤10 & we rank >30/None
     trend_score = Column(Float, default=0.0)
     trend_direction = Column(String(20), default="stable")  # 'rising'|'stable'|'declining'
     opportunity_score = Column(Float, default=0.0)
@@ -486,6 +488,7 @@ class AppDiscoveredKeyword(Base):
         Index("idx_adk_app", "app_id"),
         Index("idx_adk_app_kw", "app_id", "keyword", unique=True),
         Index("idx_adk_opp_score", "app_id", "opportunity_score"),
+        Index("idx_adk_gap", "app_id", "keyword_gap"),
     )
 
 

@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '@/components';
-import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, getAppDetail, getAppVersions, getAppReviews, getAppAnalytics, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, RankHistory } from '@/lib/api';
+import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, getAppDetail, getAppVersions, getAppReviews, getAppAnalytics, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, RankHistory } from '@/lib/api';
 import {
   ArrowLeft, Star, Download, Calendar, Globe, MessageSquare,
   TrendingUp, BarChart3, AlertTriangle, ThumbsUp, Code, ExternalLink,
@@ -1330,6 +1330,172 @@ function KeywordOpportunitiesHighlight({ appId }: { appId: number }) {
 }
 
 
+// TopKeywordOpportunitiesTable — Phase-1 opportunities (alphabet+competitor+gap)
+// ---------------------------------------------------------------------------
+
+function scoreColor(score: number) {
+  if (score >= 70) return 'text-emerald-600 dark:text-emerald-400';
+  if (score >= 45) return 'text-amber-600 dark:text-amber-400';
+  return 'text-gray-500 dark:text-gray-400';
+}
+
+function scoreBg(score: number) {
+  if (score >= 70) return 'bg-emerald-50 border-emerald-200 dark:bg-emerald-950/30 dark:border-emerald-900';
+  if (score >= 45) return 'bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-900';
+  return 'bg-gray-50 border-gray-200 dark:bg-gray-800/50 dark:border-gray-700';
+}
+
+function TopKeywordOpportunitiesTable({ appId }: { appId: number }) {
+  const [data, setData] = useState<KeywordOpportunitiesResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [running, setRunning] = useState(false);
+
+  useEffect(() => {
+    getKeywordOpportunitiesForApp(appId)
+      .then(setData)
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [appId]);
+
+  async function handleRun() {
+    setRunning(true);
+    try {
+      const res = await triggerPhase1Discovery(appId);
+      setData(res);
+    } catch {
+      // silent
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="space-y-2">
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className="h-10 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-800" />
+        ))}
+      </div>
+    );
+  }
+
+  const items = data?.opportunities ?? [];
+
+  return (
+    <div className="space-y-4">
+      {/* Header + trigger */}
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Alphabet mining · competitor phrases · gap analysis · opportunity scoring
+          </p>
+        </div>
+        <button
+          onClick={handleRun}
+          disabled={running}
+          className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300 dark:hover:bg-indigo-950/70"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${running ? 'animate-spin' : ''}`} />
+          {running ? 'Running…' : 'Run Phase-1 Discovery'}
+        </button>
+      </div>
+
+      {items.length === 0 ? (
+        <div className="card p-8 text-center">
+          <Target className="mx-auto mb-3 h-8 w-8 text-gray-300 dark:text-gray-700" />
+          <p className="font-medium text-gray-500 dark:text-gray-400">No opportunities yet</p>
+          <p className="mt-1 text-sm text-gray-400 dark:text-gray-500">
+            Click "Run Phase-1 Discovery" to mine keywords via alphabet expansion and competitor analysis.
+          </p>
+        </div>
+      ) : (
+        <div className="card overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Keyword</th>
+                  <th className="text-right">Volume</th>
+                  <th className="text-right">Difficulty</th>
+                  <th className="text-right">Trend</th>
+                  <th className="text-right">Your Rank</th>
+                  <th className="text-right">Comp. Rank</th>
+                  <th className="text-right">Score</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item) => (
+                  <tr key={item.keyword}>
+                    <td>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-gray-900 dark:text-white">
+                          {item.keyword}
+                        </span>
+                        {item.keyword_gap && (
+                          <span className="pill bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400">
+                            gap
+                          </span>
+                        )}
+                        {item.source === 'alphabet' && (
+                          <span className="pill bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300">
+                            A–Z
+                          </span>
+                        )}
+                        {item.source === 'competitor' && (
+                          <span className="pill bg-orange-100 text-orange-700 dark:bg-orange-950/50 dark:text-orange-300">
+                            comp
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="text-right text-gray-600 dark:text-gray-300">
+                      {item.search_volume}
+                    </td>
+                    <td className="text-right">
+                      <span className={cn(
+                        'pill',
+                        item.difficulty < 40
+                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400'
+                          : item.difficulty < 70
+                          ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400'
+                          : 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400'
+                      )}>
+                        {item.difficulty.toFixed(0)}
+                      </span>
+                    </td>
+                    <td className={cn('text-right text-sm font-medium', item.trend_direction === 'rising' ? 'text-emerald-600 dark:text-emerald-400' : item.trend_direction === 'declining' ? 'text-red-500 dark:text-red-400' : 'text-gray-500 dark:text-gray-400')}>
+                      {item.trend_direction === 'rising' ? '↑' : item.trend_direction === 'declining' ? '↓' : '→'}
+                      {' '}{item.trend_score.toFixed(0)}
+                    </td>
+                    <td className="text-right text-gray-600 dark:text-gray-300">
+                      {item.app_rank != null ? `#${item.app_rank}` : <span className="text-gray-400">—</span>}
+                    </td>
+                    <td className="text-right">
+                      {item.competitor_rank != null ? (
+                        <span className={cn('font-medium', item.competitor_rank <= 10 ? 'text-red-600 dark:text-red-400' : 'text-gray-500')}>
+                          #{item.competitor_rank}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
+                    </td>
+                    <td className="text-right">
+                      <span className={cn('text-base font-bold', scoreColor(item.opportunity_score))}>
+                        {item.opportunity_score.toFixed(0)}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 // ExtractedKeywordsTable — keywords extracted from app metadata + enriched
 // ---------------------------------------------------------------------------
 
@@ -2374,6 +2540,19 @@ export default function AppDetailPage() {
             <div className="space-y-8">
               {/* ── Best Opportunities highlight ── */}
               <KeywordOpportunitiesHighlight appId={appId} />
+
+              {/* ── 0. Top Opportunities (Phase-1) ── */}
+              <div>
+                <div className="mb-3 flex items-baseline justify-between">
+                  <div>
+                    <h3 className="section-heading">Top Opportunities</h3>
+                    <p className="mt-0.5 text-xs text-gray-400">
+                      Best keywords to target — sorted by opportunity score.
+                    </p>
+                  </div>
+                </div>
+                <TopKeywordOpportunitiesTable appId={appId} />
+              </div>
 
               {/* ── 1. Extracted Keywords ── */}
               <div>

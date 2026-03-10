@@ -414,6 +414,88 @@ async def job_keyword_discovery_daily():
 
 
 # ---------------------------------------------------------------------------
+# Job: every 24 h — Phase-1 discovery (alphabet + competitor + gap + scoring)
+# ---------------------------------------------------------------------------
+
+async def job_keyword_discovery_phase1_daily():
+    """
+    For each tracked app, run the full Phase-1 keyword discovery pipeline:
+      1. Alphabet mining  — seed × a-z × Apple autocomplete → enriched keywords
+      2. Competitor mining — iTunes search for seeds → competitor n-gram phrases
+      3. Gap analysis     — marks keyword_gap=True where competitor≤10 & we rank>30
+      4. Opportunity score — recomputes opportunity_score for all discovered keywords
+
+    Processes apps in batches of 10 with a 3-second pause between batches.
+    """
+    job_id = "keyword_discovery_phase1_daily"
+    t0 = _log_start(job_id)
+    try:
+        from app.services.alphabet_mining_service import AlphabetMiningService
+        from app.services.competitor_keyword_service import CompetitorKeywordService
+        from app.services.keyword_gap_service import KeywordGapService
+        from app.services.opportunity_service import OpportunityScoreService
+        from app.database import SessionLocal
+        from app.models.models import App
+
+        db = SessionLocal()
+        try:
+            apps = db.query(App.id).order_by(App.id).all()
+            app_ids = [row[0] for row in apps]
+            db.close()
+        except Exception:
+            db.close()
+            raise
+
+        total_alpha = 0
+        total_comp = 0
+        total_gaps = 0
+        BATCH = 10
+
+        for i in range(0, len(app_ids), BATCH):
+            batch = app_ids[i: i + BATCH]
+            for app_id in batch:
+                batch_db = SessionLocal()
+                try:
+                    logger.info(f"[{job_id}] Running Phase-1 discovery for app {app_id}")
+
+                    # 1. Alphabet mining
+                    alpha_svc = AlphabetMiningService(batch_db)
+                    alpha_count = alpha_svc.mine_for_app(app_id)
+                    total_alpha += alpha_count
+
+                    # 2. Competitor mining
+                    comp_svc = CompetitorKeywordService(batch_db)
+                    comp_count = comp_svc.mine_for_app(app_id)
+                    total_comp += comp_count
+
+                    # 3. Gap analysis
+                    gap_svc = KeywordGapService(batch_db)
+                    gap_count = gap_svc.analyze_for_app(app_id)
+                    total_gaps += gap_count
+                    logger.info(f"[{job_id}] Found {gap_count} gap keywords for app {app_id}")
+
+                    # 4. Opportunity scoring
+                    opp_svc = OpportunityScoreService(batch_db)
+                    opp_svc.score_for_app(app_id)
+
+                except Exception as exc:
+                    logger.warning(f"[{job_id}] app {app_id} failed: {exc}")
+                finally:
+                    batch_db.close()
+
+            # Brief pause between batches to respect API rate limits
+            await asyncio.sleep(3)
+
+        _log_done(
+            job_id, t0,
+            f"{len(app_ids)} apps — alphabet={total_alpha}, "
+            f"competitor={total_comp}, gaps={total_gaps}"
+        )
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+# ---------------------------------------------------------------------------
 # Scheduler setup
 # ---------------------------------------------------------------------------
 
@@ -587,6 +669,20 @@ def setup_scheduler() -> AsyncIOScheduler:
         ),
         id="keyword_discovery_daily",
         name="Every 24h: Per-App Keyword Discovery",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── every 24 h: Phase-1 keyword discovery (alphabet + competitor + gap) ──
+    # First run: 30 min after startup (after keyword_discovery_daily starts).
+    scheduler.add_job(
+        job_keyword_discovery_phase1_daily,
+        trigger=IntervalTrigger(
+            hours=24,
+            start_date=now + timedelta(minutes=30),
+            timezone="UTC",
+        ),
+        id="keyword_discovery_phase1_daily",
+        name="Every 24h: Phase-1 Alphabet+Competitor+Gap Discovery",
         **_JOB_DEFAULTS,
     )
 

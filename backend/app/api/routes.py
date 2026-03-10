@@ -53,6 +53,8 @@ from app.models.schemas import (
     ExtractedKeywordItem,
     DiscoveredKeywordsResponse,
     DiscoveredKeywordItem,
+    KeywordOpportunitiesResponse,
+    KeywordOpportunityItem,
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
@@ -2137,3 +2139,109 @@ def get_app_autopsy(
         raise HTTPException(status_code=404, detail=result["error"])
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Phase-1 Keyword Discovery — alphabet + competitor mining + gap + scoring
+# ---------------------------------------------------------------------------
+
+@router.post("/apps/{app_id}/keywords/discover-phase1", response_model=KeywordOpportunitiesResponse)
+async def trigger_phase1_discovery(app_id: int, db: Session = Depends(get_db)):
+    """
+    Trigger Phase-1 keyword discovery pipeline in the background:
+      1. Alphabet mining (seed × a-z × autocomplete)
+      2. Competitor keyword extraction (iTunes search + n-gram phrases)
+      3. Keyword gap analysis (marks keyword_gap = True where competitor ≤ 10)
+      4. Opportunity scoring (recomputes opportunity_score for all keywords)
+
+    Returns immediately with current top-50 opportunities; poll
+    GET /apps/{id}/keywords/opportunities for live results.
+    """
+    app = db.query(models.App).filter(models.App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    # Kick off the full pipeline in the background
+    asyncio.create_task(_run_phase1_async(app_id))
+
+    # Return current top opportunities immediately
+    from app.services.opportunity_service import OpportunityScoreService
+    opp_svc = OpportunityScoreService(db)
+    current = opp_svc.get_top_opportunities(app_id, limit=50)
+
+    return {
+        "app_id": app.app_id,
+        "app_name": app.name,
+        "opportunities": current,
+        "total": len(current),
+        "discovering": True,
+    }
+
+
+@router.get("/apps/{app_id}/keywords/opportunities", response_model=KeywordOpportunitiesResponse)
+def get_keyword_opportunities(
+    app_id: int,
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """
+    Return top keywords for this app sorted by opportunity_score DESC.
+    Includes gap keywords (keyword_gap=True) and competitor rank info.
+    """
+    app = db.query(models.App).filter(models.App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    from app.services.opportunity_service import OpportunityScoreService
+    svc = OpportunityScoreService(db)
+    opportunities = svc.get_top_opportunities(app_id, limit=limit)
+
+    return {
+        "app_id": app.app_id,
+        "app_name": app.name,
+        "opportunities": opportunities,
+        "total": len(opportunities),
+        "discovering": False,
+    }
+
+
+def _run_phase1_bg(app_id: int) -> None:
+    """Sync wrapper: runs the full Phase-1 pipeline for one app."""
+    from app.database import SessionLocal
+    from app.services.alphabet_mining_service import AlphabetMiningService
+    from app.services.competitor_keyword_service import CompetitorKeywordService
+    from app.services.keyword_gap_service import KeywordGapService
+    from app.services.opportunity_service import OpportunityScoreService
+
+    db = SessionLocal()
+    try:
+        logger.info(f"[Phase1] Running Phase-1 discovery for app {app_id}")
+
+        # 1. Alphabet mining
+        alpha_svc = AlphabetMiningService(db)
+        alpha_count = alpha_svc.mine_for_app(app_id)
+        logger.info(f"[Phase1] Alphabet mining: {alpha_count} new keywords for app {app_id}")
+
+        # 2. Competitor keyword mining
+        comp_svc = CompetitorKeywordService(db)
+        comp_count = comp_svc.mine_for_app(app_id)
+        logger.info(f"[Phase1] Competitor mining: {comp_count} new keywords for app {app_id}")
+
+        # 3. Gap analysis
+        gap_svc = KeywordGapService(db)
+        gap_count = gap_svc.analyze_for_app(app_id)
+        logger.info(f"[Phase1] Found {gap_count} gap keywords for app {app_id}")
+
+        # 4. Opportunity scoring
+        opp_svc = OpportunityScoreService(db)
+        opp_svc.score_for_app(app_id)
+
+    except Exception as exc:
+        logger.error(f"[Phase1] Pipeline failed for app {app_id}: {exc}", exc_info=True)
+    finally:
+        db.close()
+
+
+async def _run_phase1_async(app_id: int) -> None:
+    """asyncio.create_task-compatible wrapper — runs Phase-1 in thread pool."""
+    await asyncio.to_thread(_run_phase1_bg, app_id)

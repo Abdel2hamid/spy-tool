@@ -227,6 +227,8 @@ class KeywordDiscoveryService:
                 "difficulty": r.difficulty,
                 "traffic_score": r.traffic_score,
                 "app_rank": r.app_rank,
+                "competitor_rank": getattr(r, "competitor_rank", None),
+                "keyword_gap": bool(getattr(r, "keyword_gap", False)),
                 "trend_score": r.trend_score,
                 "trend_direction": r.trend_direction,
                 "opportunity_score": r.opportunity_score,

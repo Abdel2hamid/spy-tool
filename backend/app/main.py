@@ -110,6 +110,10 @@ _MIGRATIONS = [
     )""",
     "CREATE INDEX IF NOT EXISTS idx_adk_app ON app_discovered_keywords (app_id)",
     "CREATE INDEX IF NOT EXISTS idx_adk_opp_score ON app_discovered_keywords (app_id, opportunity_score DESC)",
+    # Phase-1 keyword discovery: competitor_rank + keyword_gap (Session 24)
+    "ALTER TABLE app_discovered_keywords ADD COLUMN IF NOT EXISTS competitor_rank INTEGER",
+    "ALTER TABLE app_discovered_keywords ADD COLUMN IF NOT EXISTS keyword_gap BOOLEAN DEFAULT FALSE",
+    "CREATE INDEX IF NOT EXISTS idx_adk_gap ON app_discovered_keywords (app_id, keyword_gap)",
 ]
 
 

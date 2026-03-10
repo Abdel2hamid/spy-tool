@@ -738,12 +738,14 @@ export async function triggerKeywordExtraction(appId: number): Promise<void> {
 
 export interface DiscoveredKeyword {
   keyword: string;
-  source: 'autocomplete' | 'prefix' | 'suffix';
+  source: 'autocomplete' | 'prefix' | 'suffix' | 'alphabet' | 'competitor';
   source_keyword: string;
   search_volume: number;
   difficulty: number;
   traffic_score: number;
   app_rank: number | null;
+  competitor_rank: number | null;
+  keyword_gap: boolean;
   trend_score: number;
   trend_direction: 'rising' | 'stable' | 'declining';
   opportunity_score: number;
@@ -774,6 +776,54 @@ export async function triggerKeywordDiscovery(
   appId: number,
 ): Promise<DiscoveredKeywordsResponse> {
   const res = await fetch(`${API_BASE}/apps/${appId}/keywords/discover`, {
+    method: 'POST',
+    cache: 'no-store',
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Phase-1 Keyword Opportunities (alphabet + competitor + gap + scoring)
+// ---------------------------------------------------------------------------
+
+export interface KeywordOpportunityItem {
+  keyword: string;
+  search_volume: number;
+  difficulty: number;
+  trend_score: number;
+  trend_direction: 'rising' | 'stable' | 'declining';
+  app_rank: number | null;
+  competitor_rank: number | null;
+  keyword_gap: boolean;
+  opportunity_score: number;
+  source: string;
+}
+
+export interface KeywordOpportunitiesResponse {
+  app_id: string;
+  app_name: string;
+  opportunities: KeywordOpportunityItem[];
+  total: number;
+  discovering: boolean;
+}
+
+export async function getKeywordOpportunitiesForApp(
+  appId: number,
+  limit = 50,
+): Promise<KeywordOpportunitiesResponse> {
+  const res = await fetch(
+    `${API_BASE}/apps/${appId}/keywords/opportunities?limit=${limit}`,
+    { cache: 'no-store' },
+  );
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function triggerPhase1Discovery(
+  appId: number,
+): Promise<KeywordOpportunitiesResponse> {
+  const res = await fetch(`${API_BASE}/apps/${appId}/keywords/discover-phase1`, {
     method: 'POST',
     cache: 'no-store',
   });

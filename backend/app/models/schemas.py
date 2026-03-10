@@ -647,12 +647,14 @@ class KeywordExtractionResponse(BaseModel):
 
 class DiscoveredKeywordItem(BaseModel):
     keyword: str
-    source: str                    # 'autocomplete' | 'prefix' | 'suffix'
+    source: str                    # 'autocomplete' | 'prefix' | 'suffix' | 'alphabet' | 'competitor'
     source_keyword: str
     search_volume: int
     difficulty: float
     traffic_score: float
     app_rank: Optional[int]
+    competitor_rank: Optional[int] = None
+    keyword_gap: bool = False
     trend_score: float
     trend_direction: str           # 'rising' | 'stable' | 'declining'
     opportunity_score: float
@@ -666,6 +668,31 @@ class DiscoveredKeywordsResponse(BaseModel):
     total: int
     discovering: bool              # True when a background job just started
     last_discovered: Optional[datetime] = None
+
+
+# ---------------------------------------------------------------------------
+# Keyword Opportunities (Phase-1)
+# ---------------------------------------------------------------------------
+
+class KeywordOpportunityItem(BaseModel):
+    keyword: str
+    search_volume: int
+    difficulty: float
+    trend_score: float
+    trend_direction: str
+    app_rank: Optional[int]
+    competitor_rank: Optional[int]
+    keyword_gap: bool
+    opportunity_score: float
+    source: str
+
+
+class KeywordOpportunitiesResponse(BaseModel):
+    app_id: str
+    app_name: str
+    opportunities: List[KeywordOpportunityItem]
+    total: int
+    discovering: bool
 
 
 # ---------------------------------------------------------------------------
