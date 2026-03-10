@@ -167,7 +167,10 @@
       "Bash(./node_modules/.bin/tsc --noEmit 2>&1 | head -40)",
       "Bash(npx tsc --noEmit 2>&1 | head -50)",
       "Bash(node_modules/.bin/tsc --noEmit 2>&1 | head -60)",
-      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m py_compile app/services/alphabet_mining_service.py && echo \"OK: alphabet_mining_service\" && python3 -m py_compile app/services/competitor_keyword_service.py && echo \"OK: competitor_keyword_service\" && python3 -m py_compile app/services/keyword_gap_service.py && echo \"OK: keyword_gap_service\" && python3 -m py_compile app/services/opportunity_service.py && echo \"OK: opportunity_service\" && python3 -m py_compile app/models/models.py && echo \"OK: models\" && python3 -m py_compile app/models/schemas.py && echo \"OK: schemas\" && python3 -m py_compile app/api/routes.py && echo \"OK: routes\" && python3 -m py_compile app/main.py && echo \"OK: main\" && python3 -m py_compile app/workers/scheduler.py && echo \"OK: scheduler\")"
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m py_compile app/services/alphabet_mining_service.py && echo \"OK: alphabet_mining_service\" && python3 -m py_compile app/services/competitor_keyword_service.py && echo \"OK: competitor_keyword_service\" && python3 -m py_compile app/services/keyword_gap_service.py && echo \"OK: keyword_gap_service\" && python3 -m py_compile app/services/opportunity_service.py && echo \"OK: opportunity_service\" && python3 -m py_compile app/models/models.py && echo \"OK: models\" && python3 -m py_compile app/models/schemas.py && echo \"OK: schemas\" && python3 -m py_compile app/api/routes.py && echo \"OK: routes\" && python3 -m py_compile app/main.py && echo \"OK: main\" && python3 -m py_compile app/workers/scheduler.py && echo \"OK: scheduler\")",
+      "Bash(python3 -m py_compile app/api/routes.py && echo \"routes.py OK\" && python3 -m py_compile app/models/models.py && echo \"models.py OK\")",
+      "Bash(grep -n \"setDiscovering\\(false\\)\" /Users/abdelhamid/appstore-spy-tool/frontend/src/app/apps/[id]/page.tsx)",
+      "Bash(python3 -m py_compile app/api/routes.py && python3 -m py_compile app/models/models.py && python3 -m py_compile app/main.py && echo \"ALL OK\")"
     ]
   }
 }

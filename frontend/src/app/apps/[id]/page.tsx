@@ -1798,7 +1798,6 @@ function DiscoveredKeywordsTable({ appId }: { appId: number }) {
       } else {
         setError(`Discovery failed: ${msg}. Check Railway logs for details.`);
       }
-      setDiscovering(false);
     }
     setDiscovering(false);
   };
@@ -1856,12 +1855,18 @@ function DiscoveredKeywordsTable({ appId }: { appId: number }) {
             <Zap className={`h-4 w-4 ${discovering ? 'animate-spin' : ''}`} />
             {discovering ? 'Discovering…' : 'Discover Keywords'}
           </button>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-3">
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-400">
+          {error}
+        </div>
+      )}
       {/* Header row */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
