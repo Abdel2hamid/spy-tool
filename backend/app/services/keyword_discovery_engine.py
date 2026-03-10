@@ -421,14 +421,16 @@ class KeywordDiscoveryEngine:
 
     def _store_keywords(self, candidates: List[str]) -> tuple[int, int, int]:
         """
-        Upsert keyword candidates into the keywords table.
+        Upsert keyword candidates into the keywords table AND enqueue them
+        in keyword_queue for the enrichment pipeline to drain.
 
         - New keywords: insert with keyword_source='discovery_engine', first_seen_at=now
         - Existing keywords: skip (do NOT overwrite user-managed data)
+        - keyword_queue: INSERT ... ON CONFLICT DO NOTHING (idempotent)
 
         Returns (inserted, updated, skipped).
         """
-        from app.models.models import Keyword
+        from app.models.models import Keyword, KeywordQueue
 
         if not candidates:
             return 0, 0, 0
@@ -447,6 +449,7 @@ class KeywordDiscoveryEngine:
         for i in range(0, len(candidates), batch_size):
             batch = candidates[i : i + batch_size]
             new_keywords = []
+            new_queue_terms = []
 
             for term in batch:
                 if term in existing_terms:
@@ -462,6 +465,7 @@ class KeywordDiscoveryEngine:
                         trend=0.0,
                     )
                 )
+                new_queue_terms.append(term)
                 existing_terms.add(term)  # prevent duplicate within batch
 
             if new_keywords:
@@ -477,5 +481,20 @@ class KeywordDiscoveryEngine:
                     self.db.rollback()
                     logger.error(f"[KeywordDiscovery] Batch insert error: {exc}")
                     skipped += len(new_keywords)
+                    new_queue_terms = []  # don't enqueue if keyword insert failed
+
+            # Enqueue newly inserted keywords for the enrichment pipeline
+            if new_queue_terms:
+                try:
+                    from sqlalchemy.dialects.postgresql import insert as pg_insert
+                    stmt = pg_insert(KeywordQueue.__table__).values([
+                        {"term": t, "source": "discovery_engine", "priority": 1}
+                        for t in new_queue_terms
+                    ]).on_conflict_do_nothing(index_elements=["term"])
+                    self.db.execute(stmt)
+                    self.db.commit()
+                except Exception as exc:
+                    self.db.rollback()
+                    logger.warning(f"[KeywordDiscovery] Queue insert failed: {exc}")
 
         return inserted, updated, skipped

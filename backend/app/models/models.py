@@ -1,7 +1,16 @@
+import enum
+
 from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, Index, Boolean, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
+
+
+class KeywordStatus(str, enum.Enum):
+    """Lifecycle state of a keyword in the enrichment pipeline."""
+    RAW = "raw"          # inserted, not yet enriched
+    ENRICHED = "enriched"  # enrichment pipeline has run at least once
+    PRUNED = "pruned"    # marked stale; will be deleted on next cleanup pass
 
 
 class Category(Base):
@@ -205,6 +214,9 @@ class Keyword(Base):
     keyword_source = Column(String(50))             # 'seed' | 'discovery_engine' | 'user'
     discovered_from = Column(String(255))           # which seed term led to this keyword
     first_seen_at = Column(DateTime(timezone=True)) # when first inserted by discovery engine
+    # Lifecycle status (KeywordStatus enum values stored as VARCHAR)
+    status = Column(String(20), nullable=False, server_default=KeywordStatus.RAW.value,
+                    default=KeywordStatus.RAW.value)
 
     apps = relationship("AppKeyword", back_populates="keyword")
     trends = relationship("KeywordTrend", back_populates="keyword", cascade="all, delete-orphan")
@@ -396,6 +408,29 @@ class AppIdea(Base):
         Index("idx_idea_score", "opportunity_score"),
         Index("idx_idea_pattern", "pattern_type"),
         Index("idx_idea_category", "category"),
+    )
+
+
+class KeywordQueue(Base):
+    """
+    Decouples keyword discovery from enrichment.
+    KeywordDiscoveryEngine writes here; KeywordIntelligencePipeline drains it.
+    """
+    __tablename__ = "keyword_queue"
+
+    id = Column(Integer, primary_key=True, index=True)
+    term = Column(String(255), unique=True, nullable=False)
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    # pending → enriching → done | failed
+    priority = Column(Integer, nullable=False, default=0)
+    # higher = processed first; discovery_engine=1, seed=2, user=3
+    source = Column(String(50))           # 'discovery_engine' | 'seed' | 'user'
+    added_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    processed_at = Column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("idx_kwq_status_priority", "status", "priority"),
+        Index("idx_kwq_added_at", "added_at"),
     )
 
 

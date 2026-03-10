@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
-from app.models.models import App, Category, Ranking, Keyword, AppKeyword, Review, AppVersion
+from app.models.models import App, Category, Ranking, Keyword, KeywordStatus, AppKeyword, Review, AppVersion
 from app.scrapers.appstore import AppStoreScraper
 from app.scrapers.app_details import AppStoreAppScraper
 from app.scoring.engine import ScoringEngine
@@ -345,84 +345,122 @@ class ScraperWorker:
     
     async def scrape_quick_refresh_all(self) -> int:
         """
-        Lightweight hourly refresh for all tracked apps.
+        Lightweight hourly refresh for all tracked apps — runs concurrently.
 
         For each app:
         - Fetches current metadata via iTunes Lookup API (rating, review count,
           current version, icon, last-updated date).
         - Fetches up to 50 most-recent reviews and saves any that are new.
 
+        Concurrency: asyncio.Semaphore(15) — max 15 apps in-flight at once.
+        Isolation: each task opens its own DB session so failures don't bleed.
+        Timeout: 60 s per app; timed-out apps are logged and counted as failures.
         Intentionally skips version history HTML scraping (that is the
         responsibility of the heavier scrape_all_tracked_apps() job).
         """
-        logger.info("Starting quick refresh for all tracked apps (uncapped)")
-        # Fresh apps first — they benefit most from frequent updates
+        _CONCURRENCY = 15
+        _TIMEOUT = 60.0  # seconds per app
+        _SEM = asyncio.Semaphore(_CONCURRENCY)
+
+        # Collect IDs while holding the shared session; avoid passing the ORM
+        # object across session boundaries.
         apps = (
             self.db.query(App)
             .order_by(App.freshness_score.desc().nullslast(), App.created_at.desc())
             .all()
         )
-        logger.info(f"Quick refresh: {len(apps)} apps to process")
+        app_records = [(app.id, app.app_id) for app in apps]
+        logger.info(
+            f"Quick refresh: {len(app_records)} apps  "
+            f"concurrency={_CONCURRENCY}  timeout={_TIMEOUT}s"
+        )
 
-        success_count = 0
-        for app in apps:
-            try:
-                # --- 1. Update ratings / version / icon via iTunes API ---
-                details = await self.app_scraper.get_app_details(app.app_id)
-                if details:
-                    app.current_rating = details.get("current_rating", app.current_rating)
-                    app.current_reviews = details.get("current_reviews", app.current_reviews or 0)
-                    app.current_version = details.get("current_version", app.current_version)
-                    if details.get("last_updated"):
-                        app.last_updated = details["last_updated"]
-                    if details.get("icon_url"):
-                        app.icon_url = details["icon_url"]
-                    self.db.commit()
-
-                # --- 2. Save new reviews ---
-                reviews = await self.app_scraper.get_app_reviews(app.app_id, limit=50)
-                saved_reviews = 0
-                for review_data in reviews:
-                    existing = self.db.query(Review).filter(
-                        Review.review_id == review_data.get("review_id")
-                    ).first()
-                    if not existing:
-                        review = Review(
-                            app_id=app.id,
-                            review_id=review_data.get("review_id"),
-                            user_name=review_data.get("user_name"),
-                            user_url=review_data.get("user_url"),
-                            rating=review_data.get("rating"),
-                            title=review_data.get("title"),
-                            content=review_data.get("content"),
-                            date=review_data.get("date"),
-                            app_version=review_data.get("app_version"),
-                            storefront=review_data.get("storefront"),
-                            developer_reply_text=review_data.get("developer_reply_text"),
-                            developer_reply_date=review_data.get("developer_reply_date"),
-                            helpful_count=review_data.get("helpful_count", 0),
-                        )
-                        self.db.add(review)
-                        saved_reviews += 1
-
-                if saved_reviews > 0:
-                    self.db.commit()
-
-                rating_val = details.get("current_rating") if details else "n/a"
-                logger.info(
-                    f"Quick refresh OK  app={app.app_id}  "
-                    f"rating={rating_val}  +{saved_reviews} new reviews"
-                )
-                success_count += 1
-
-            except Exception as e:
-                logger.error(f"Quick refresh failed for app {app.app_id}: {e}")
+        async def _refresh_one(db_id: int, app_store_id: str) -> bool:
+            """Refresh a single app in an isolated session with timeout guard."""
+            async with _SEM:
+                db = SessionLocal()
                 try:
-                    self.db.rollback()
-                except Exception:
-                    pass
+                    async def _do() -> bool:
+                        app = db.query(App).filter(App.id == db_id).first()
+                        if not app:
+                            return False
 
-        logger.info(f"Quick refresh complete: {success_count}/{len(apps)} apps")
+                        # --- 1. Update metadata via iTunes Lookup API ---
+                        details = await self.app_scraper.get_app_details(app_store_id)
+                        if details:
+                            app.current_rating = details.get("current_rating", app.current_rating)
+                            app.current_reviews = details.get("current_reviews", app.current_reviews or 0)
+                            app.current_version = details.get("current_version", app.current_version)
+                            if details.get("last_updated"):
+                                app.last_updated = details["last_updated"]
+                            if details.get("icon_url"):
+                                app.icon_url = details["icon_url"]
+                            db.commit()
+
+                        # --- 2. Save new reviews ---
+                        reviews = await self.app_scraper.get_app_reviews(app_store_id, limit=50)
+                        new_reviews = 0
+                        for rv in reviews:
+                            exists = db.query(Review).filter(
+                                Review.review_id == rv.get("review_id")
+                            ).first()
+                            if not exists:
+                                db.add(Review(
+                                    app_id=db_id,
+                                    review_id=rv.get("review_id"),
+                                    user_name=rv.get("user_name"),
+                                    user_url=rv.get("user_url"),
+                                    rating=rv.get("rating"),
+                                    title=rv.get("title"),
+                                    content=rv.get("content"),
+                                    date=rv.get("date"),
+                                    app_version=rv.get("app_version"),
+                                    storefront=rv.get("storefront"),
+                                    developer_reply_text=rv.get("developer_reply_text"),
+                                    developer_reply_date=rv.get("developer_reply_date"),
+                                    helpful_count=rv.get("helpful_count", 0),
+                                ))
+                                new_reviews += 1
+                        if new_reviews:
+                            db.commit()
+
+                        rating = details.get("current_rating") if details else "n/a"
+                        logger.info(
+                            f"Quick refresh OK  app={app_store_id}  "
+                            f"rating={rating}  +{new_reviews} new reviews"
+                        )
+                        return True
+
+                    return await asyncio.wait_for(_do(), timeout=_TIMEOUT)
+
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"Quick refresh TIMEOUT  app={app_store_id}  (>{_TIMEOUT}s)"
+                    )
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+                    return False
+                except Exception as exc:
+                    logger.error(f"Quick refresh FAILED  app={app_store_id}: {exc}")
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+                    return False
+                finally:
+                    db.close()
+
+        results = await asyncio.gather(
+            *[_refresh_one(db_id, sid) for db_id, sid in app_records]
+        )
+        success_count = sum(1 for r in results if r)
+        failed_count = len(app_records) - success_count
+        logger.info(
+            f"Quick refresh complete: {success_count}/{len(app_records)} OK  "
+            f"{failed_count} failed/timed-out"
+        )
         return success_count
 
     async def scrape_all_tracked_apps(self):
@@ -465,23 +503,36 @@ class ScoringWorker:
     def update_opportunities(self):
         logger.info("Updating opportunity scores")
 
-        # Remove truly orphaned keywords: no app links, never pipeline-enriched, and >24h old.
-        # Pipeline seed keywords have no AppKeyword entries by design — preserve them so
-        # the keyword intelligence pipeline can enrich and score them.
+        # Mark truly orphaned keywords as PRUNED (no app links, never enriched, >24h old).
+        # We mark first instead of deleting immediately so they can be inspected;
+        # a follow-up pass deletes only PRUNED rows.
         cutoff_24h = datetime.utcnow() - timedelta(hours=24)
         stale = (
             self.db.query(Keyword)
             .outerjoin(AppKeyword, AppKeyword.keyword_id == Keyword.id)
             .filter(
-                AppKeyword.id.is_(None),            # no app associations
-                Keyword.last_enriched.is_(None),    # never enriched by intelligence pipeline
-                Keyword.last_updated < cutoff_24h,  # at least 24 h old
+                AppKeyword.id.is_(None),                            # no app associations
+                Keyword.last_enriched.is_(None),                    # never enriched
+                Keyword.last_updated < cutoff_24h,                  # at least 24 h old
+                Keyword.status != KeywordStatus.ENRICHED.value,     # not yet enriched
             )
             .all()
         )
         if stale:
-            logger.info(f"Removing {len(stale)} orphaned keywords (no apps, no enrichment, >24h old)")
+            logger.info(f"Marking {len(stale)} orphaned keywords as PRUNED")
             for kw in stale:
+                kw.status = KeywordStatus.PRUNED.value
+            self.db.commit()
+
+        # Delete keywords that were previously marked PRUNED
+        pruned = (
+            self.db.query(Keyword)
+            .filter(Keyword.status == KeywordStatus.PRUNED.value)
+            .all()
+        )
+        if pruned:
+            logger.info(f"Deleting {len(pruned)} PRUNED keywords")
+            for kw in pruned:
                 self.db.delete(kw)
             self.db.commit()
 

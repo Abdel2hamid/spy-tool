@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     postgres_db: str = "appstore_spy"
 
     app_name: str = "AppStore Spy AI"
-    debug: bool = True
+    debug: bool = False
 
     # ── Test-phase app cap ────────────────────────────────────────────────
     max_test_apps: int = 0

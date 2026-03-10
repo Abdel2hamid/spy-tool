@@ -28,7 +28,7 @@ from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.models.models import Keyword, AppKeyword, KeywordTrend, App
+from app.models.models import Keyword, KeywordStatus, AppKeyword, KeywordTrend, App
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -575,6 +575,7 @@ class KeywordIntelligencePipeline:
                         kw.trend_growth = data["trend_growth"]
                         kw.trend_velocity = data["trend_velocity"]
                         kw.last_enriched = datetime.utcnow()
+                        kw.status = KeywordStatus.ENRICHED.value
                         self._save_trend_points(kw.id, data.get("weekly_data", []))
                         updated += 1
                         batch_hits += 1
@@ -664,6 +665,7 @@ class KeywordIntelligencePipeline:
 
                     # Mark this keyword as pipeline-processed regardless of iTunes results
                     kw.last_enriched = now
+                    kw.status = KeywordStatus.ENRICHED.value
 
                     if not result:
                         # Empty dict = HTTP error from iTunes

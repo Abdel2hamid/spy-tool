@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import asyncio
 import logging
+import time
 from sqlalchemy import text
 
 from app.config import settings
@@ -13,6 +14,8 @@ from app.workers.scheduler import scheduler, setup_scheduler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+_APP_START_TIME = time.monotonic()
 
 
 _MIGRATIONS = [
@@ -58,6 +61,20 @@ _MIGRATIONS = [
     "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS keyword_source VARCHAR(50)",
     "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS discovered_from VARCHAR(255)",
     "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ",
+    # Keyword lifecycle status (Session 22)
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'raw'",
+    # Keyword queue — decouples discovery from enrichment (Session 22)
+    """CREATE TABLE IF NOT EXISTS keyword_queue (
+        id SERIAL PRIMARY KEY,
+        term VARCHAR(255) UNIQUE NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        priority INTEGER NOT NULL DEFAULT 0,
+        source VARCHAR(50),
+        added_at TIMESTAMPTZ DEFAULT NOW(),
+        processed_at TIMESTAMPTZ
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_kwq_status_priority ON keyword_queue (status, priority)",
+    "CREATE INDEX IF NOT EXISTS idx_kwq_added_at ON keyword_queue (added_at)",
 ]
 
 
@@ -105,7 +122,7 @@ async def lifespan(app: FastAPI):
     # offsets so they don't pile on top of the startup scrape.
     setup_scheduler()
     scheduler.start()
-    logger.info("Scheduler started — 4 recurring jobs registered")
+    logger.info(f"Scheduler started — {len(scheduler.get_jobs())} recurring jobs registered")
 
     yield
 
@@ -144,4 +161,47 @@ def root():
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy"}
+    """Real health check: verifies DB connectivity and scheduler state."""
+    t0 = time.monotonic()
+    status = "healthy"
+    checks: dict = {}
+
+    # 1. Database connectivity
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as exc:
+        checks["database"] = f"error: {exc}"
+        status = "degraded"
+
+    # 2. Scheduler
+    try:
+        if scheduler.running:
+            checks["scheduler"] = "running"
+        else:
+            checks["scheduler"] = "stopped"
+            status = "degraded"
+    except Exception as exc:
+        checks["scheduler"] = f"error: {exc}"
+        status = "degraded"
+
+    # 3. Scheduled jobs — next run times
+    jobs = []
+    try:
+        for job in scheduler.get_jobs():
+            nrt = job.next_run_time
+            jobs.append({
+                "id": job.id,
+                "next_run": nrt.isoformat() if nrt else None,
+            })
+    except Exception:
+        pass
+
+    return {
+        "status": status,
+        "uptime_seconds": round(time.monotonic() - _APP_START_TIME, 1),
+        "checks": checks,
+        "scheduler_jobs": jobs,
+        "response_ms": round((time.monotonic() - t0) * 1000, 1),
+    }
