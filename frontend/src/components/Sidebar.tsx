@@ -14,6 +14,7 @@ import {
   Radar,
   Zap,
   Compass,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
