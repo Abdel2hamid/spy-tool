@@ -1831,10 +1831,30 @@ async def trigger_keyword_discovery(app_id: int, db: Session = Depends(get_db)):
     """
     Trigger keyword discovery for this app in the background.
     Returns immediately; poll GET /apps/{id}/keywords/discovered for results.
+
+    Requires: app must have extracted keywords in app_keyword_intelligence.
+    Run POST /apps/{id}/keywords/intelligence/extract first if this is a new app.
     """
     app = db.query(models.App).filter(models.App.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="App not found")
+
+    # Guard: discovery is seed-driven — it needs extracted keywords first.
+    has_seeds = (
+        db.query(models.AppKeywordIntelligence)
+        .filter(models.AppKeywordIntelligence.app_id == app_id)
+        .limit(1)
+        .first()
+    )
+    if not has_seeds:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"No extracted keywords found for app {app_id}. "
+                f"Run POST /api/v1/apps/{app_id}/keywords/intelligence/extract first "
+                f"to extract keywords from the app's metadata before running discovery."
+            ),
+        )
 
     from app.services.keyword_discovery_service import KeywordDiscoveryService
 
@@ -2156,10 +2176,30 @@ async def trigger_phase1_discovery(app_id: int, db: Session = Depends(get_db)):
 
     Returns immediately with current top-50 opportunities; poll
     GET /apps/{id}/keywords/opportunities for live results.
+
+    Requires: app must have extracted keywords in app_keyword_intelligence.
+    Run POST /apps/{id}/keywords/intelligence/extract first if this is a new app.
     """
     app = db.query(models.App).filter(models.App.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="App not found")
+
+    # Guard: Phase-1 pipeline is seed-driven — it needs extracted keywords first.
+    has_seeds = (
+        db.query(models.AppKeywordIntelligence)
+        .filter(models.AppKeywordIntelligence.app_id == app_id)
+        .limit(1)
+        .first()
+    )
+    if not has_seeds:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"No extracted keywords found for app {app_id}. "
+                f"Run POST /api/v1/apps/{app_id}/keywords/intelligence/extract first "
+                f"to extract keywords from the app's metadata before running Phase-1 discovery."
+            ),
+        )
 
     # Kick off the full pipeline in the background
     asyncio.create_task(_run_phase1_async(app_id))

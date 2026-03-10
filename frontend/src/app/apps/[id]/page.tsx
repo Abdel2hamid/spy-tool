@@ -1349,21 +1349,28 @@ function TopKeywordOpportunitiesTable({ appId }: { appId: number }) {
   const [data, setData] = useState<KeywordOpportunitiesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     getKeywordOpportunitiesForApp(appId)
       .then(setData)
-      .catch(() => setData(null))
+      .catch(() => setError('Failed to load opportunities. The app_discovered_keywords table may be missing columns — ensure the backend has been redeployed so startup migrations run.'))
       .finally(() => setLoading(false));
   }, [appId]);
 
   async function handleRun() {
     setRunning(true);
+    setError(null);
     try {
       const res = await triggerPhase1Discovery(appId);
       setData(res);
-    } catch {
-      // silent
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('400')) {
+        setError('No extracted keywords found. Run keyword extraction first (click "Extract Keywords" above), then retry Phase-1 Discovery.');
+      } else {
+        setError(`Discovery failed: ${msg}. Check Railway logs for details.`);
+      }
     } finally {
       setRunning(false);
     }
@@ -1400,12 +1407,18 @@ function TopKeywordOpportunitiesTable({ appId }: { appId: number }) {
         </button>
       </div>
 
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-400">
+          {error}
+        </div>
+      )}
+
       {items.length === 0 ? (
         <div className="card p-8 text-center">
           <Target className="mx-auto mb-3 h-8 w-8 text-gray-300 dark:text-gray-700" />
           <p className="font-medium text-gray-500 dark:text-gray-400">No opportunities yet</p>
           <p className="mt-1 text-sm text-gray-400 dark:text-gray-500">
-            Click "Run Phase-1 Discovery" to mine keywords via alphabet expansion and competitor analysis.
+            First extract keywords (Extract Keywords tab), then click "Run Phase-1 Discovery".
           </p>
         </div>
       ) : (
@@ -1753,13 +1766,18 @@ function DiscoveredKeywordsTable({ appId }: { appId: number }) {
   const [sortKey, setSortKey] = useState<keyof DiscoveredKeyword>('opportunity_score');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
+  const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await getDiscoveredKeywords(appId);
       setData(res);
-    } catch {}
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`Failed to load discovered keywords: ${msg}. The backend may need redeployment to apply DB migrations.`);
+    }
     setLoading(false);
   };
 
@@ -1767,12 +1785,21 @@ function DiscoveredKeywordsTable({ appId }: { appId: number }) {
 
   const handleDiscover = async () => {
     setDiscovering(true);
+    setError(null);
     try {
       await triggerKeywordDiscovery(appId);
       // Poll after a delay — discovery takes a while
       await new Promise(r => setTimeout(r, 8000));
       await load();
-    } catch {}
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('400')) {
+        setError('No extracted keywords found. Run keyword extraction first (click "Extract Keywords" above), then retry.');
+      } else {
+        setError(`Discovery failed: ${msg}. Check Railway logs for details.`);
+      }
+      setDiscovering(false);
+    }
     setDiscovering(false);
   };
 
@@ -1807,22 +1834,28 @@ function DiscoveredKeywordsTable({ appId }: { appId: number }) {
 
   if (!data || data.total === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-8 text-center dark:border-gray-700 dark:bg-gray-900">
-        <Lightbulb className="mx-auto mb-3 h-8 w-8 text-gray-300" />
-        <p className="mb-1 text-sm font-medium text-gray-600 dark:text-gray-400">
-          {discovering ? 'Discovery in progress…' : 'No discovered keywords yet'}
-        </p>
-        <p className="mb-4 text-xs text-gray-400 dark:text-gray-500">
-          Expand extracted keywords via Apple autocomplete and affix variations
-        </p>
-        <button
-          onClick={handleDiscover}
-          disabled={discovering}
-          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
-        >
-          <Zap className={`h-4 w-4 ${discovering ? 'animate-spin' : ''}`} />
-          {discovering ? 'Discovering…' : 'Discover Keywords'}
-        </button>
+      <div className="space-y-3">
+        {error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-400">
+            {error}
+          </div>
+        )}
+        <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-8 text-center dark:border-gray-700 dark:bg-gray-900">
+          <Lightbulb className="mx-auto mb-3 h-8 w-8 text-gray-300" />
+          <p className="mb-1 text-sm font-medium text-gray-600 dark:text-gray-400">
+            {discovering ? 'Discovery in progress…' : 'No discovered keywords yet'}
+          </p>
+          <p className="mb-4 text-xs text-gray-400 dark:text-gray-500">
+            First extract keywords (Extract Keywords tab), then expand via autocomplete and affix variations
+          </p>
+          <button
+            onClick={handleDiscover}
+            disabled={discovering}
+            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+          >
+            <Zap className={`h-4 w-4 ${discovering ? 'animate-spin' : ''}`} />
+            {discovering ? 'Discovering…' : 'Discover Keywords'}
+          </button>
       </div>
     );
   }
