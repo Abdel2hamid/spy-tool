@@ -194,6 +194,40 @@ class AppListResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Keyword Search / Discover Apps
+# ---------------------------------------------------------------------------
+
+class KeywordSearchResultItem(BaseModel):
+    """Single app in keyword search results."""
+    id: int
+    app_id: str
+    name: str
+    developer: Optional[str] = None
+    icon_url: Optional[str] = None
+    current_rating: Optional[float] = None
+    current_reviews: Optional[int] = None
+    primary_category: Optional[str] = None
+    price: float = 0
+    is_free: bool = True
+    url: Optional[str] = None
+    is_new: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class KeywordDiscoverResponse(BaseModel):
+    """Response for keyword search / discover apps endpoint."""
+    keyword: str
+    results: List[KeywordSearchResultItem]
+    total: int
+    new_apps_count: int
+
+    class Config:
+        from_attributes = True
+
+
+# ---------------------------------------------------------------------------
 # Ranking
 # ---------------------------------------------------------------------------
 

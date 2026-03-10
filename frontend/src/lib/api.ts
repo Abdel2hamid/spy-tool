@@ -209,6 +209,32 @@ export interface App {
   estimated_revenue_monthly_max: number | null;
 }
 
+// ---------------------------------------------------------------------------
+// Keyword Search / Discover Apps
+// ---------------------------------------------------------------------------
+
+export interface KeywordSearchResultItem {
+  id: number;
+  app_id: string;
+  name: string;
+  developer: string | null;
+  icon_url: string | null;
+  current_rating: number | null;
+  current_reviews: number | null;
+  primary_category: string | null;
+  price: number;
+  is_free: boolean;
+  url: string | null;
+  is_new: boolean;
+}
+
+export interface KeywordSearchResponse {
+  keyword: string;
+  results: KeywordSearchResultItem[];
+  total: number;
+  new_apps_count: number;
+}
+
 export interface AppVersion {
   id: number;
   app_id: number;
@@ -469,6 +495,14 @@ export async function getApps(limit: number = 50): Promise<App[]> {
 
 export async function getApp(appId: number): Promise<App> {
   return fetchApi<App>(`/apps/${appId}`);
+}
+
+export async function searchAppsByKeyword(
+  keyword: string,
+  limit: number = 50
+): Promise<KeywordSearchResponse> {
+  const params = new URLSearchParams({ keyword, limit: String(limit) });
+  return fetchApi<KeywordSearchResponse>(`/search/apps?${params}`);
 }
 
 export async function getCategories(): Promise<Category[]> {

@@ -55,6 +55,7 @@ from app.models.schemas import (
     DiscoveredKeywordItem,
     KeywordOpportunitiesResponse,
     KeywordOpportunityItem,
+    KeywordDiscoverResponse,
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
@@ -382,6 +383,32 @@ def create_app(app: AppCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_app)
     return db_app
+
+
+@router.get("/search/apps", response_model=KeywordDiscoverResponse)
+def search_apps_by_keyword(
+    keyword: str = Query(..., min_length=2, description="Keyword to search apps"),
+    limit: int = Query(50, ge=1, le=100, description="Max results to return"),
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Search for apps by keyword from App Store.
+    
+    - Calls iTunes Search API (entity=software)
+    - Inserts new apps if not in database
+    - Returns results with app info
+    - Triggers background enrichment for new apps
+    """
+    from app.services.keyword_search_service import KeywordSearchService
+    
+    service = KeywordSearchService(db)
+    result = service.search(keyword, limit=limit)
+    
+    if result.get("new_app_ids"):
+        background_tasks.add_task(service.trigger_background_enrichment, result["new_app_ids"])
+    
+    return result
 
 
 @router.patch("/apps/{app_id}", response_model=AppResponse)

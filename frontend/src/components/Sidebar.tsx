@@ -10,10 +10,10 @@ import {
   AppWindow,
   BarChart3,
   Settings,
-  X,
   Lightbulb,
   Radar,
   Zap,
+  Compass,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -22,6 +22,7 @@ const navSections = [
     label: 'MAIN',
     items: [
       { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+      { href: '/discover', label: 'Discover', icon: Compass },
       { href: '/apps', label: 'Apps', icon: AppWindow },
       { href: '/latest-apps', label: 'Latest Apps', icon: Zap },
       { href: '/trending', label: 'Trending', icon: TrendingUp },
