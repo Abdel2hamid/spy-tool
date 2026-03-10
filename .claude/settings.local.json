@@ -172,7 +172,8 @@
       "Bash(grep -n \"setDiscovering\\(false\\)\" /Users/abdelhamid/appstore-spy-tool/frontend/src/app/apps/[id]/page.tsx)",
       "Bash(python3 -m py_compile app/api/routes.py && python3 -m py_compile app/models/models.py && python3 -m py_compile app/main.py && echo \"ALL OK\")",
       "Bash(python3 -m py_compile app/services/global_keyword_sink.py app/services/keyword_discovery_service.py app/services/alphabet_mining_service.py app/services/competitor_keyword_service.py app/services/keyword_intelligence_pipeline.py app/workers/scheduler.py && echo \"OK\")",
-      "Bash(python3 -m py_compile app/services/opportunity_service.py && echo \"OK\")"
+      "Bash(python3 -m py_compile app/services/opportunity_service.py && echo \"OK\")",
+      "Bash(python3 -m py_compile app/services/keyword_discovery_engine.py app/workers/scheduler.py && echo \"OK\")"
     ]
   }
 }

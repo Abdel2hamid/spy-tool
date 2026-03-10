@@ -177,7 +177,13 @@ class KeywordDiscoveryEngine:
 
     async def run_keyword_discovery(self) -> Dict[str, int]:
         """
-        Run all three discovery phases and persist results.
+        Run all three discovery phases and persist results incrementally.
+
+        Each phase stores its results immediately — so Phase A keywords reach
+        the DB even if Phase B or C time out on Railway.
+
+        Phase B uses only _BUILTIN_SEEDS (not DB terms) to keep the API call
+        count manageable (~115 seeds × 27 = ~3,100 queries vs 13,000+).
 
         Returns a stats dict with keys:
           seeds, phase_a, phase_b, phase_c, candidates, inserted, updated, skipped
@@ -187,43 +193,57 @@ class KeywordDiscoveryEngine:
         seeds = self._load_seeds()
         logger.info(f"[KeywordDiscovery] Seeds loaded: {len(seeds)}")
 
-        # Phase A — static expansion (fast, no I/O)
+        total_inserted = 0
+        total_updated = 0
+        total_skipped = 0
+
+        # ── Phase A — static expansion (fast, no I/O) ────────────────────────
         phase_a = self._static_expand(seeds)
         logger.info(f"[KeywordDiscovery] Phase A (static expand): {len(phase_a)} candidates")
+        phase_a_norm = self._normalize_batch(list(phase_a))
+        ins, upd, skp = await asyncio.to_thread(self._store_keywords, phase_a_norm)
+        total_inserted += ins
+        total_updated += upd
+        total_skipped += skp
+        logger.info(f"[KeywordDiscovery] Phase A stored: inserted={ins}, skipped={skp}")
 
-        # Phase B — Apple autocomplete suggestions
-        phase_b = await self._run_suggestions_phase(seeds)
+        # ── Phase B — Apple autocomplete suggestions ──────────────────────────
+        # Use only _BUILTIN_SEEDS (not full DB) to keep queries bounded:
+        # ~115 seeds × 27 queries = ~3,100 API calls (vs 13,000+ with DB terms).
+        phase_b = await self._run_suggestions_phase(_BUILTIN_SEEDS)
         logger.info(f"[KeywordDiscovery] Phase B (Apple suggestions): {len(phase_b)} candidates")
+        phase_b_norm = self._normalize_batch(list(phase_b))
+        ins, upd, skp = await asyncio.to_thread(self._store_keywords, phase_b_norm)
+        total_inserted += ins
+        total_updated += upd
+        total_skipped += skp
+        logger.info(f"[KeywordDiscovery] Phase B stored: inserted={ins}, skipped={skp}")
 
-        # Phase C — App metadata phrase extraction
-        # Use a smaller subset of seeds to keep runtime reasonable
-        phase_c_seeds = seeds[: min(60, len(seeds))]
+        # ── Phase C — App metadata phrase extraction ──────────────────────────
+        # Use a smaller subset of seeds to keep runtime reasonable.
+        phase_c_seeds = _BUILTIN_SEEDS[: min(60, len(_BUILTIN_SEEDS))]
         phase_c = await self._run_metadata_phase(phase_c_seeds)
         logger.info(f"[KeywordDiscovery] Phase C (metadata phrases): {len(phase_c)} candidates")
-
-        # Merge and normalise
-        all_candidates = self._normalize_batch(
-            list(phase_a) + list(phase_b) + list(phase_c)
-        )
-        logger.info(f"[KeywordDiscovery] After normalise/dedup: {len(all_candidates)} unique candidates")
-
-        # Persist
-        inserted, updated, skipped = await asyncio.to_thread(
-            self._store_keywords, all_candidates
-        )
+        phase_c_norm = self._normalize_batch(list(phase_c))
+        ins, upd, skp = await asyncio.to_thread(self._store_keywords, phase_c_norm)
+        total_inserted += ins
+        total_updated += upd
+        total_skipped += skp
+        logger.info(f"[KeywordDiscovery] Phase C stored: inserted={ins}, skipped={skp}")
 
         stats = {
             "seeds": len(seeds),
             "phase_a": len(phase_a),
             "phase_b": len(phase_b),
             "phase_c": len(phase_c),
-            "candidates": len(all_candidates),
-            "inserted": inserted,
-            "updated": updated,
-            "skipped": skipped,
+            "candidates": len(phase_a) + len(phase_b) + len(phase_c),
+            "inserted": total_inserted,
+            "updated": total_updated,
+            "skipped": total_skipped,
         }
         logger.info(
-            f"[KeywordDiscovery] Done — inserted={inserted}, updated={updated}, skipped={skipped}"
+            f"[KeywordDiscovery] Done — inserted={total_inserted}, "
+            f"updated={total_updated}, skipped={total_skipped}"
         )
         return stats
 

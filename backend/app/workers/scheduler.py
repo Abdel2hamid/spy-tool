@@ -650,7 +650,7 @@ def setup_scheduler() -> AsyncIOScheduler:
         job_keyword_discovery,
         trigger=IntervalTrigger(
             hours=24,
-            start_date=now + timedelta(minutes=20),
+            start_date=now + timedelta(minutes=2),
             timezone="UTC",
         ),
         id="keyword_discovery",
