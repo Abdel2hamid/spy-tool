@@ -246,6 +246,8 @@ class AppImportSearchItem(BaseModel):
     url: Optional[str] = None
     is_new: bool = False
     source: str = "database"
+    match_score: float = 0.0
+    match_type: str = "none"
 
     class Config:
         from_attributes = True

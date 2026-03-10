@@ -523,6 +523,8 @@ export interface AppImportSearchItem {
   url: string | null;
   is_new: boolean;
   source: string;
+  match_score: number;
+  match_type: string;
 }
 
 export interface AppImportSearchResponse {
