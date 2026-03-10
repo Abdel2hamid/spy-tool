@@ -1,20 +1,30 @@
 """
-Keyword Extraction Service
-==========================
-Extracts keywords from an app's title, subtitle, and description, then
-enriches each keyword with market intelligence via the iTunes Search API.
+Keyword Extraction Service — v2
+================================
+Extracts high-value ASO keyword phrases from an app's metadata and enriches
+each with iTunes Search API market intelligence.
+
+Key improvements over v1
+------------------------
+• Phrase-first scoring — bigrams 2.5×, trigrams 4× weight over unigrams
+• Frequency counting — same phrase across multiple sources scores higher
+• Position weights — title 3.0 > subtitle 2.0 > competitor 1.5 > description 1.0
+• Competitor signals — extracts phrases from top-5 rival app titles/subtitles
+• Weak unigram suppression — drops unigrams already covered by an included
+  bi/trigram, unless the word appears in the app's own title
+• 120-candidate cap (was 60); ~42 s total enrichment time at 0.35 s/request
+• Aggressive cross-phrase deduplication before enrichment
 
 Pipeline
 --------
-1. Normalize text (lowercase, strip punctuation)
-2. Tokenize and remove stopwords
-3. Generate unigrams, bigrams, trigrams
-4. Deduplicate and rank by source priority (title > subtitle > description)
-5. For each keyword (capped at MAX_KEYWORDS):
-   - Search iTunes API → find this app's rank, result count, top-app signals
-   - Compute heuristic search_volume (0-100), difficulty (0-100), traffic_score
-6. Upsert results into app_keyword_intelligence table
+1. Collect raw n-grams from title, subtitle, description, competitor metadata
+2. Score each candidate: frequency × phrase_length_bonus × best_position_weight
+3. Sort phrases first, then filtered unigrams; take top 120
+4. Enrich each keyword via iTunes Search API
+5. Upsert results into app_keyword_intelligence table
 """
+
+from __future__ import annotations
 
 import json
 import logging
@@ -23,6 +33,7 @@ import re
 import time
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -31,7 +42,7 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# English stopwords
+# Stopwords — extended for app store context
 # ---------------------------------------------------------------------------
 _STOPWORDS: Set[str] = {
     "a", "an", "the", "and", "or", "but", "nor", "for", "yet", "so",
@@ -47,26 +58,37 @@ _STOPWORDS: Set[str] = {
     "your", "my", "our", "their", "his",
     "what", "which", "who", "whom", "whose", "where", "when", "why", "how",
     "all", "both", "each", "few", "more", "most", "other", "some", "such",
-    "no", "not", "only", "same", "so", "than", "too", "very", "just",
+    "no", "not", "only", "same", "than", "too", "very", "just",
     "any", "about", "get", "got", "also", "even", "now", "one",
     "use", "using", "used", "make", "makes", "made", "way", "like",
-    "amp", "app", "apps",  # too generic for app store
+    "amp", "free", "new",
+    # generic app-store filler words that add no keyword value:
+    "app", "apps", "best", "easy", "fast", "great", "good", "amazing",
+    "awesome", "simple", "top", "pro", "plus", "premium",
 }
 
 # ---------------------------------------------------------------------------
-# CTR curve — estimated click-through rate by rank position
+# Position weights — reflect ASO signal strength of each source
 # ---------------------------------------------------------------------------
-_CTR_BY_RANK: Dict[int, float] = {
-    1: 30.0,
-    2: 15.0,
-    3: 10.0,
-    4: 7.0,
-    5: 7.0,
+_POS_WEIGHT: Dict[str, float] = {
+    "title": 3.0,
+    "subtitle": 2.0,
+    "competitor": 1.5,
+    "description": 1.0,
 }
+
+# ---------------------------------------------------------------------------
+# Phrase-length scoring bonus — heavily favours multi-word phrases
+# ---------------------------------------------------------------------------
+_LENGTH_BONUS: Dict[int, float] = {1: 1.0, 2: 2.5, 3: 4.0}
+
+# ---------------------------------------------------------------------------
+# CTR curve — click-through rate by iTunes search rank
+# ---------------------------------------------------------------------------
+_CTR_BY_RANK: Dict[int, float] = {1: 30.0, 2: 15.0, 3: 10.0, 4: 7.0, 5: 7.0}
 
 
 def _ctr(rank: Optional[int]) -> float:
-    """Return estimated CTR % for a given iTunes search rank."""
     if rank is None:
         return 0.5
     if rank in _CTR_BY_RANK:
@@ -79,26 +101,41 @@ def _ctr(rank: Optional[int]) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Source priority for deduplication (lower = higher priority)
+# Internal candidate representation
 # ---------------------------------------------------------------------------
-_SOURCE_PRIORITY = {"title": 0, "subtitle": 1, "description": 2}
+@dataclass
+class _Candidate:
+    text: str
+    source: str           # best source label for display
+    n: int                # phrase length in words (1 / 2 / 3)
+    frequency: int = 1    # occurrences across all sources
+    pos_weight: float = 1.0   # best position weight seen
+    in_title: bool = False    # appears in the app's own title
+
+    @property
+    def score(self) -> float:
+        """phrase_length_bonus × frequency × position_weight"""
+        return _LENGTH_BONUS.get(self.n, 1.0) * self.frequency * self.pos_weight
 
 
+# ---------------------------------------------------------------------------
+# Main service
+# ---------------------------------------------------------------------------
 class KeywordExtractionService:
     """
     Extracts and enriches keyword intelligence for a single app.
 
     Usage::
         svc = KeywordExtractionService(db)
-        keywords = svc.extract_keywords_for_app(app_id)   # blocking — run in thread
-        cached   = svc.get_stored(app_id)                 # reads from DB
+        keywords = svc.extract_keywords_for_app(app_id)   # blocking
+        cached   = svc.get_stored(app_id)
     """
 
     _ITUNES_SEARCH = "https://itunes.apple.com/search"
-    _REQUEST_DELAY = 0.35       # polite delay between iTunes requests (seconds)
-    _MAX_KEYWORDS = 60          # cap to keep enrichment time reasonable
-    _TIMEOUT = 12               # seconds per HTTP request
-    _STALE_HOURS = 24           # re-extract after this many hours
+    _REQUEST_DELAY = 0.35       # polite delay between iTunes requests (s)
+    _MAX_KEYWORDS = 120         # candidates to enrich
+    _TIMEOUT = 12               # HTTP timeout per request (s)
+    _STALE_HOURS = 24
 
     def __init__(self, db: Session):
         self.db = db
@@ -106,7 +143,6 @@ class KeywordExtractionService:
     # ── Public API ────────────────────────────────────────────────────────────
 
     def is_stale(self, app_id: int) -> bool:
-        """Return True if there is no stored data or data is older than STALE_HOURS."""
         from app.models.models import AppKeywordIntelligence
         row = (
             self.db.query(AppKeywordIntelligence.extracted_at)
@@ -123,9 +159,7 @@ class KeywordExtractionService:
         return ts < cutoff
 
     def get_stored(self, app_id: int) -> List[Dict]:
-        """Return previously extracted + enriched data from DB, sorted by traffic_score."""
         from app.models.models import AppKeywordIntelligence, Keyword as KW
-
         rows = (
             self.db.query(AppKeywordIntelligence, KW)
             .join(KW, KW.id == AppKeywordIntelligence.keyword_id)
@@ -148,131 +182,204 @@ class KeywordExtractionService:
         ]
 
     def extract_keywords_for_app(self, app_id: int) -> List[Dict]:
-        """
-        Full pipeline: extract → enrich → save → return.
-        Blocking — intended to run inside asyncio.to_thread().
-        """
+        """Full pipeline: extract → score → select → enrich → save."""
         from app.models.models import App
 
         app = self.db.query(App).filter(App.id == app_id).first()
         if not app:
             return []
 
-        candidates = self._extract_candidates(app)
+        candidates = self._build_candidates(app)
         logger.info(
             f"[KeywordExtraction] app={app.app_id} ({app.name!r}) → "
-            f"{len(candidates)} candidates, enriching top {self._MAX_KEYWORDS}"
+            f"{len(candidates)} scored candidates, enriching top {self._MAX_KEYWORDS}"
         )
 
         enriched: List[Dict] = []
-        for kw, source in candidates[: self._MAX_KEYWORDS]:
+        for c in candidates[: self._MAX_KEYWORDS]:
             try:
-                result = self._enrich(kw, source, str(app.app_id))
+                result = self._enrich(c.text, c.source, str(app.app_id))
                 enriched.append(result)
                 time.sleep(self._REQUEST_DELAY)
             except Exception as exc:
-                logger.warning(f"[KeywordExtraction] enrich failed for {kw!r}: {exc}")
+                logger.warning(f"[KeywordExtraction] enrich failed for {c.text!r}: {exc}")
 
         self._save(app_id, enriched)
         logger.info(
-            f"[KeywordExtraction] app={app.app_id} → "
-            f"saved {len(enriched)} enriched keywords"
+            f"[KeywordExtraction] app={app.app_id} → saved {len(enriched)} keywords"
         )
         return enriched
 
-    # ── Keyword Extraction ────────────────────────────────────────────────────
+    # ── Candidate construction ────────────────────────────────────────────────
 
-    def _extract_candidates(self, app) -> List[Tuple[str, str]]:
+    def _build_candidates(self, app) -> List[_Candidate]:
         """
-        Return (keyword, source) pairs, deduped, ordered by source priority.
-        Title > subtitle > description (first 2 000 chars).
+        Full extraction pipeline:
+        1. Collect n-grams from all sources into a scored pool
+        2. Fetch competitor titles/subtitles and add their n-grams
+        3. Sort: phrases first (by score), then unigrams (filtered)
+        4. Deduplicate: remove unigrams already covered by a phrase
         """
-        seen: Set[str] = set()
-        # Collect per-source n-grams
-        by_source: Dict[str, List[str]] = {"title": [], "subtitle": [], "description": []}
+        title_text = (app.name or "").lower()
+        title_tokens = set(self._tokenize(title_text))
 
-        sources = [
-            (app.name or "", "title"),
-            (app.subtitle or "", "subtitle"),
-            (app.description[:2000] if app.description else "", "description"),
+        pool: Dict[str, _Candidate] = {}
+
+        # ── Own metadata sources ──────────────────────────────────────────
+        own_sources = [
+            (app.name or "",         "title"),
+            (app.subtitle or "",     "subtitle"),
+            (app.description[:3000] if app.description else "", "description"),
+        ]
+        for text, source in own_sources:
+            self._collect_ngrams(text, source, title_tokens, pool)
+
+        # ── Competitor signals ────────────────────────────────────────────
+        try:
+            competitor_phrases = self._fetch_competitor_phrases(app)
+            for phrase in competitor_phrases:
+                self._add_to_pool(phrase, "competitor", title_tokens, pool)
+        except Exception as exc:
+            logger.debug(f"[KeywordExtraction] competitor fetch failed: {exc}")
+
+        # ── Score, split, filter, merge ───────────────────────────────────
+        phrases   = [c for c in pool.values() if c.n >= 2]
+        unigrams  = [c for c in pool.values() if c.n == 1]
+
+        phrases.sort(key=lambda c: c.score, reverse=True)
+        unigrams.sort(key=lambda c: c.score, reverse=True)
+
+        # Words covered by selected phrases — used to suppress redundant unigrams
+        covered_words: Set[str] = set()
+        for c in phrases:
+            covered_words.update(c.text.split())
+
+        # Keep unigrams only if:
+        #   • the word is in the app title (direct ASO relevance), OR
+        #   • the word isn't already covered by a selected phrase
+        kept_unigrams = [
+            c for c in unigrams
+            if c.in_title or c.text not in covered_words
         ]
 
-        for text, source in sources:
-            for kw in self._generate_ngrams(text):
-                if kw not in seen:
-                    seen.add(kw)
-                    by_source[source].append(kw)
+        return phrases + kept_unigrams
 
-        # Interleave: one from title, one from subtitle, one from description, repeat
-        result: List[Tuple[str, str]] = []
-        queues = [
-            (by_source["title"], "title"),
-            (by_source["subtitle"], "subtitle"),
-            (by_source["description"], "description"),
-        ]
-        max_len = max(len(q) for q, _ in queues) if any(queues) else 0
-        for i in range(max_len):
-            for q, src in queues:
-                if i < len(q):
-                    result.append((q[i], src))
-
-        return result
-
-    def _generate_ngrams(self, text: str) -> List[str]:
-        """Return deduped unigrams + bigrams + trigrams from text."""
+    def _collect_ngrams(
+        self,
+        text: str,
+        source: str,
+        title_tokens: Set[str],
+        pool: Dict[str, _Candidate],
+    ) -> None:
+        """Generate all n-grams from text and merge into pool."""
         tokens = self._tokenize(text)
-        ngrams: List[str] = []
+        if not tokens:
+            return
 
-        # Unigrams — at least 3 chars, not a stopword
+        # Unigrams
         for tok in tokens:
             if len(tok) >= 3 and tok not in _STOPWORDS:
-                ngrams.append(tok)
+                self._add_to_pool(tok, source, title_tokens, pool)
 
-        # Bigrams — no leading/trailing stopword, min 6 chars total
+        # Bigrams — no leading/trailing stopword
         for i in range(len(tokens) - 1):
             a, b = tokens[i], tokens[i + 1]
             if a in _STOPWORDS or b in _STOPWORDS:
                 continue
             phrase = f"{a} {b}"
-            if len(phrase) >= 6:
-                ngrams.append(phrase)
+            self._add_to_pool(phrase, source, title_tokens, pool)
 
-        # Trigrams — no leading/trailing stopword, min 8 chars total
+        # Trigrams — no leading/trailing stopword
         for i in range(len(tokens) - 2):
             a, b, c = tokens[i], tokens[i + 1], tokens[i + 2]
             if a in _STOPWORDS or c in _STOPWORDS:
                 continue
             phrase = f"{a} {b} {c}"
-            if len(phrase) >= 8:
-                ngrams.append(phrase)
+            self._add_to_pool(phrase, source, title_tokens, pool)
 
-        # Dedupe preserving first occurrence
-        seen: Set[str] = set()
-        deduped: List[str] = []
-        for ng in ngrams:
-            if ng not in seen:
-                seen.add(ng)
-                deduped.append(ng)
+    def _add_to_pool(
+        self,
+        phrase: str,
+        source: str,
+        title_tokens: Set[str],
+        pool: Dict[str, _Candidate],
+    ) -> None:
+        """Merge one phrase into the pool, updating frequency and weights."""
+        words = phrase.split()
+        n = len(words)
+        pos_w = _POS_WEIGHT.get(source, 1.0)
+        in_title = n == 1 and phrase in title_tokens
 
-        return deduped
+        if phrase in pool:
+            c = pool[phrase]
+            c.frequency += 1
+            if pos_w > c.pos_weight:
+                c.pos_weight = pos_w
+                c.source = source   # promote to higher-priority source label
+            c.in_title = c.in_title or in_title
+        else:
+            pool[phrase] = _Candidate(
+                text=phrase,
+                source=source,
+                n=n,
+                frequency=1,
+                pos_weight=pos_w,
+                in_title=in_title,
+            )
 
-    @staticmethod
-    def _tokenize(text: str) -> List[str]:
-        text = text.lower()
-        text = re.sub(r"[^\w\s-]", " ", text)    # keep hyphens
-        text = re.sub(r"[-_]", " ", text)          # hyphens → space
-        text = re.sub(r"\s+", " ", text).strip()
-        return [t for t in text.split() if t.isalpha() and len(t) >= 2]
+    # ── Competitor extraction ─────────────────────────────────────────────────
+
+    def _fetch_competitor_phrases(self, app) -> List[str]:
+        """
+        Search iTunes for the app's category/title and extract bigrams +
+        trigrams from the top-5 competitor trackName + subtitle fields.
+        Returns a flat list of phrase strings.
+        """
+        # Build search query: use primary_category or first 2 title words
+        if app.primary_category:
+            query = app.primary_category.lower()
+        else:
+            words = self._tokenize(app.name or "")
+            query = " ".join(words[:2])
+
+        if not query:
+            return []
+
+        data = self._itunes_search(query, limit=10)
+        competitors = [
+            item for item in data.get("results", [])
+            if str(item.get("trackId", "")) != str(app.app_id)
+        ][:5]
+
+        phrases: List[str] = []
+        for item in competitors:
+            text = " ".join(filter(None, [
+                item.get("trackName", ""),
+                item.get("subtitle", ""),
+            ]))
+            tokens = self._tokenize(text)
+
+            # Bigrams from competitor titles
+            for i in range(len(tokens) - 1):
+                a, b = tokens[i], tokens[i + 1]
+                if a not in _STOPWORDS and b not in _STOPWORDS:
+                    phrases.append(f"{a} {b}")
+
+            # Trigrams from competitor titles
+            for i in range(len(tokens) - 2):
+                a, b, c = tokens[i], tokens[i + 1], tokens[i + 2]
+                if a not in _STOPWORDS and c not in _STOPWORDS:
+                    phrases.append(f"{a} {b} {c}")
+
+        return phrases
 
     # ── Enrichment ────────────────────────────────────────────────────────────
 
     def _enrich(self, keyword: str, source: str, current_app_id: str) -> Dict:
-        """Call iTunes Search API and compute scores for one keyword."""
         data = self._itunes_search(keyword)
         items = data.get("results", [])
         result_count = data.get("resultCount", len(items))
 
-        # Find current app's rank in results (1-based; None if not in top N)
         app_rank: Optional[int] = None
         for i, item in enumerate(items):
             if str(item.get("trackId", "")) == current_app_id:
@@ -280,7 +387,7 @@ class KeywordExtractionService:
                 break
 
         search_volume = self._estimate_volume(keyword, items, result_count)
-        difficulty = self._estimate_difficulty(items)
+        difficulty    = self._estimate_difficulty(items)
         traffic_score = round(search_volume * _ctr(app_rank) / 100, 1)
 
         return {
@@ -315,20 +422,17 @@ class KeywordExtractionService:
         keyword: str, items: List[Dict], result_count: int
     ) -> int:
         """
-        Heuristic search volume score 0-100.
+        Heuristic search volume 0-100.
 
-        Factors (each capped):
-        • iTunes result count — proxy for market size          (0-40 pts, log-scaled)
-        • Keyword in top-10 app names/subtitles — demand signal (0-30 pts)
-        • Average userRatingCount of top 5 apps — popularity   (0-30 pts, log-scaled)
+        • iTunes result count  (log-scaled)               → 0-40 pts
+        • Keyword in top-10 names/subtitles               → 0-30 pts
+        • Avg userRatingCount of top-5 apps (log-scaled)  → 0-30 pts
         """
         score = 0.0
 
-        # 1. Result count (log-scaled)
         if result_count > 0:
             score += min(math.log10(result_count + 1) / math.log10(1001) * 40, 40)
 
-        # 2. Presence in top-10 app names/subtitles
         kw_lower = keyword.lower()
         title_hits = sum(
             1
@@ -338,7 +442,6 @@ class KeywordExtractionService:
         )
         score += min(title_hits * 6, 30)
 
-        # 3. Average userRatingCount of top-5 apps (log-scaled)
         counts = [
             item.get("userRatingCount", 0)
             for item in items[:5]
@@ -353,56 +456,57 @@ class KeywordExtractionService:
     @staticmethod
     def _estimate_difficulty(items: List[Dict]) -> float:
         """
-        Heuristic difficulty score 0-100.
+        Heuristic difficulty 0-100.
 
-        Factors:
-        • Average rating of top 10 apps — polish of competition (0-40 pts)
-        • Average review count of top 10 apps — established players (0-40 pts)
-        • Number of returned results — market saturation         (0-20 pts)
+        • Avg rating of top-10 apps       → 0-40 pts
+        • Avg review count of top-10 apps → 0-40 pts
+        • Result saturation               → 0-20 pts
         """
         score = 0.0
         top = items[:10]
         if not top:
             return 0.0
 
-        # 1. Average rating
         ratings = [
             item.get("averageUserRating", 0)
-            for item in top
-            if item.get("averageUserRating")
+            for item in top if item.get("averageUserRating")
         ]
         if ratings:
             score += (sum(ratings) / len(ratings) / 5.0) * 40
 
-        # 2. Average review count (log-scaled)
         counts = [
             item.get("userRatingCount", 0)
-            for item in top
-            if item.get("userRatingCount")
+            for item in top if item.get("userRatingCount")
         ]
         if counts:
             avg = sum(counts) / len(counts)
             score += min(math.log10(avg + 1) / math.log10(50_001) * 40, 40)
 
-        # 3. Saturation (number of items returned, max 50 via API)
         score += min(len(items) / 50 * 20, 20)
 
         return min(round(score, 1), 100)
 
+    # ── Tokenization ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _tokenize(text: str) -> List[str]:
+        text = text.lower()
+        text = re.sub(r"[^\w\s-]", " ", text)
+        text = re.sub(r"[-_]", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return [t for t in text.split() if t.isalpha() and len(t) >= 2]
+
     # ── Persistence ───────────────────────────────────────────────────────────
 
     def _save(self, app_id: int, enriched: List[Dict]) -> None:
-        """Upsert enriched keyword intelligence into DB."""
         from app.models.models import Keyword, KeywordStatus, AppKeywordIntelligence
 
         if not enriched:
             return
 
         now = datetime.now(timezone.utc)
-
         for item in enriched:
             try:
-                # Upsert Keyword row
                 kw = self.db.query(Keyword).filter(Keyword.term == item["keyword"]).first()
                 if not kw:
                     kw = Keyword(
@@ -414,7 +518,6 @@ class KeywordExtractionService:
                     self.db.add(kw)
                     self.db.flush()
 
-                # Upsert AppKeywordIntelligence row
                 aki = (
                     self.db.query(AppKeywordIntelligence)
                     .filter(
@@ -424,13 +527,13 @@ class KeywordExtractionService:
                     .first()
                 )
                 if aki:
-                    aki.source = item["source"]
+                    aki.source        = item["source"]
                     aki.search_volume = item["search_volume"]
-                    aki.difficulty = item["difficulty"]
+                    aki.difficulty    = item["difficulty"]
                     aki.traffic_score = item["traffic_score"]
-                    aki.app_rank = item["app_rank"]
-                    aki.result_count = item["result_count"]
-                    aki.extracted_at = now
+                    aki.app_rank      = item["app_rank"]
+                    aki.result_count  = item["result_count"]
+                    aki.extracted_at  = now
                 else:
                     self.db.add(AppKeywordIntelligence(
                         app_id=app_id,
@@ -445,10 +548,9 @@ class KeywordExtractionService:
                     ))
             except Exception as exc:
                 logger.warning(
-                    f"[KeywordExtraction] save row failed for {item['keyword']!r}: {exc}"
+                    f"[KeywordExtraction] save failed for {item['keyword']!r}: {exc}"
                 )
                 self.db.rollback()
-                continue
 
         try:
             self.db.commit()

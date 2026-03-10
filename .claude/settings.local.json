@@ -157,7 +157,8 @@
       "Bash(grep -n \"keyword\" /Users/abdelhamid/appstore-spy-tool/frontend/src/app/apps/\\\\[id\\\\]/page.tsx | head -20)",
       "Bash(grep -n \"KeywordHistoryPanel\\\\|function KeywordHistoryPanel\" /Users/abdelhamid/appstore-spy-tool/frontend/src/app/apps/\\\\[id\\\\]/page.tsx)",
       "Bash(grep -n \"keywords\\\\|KeywordIntelligence\\\\|KeywordHistory\\\\|activeTab === 'keyword\" /Users/abdelhamid/appstore-spy-tool/frontend/src/app/apps/\\\\[id\\\\]/page.tsx | head -40)",
-      "Bash(python3 -m py_compile app/models/models.py app/models/schemas.py app/main.py app/api/routes.py app/services/keyword_extraction_service.py && echo \"ALL OK\")"
+      "Bash(python3 -m py_compile app/models/models.py app/models/schemas.py app/main.py app/api/routes.py app/services/keyword_extraction_service.py && echo \"ALL OK\")",
+      "Bash(python3 -m py_compile app/services/keyword_extraction_service.py && echo \"OK\")"
     ]
   }
 }
