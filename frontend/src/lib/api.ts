@@ -692,6 +692,47 @@ export async function runKeywordSearch(keyword: string, country = 'us'): Promise
 }
 
 // ---------------------------------------------------------------------------
+// Keyword Extraction Intelligence (metadata-based)
+// ---------------------------------------------------------------------------
+
+export interface ExtractedKeyword {
+  keyword: string;
+  source: 'title' | 'subtitle' | 'description';
+  search_volume: number;   // 0-100 heuristic
+  difficulty: number;      // 0-100 heuristic
+  traffic_score: number;   // search_volume × CTR(rank)
+  app_rank: number | null; // position in iTunes search; null if not ranked
+  result_count: number;
+  extracted_at: string | null;
+}
+
+export interface KeywordExtractionResponse {
+  app_id: string;
+  app_name: string;
+  keywords: ExtractedKeyword[];
+  extracting: boolean;
+  total: number;
+  last_extracted: string | null;
+}
+
+export async function getExtractedKeywords(
+  appId: number,
+  refresh = false,
+): Promise<KeywordExtractionResponse> {
+  const url = `${API_BASE}/apps/${appId}/keywords/intelligence${refresh ? '?refresh=true' : ''}`;
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function triggerKeywordExtraction(appId: number): Promise<void> {
+  await fetch(`${API_BASE}/apps/${appId}/keywords/intelligence/extract`, {
+    method: 'POST',
+    cache: 'no-store',
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Install & Revenue Estimates
 // ---------------------------------------------------------------------------
 

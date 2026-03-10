@@ -618,6 +618,30 @@ class RevenueEstimateResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Keyword Extraction Intelligence (metadata-based)
+# ---------------------------------------------------------------------------
+
+class ExtractedKeywordItem(BaseModel):
+    keyword: str
+    source: str                   # 'title' | 'subtitle' | 'description'
+    search_volume: int            # heuristic 0-100
+    difficulty: float             # heuristic 0-100
+    traffic_score: float          # search_volume × CTR(rank) / 100
+    app_rank: Optional[int]       # position of this app in iTunes search; None if absent
+    result_count: int             # total iTunes results for keyword
+    extracted_at: Optional[datetime] = None
+
+
+class KeywordExtractionResponse(BaseModel):
+    app_id: str
+    app_name: str
+    keywords: List[ExtractedKeywordItem]
+    extracting: bool              # True if a background job just started
+    total: int
+    last_extracted: Optional[datetime] = None
+
+
+# ---------------------------------------------------------------------------
 # Keyword History
 # ---------------------------------------------------------------------------
 

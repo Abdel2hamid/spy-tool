@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '@/components';
-import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, getAppDetail, getAppVersions, getAppReviews, getAppAnalytics, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, RankHistory } from '@/lib/api';
+import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, getAppDetail, getAppVersions, getAppReviews, getAppAnalytics, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, RankHistory } from '@/lib/api';
 import {
   ArrowLeft, Star, Download, Calendar, Globe, MessageSquare,
   TrendingUp, BarChart3, AlertTriangle, ThumbsUp, Code, ExternalLink,
@@ -1039,6 +1039,242 @@ function FeatureGapsTab({ appId }: { appId: number }) {
 
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// ExtractedKeywordsTable — keywords extracted from app metadata + enriched
+// ---------------------------------------------------------------------------
+
+const SOURCE_BADGE: Record<string, string> = {
+  title: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+  subtitle: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
+  description: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+};
+
+function ScoreBar({ value, color }: { value: number; color: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-1.5 w-20 rounded-full bg-gray-100 dark:bg-gray-800">
+        <div
+          className={`h-1.5 rounded-full ${color}`}
+          style={{ width: `${Math.min(value, 100)}%` }}
+        />
+      </div>
+      <span className="text-xs tabular-nums text-gray-600 dark:text-gray-400">{value}</span>
+    </div>
+  );
+}
+
+function ExtractedKeywordsTable({ appId }: { appId: number }) {
+  const [data, setData] = useState<KeywordExtractionResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [extracting, setExtracting] = useState(false);
+  const [sortKey, setSortKey] = useState<keyof ExtractedKeyword>('traffic_score');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [sourceFilter, setSourceFilter] = useState<string>('all');
+
+  const load = async (refresh = false) => {
+    setLoading(true);
+    try {
+      const res = await getExtractedKeywords(appId, refresh);
+      setData(res);
+      if (res.extracting && res.total === 0) {
+        // Poll until data arrives
+        setTimeout(() => load(false), 6000);
+      }
+    } catch {}
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [appId]);
+
+  const handleExtract = async () => {
+    setExtracting(true);
+    await triggerKeywordExtraction(appId);
+    // Poll for results
+    await new Promise(r => setTimeout(r, 4000));
+    await load(false);
+    setExtracting(false);
+  };
+
+  const toggleSort = (key: keyof ExtractedKeyword) => {
+    if (sortKey === key) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
+    else { setSortKey(key); setSortDir('desc'); }
+  };
+
+  const rows = (data?.keywords ?? [])
+    .filter(kw => sourceFilter === 'all' || kw.source === sourceFilter)
+    .sort((a, b) => {
+      const av = a[sortKey] ?? -1;
+      const bv = b[sortKey] ?? -1;
+      return sortDir === 'desc'
+        ? (bv as number) - (av as number)
+        : (av as number) - (bv as number);
+    });
+
+  const SortIcon = ({ col }: { col: keyof ExtractedKeyword }) => (
+    <span className={`ml-1 text-xs ${sortKey === col ? 'opacity-100' : 'opacity-30'}`}>
+      {sortKey === col ? (sortDir === 'desc' ? '↓' : '↑') : '↕'}
+    </span>
+  );
+
+  if (loading) {
+    return (
+      <div className="space-y-2">
+        {[...Array(5)].map((_, i) => (
+          <div key={i} className="h-10 animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />
+        ))}
+      </div>
+    );
+  }
+
+  if (!data || data.total === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-8 text-center dark:border-gray-700 dark:bg-gray-900">
+        <Search className="mx-auto mb-3 h-8 w-8 text-gray-300" />
+        <p className="mb-1 text-sm font-medium text-gray-600 dark:text-gray-400">
+          {data?.extracting ? 'Extraction in progress…' : 'No keywords extracted yet'}
+        </p>
+        <p className="mb-4 text-xs text-gray-400 dark:text-gray-500">
+          Analyze title, subtitle, and description to discover keyword opportunities
+        </p>
+        <button
+          onClick={handleExtract}
+          disabled={extracting || data?.extracting}
+          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+        >
+          <RefreshCw className={`h-4 w-4 ${extracting ? 'animate-spin' : ''}`} />
+          {extracting ? 'Extracting…' : 'Extract Keywords'}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Header row */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          {/* Source filter pills */}
+          {(['all', 'title', 'subtitle', 'description'] as const).map(src => (
+            <button
+              key={src}
+              onClick={() => setSourceFilter(src)}
+              className={cn(
+                'rounded-full px-3 py-1 text-xs font-medium capitalize transition-colors',
+                sourceFilter === src
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400',
+              )}
+            >
+              {src}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 text-xs text-gray-400">
+          {data.last_extracted && (
+            <span>Last extracted {new Date(data.last_extracted).toLocaleDateString()}</span>
+          )}
+          <button
+            onClick={handleExtract}
+            disabled={extracting}
+            className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:text-gray-400"
+          >
+            <RefreshCw className={`h-3 w-3 ${extracting ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-200 bg-gray-50 text-left dark:border-gray-800 dark:bg-gray-900/60">
+              <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Keyword</th>
+              <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Source</th>
+              <th
+                className="cursor-pointer px-4 py-3 font-medium text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200"
+                onClick={() => toggleSort('search_volume')}
+              >
+                Volume <SortIcon col="search_volume" />
+              </th>
+              <th
+                className="cursor-pointer px-4 py-3 font-medium text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200"
+                onClick={() => toggleSort('difficulty')}
+              >
+                Difficulty <SortIcon col="difficulty" />
+              </th>
+              <th
+                className="cursor-pointer px-4 py-3 font-medium text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200"
+                onClick={() => toggleSort('traffic_score')}
+              >
+                Traffic <SortIcon col="traffic_score" />
+              </th>
+              <th
+                className="cursor-pointer px-4 py-3 font-medium text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200"
+                onClick={() => toggleSort('app_rank')}
+              >
+                Your Rank <SortIcon col="app_rank" />
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+            {rows.map((kw) => (
+              <tr
+                key={kw.keyword}
+                className="bg-white transition-colors hover:bg-gray-50 dark:bg-gray-950 dark:hover:bg-gray-900"
+              >
+                <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100">
+                  {kw.keyword}
+                </td>
+                <td className="px-4 py-3">
+                  <span className={cn(
+                    'rounded-full px-2 py-0.5 text-xs font-medium capitalize',
+                    SOURCE_BADGE[kw.source] ?? SOURCE_BADGE.description,
+                  )}>
+                    {kw.source}
+                  </span>
+                </td>
+                <td className="px-4 py-3">
+                  <ScoreBar value={kw.search_volume} color="bg-emerald-400" />
+                </td>
+                <td className="px-4 py-3">
+                  <ScoreBar
+                    value={Math.round(kw.difficulty)}
+                    color={kw.difficulty >= 70 ? 'bg-red-400' : kw.difficulty >= 40 ? 'bg-amber-400' : 'bg-emerald-400'}
+                  />
+                </td>
+                <td className="px-4 py-3 font-semibold text-indigo-600 dark:text-indigo-400">
+                  {kw.traffic_score.toFixed(1)}
+                </td>
+                <td className="px-4 py-3">
+                  {kw.app_rank != null ? (
+                    <span className={cn(
+                      'rounded-full px-2 py-0.5 text-xs font-semibold',
+                      kw.app_rank <= 3
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                        : kw.app_rank <= 10
+                        ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                        : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+                    )}>
+                      #{kw.app_rank}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-gray-400">—</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-right text-xs text-gray-400">
+        {rows.length} of {data.total} keywords
+        {data.result_count !== undefined && ` · iTunes results shown per keyword`}
+      </p>
+    </div>
+  );
+}
+
 // KeywordIntelligenceTab
 // ---------------------------------------------------------------------------
 
@@ -1569,6 +1805,13 @@ export default function AppDetailPage() {
           {activeTab === 'gaps' && <FeatureGapsTab appId={appId} />}
           {activeTab === 'keywords' && (
             <div className="space-y-8">
+              <div>
+                <h3 className="mb-1 text-base font-semibold text-gray-800 dark:text-gray-200">Extracted Keywords</h3>
+                <p className="mb-4 text-xs text-gray-400">
+                  Keywords discovered from this app&apos;s title, subtitle, and description — enriched with search volume, difficulty, and traffic estimates.
+                </p>
+                <ExtractedKeywordsTable appId={appId} />
+              </div>
               <div>
                 <h3 className="mb-4 text-base font-semibold text-gray-800 dark:text-gray-200">Keyword Intelligence</h3>
                 <KeywordIntelligenceTab appId={appId} />

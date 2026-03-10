@@ -411,6 +411,32 @@ class AppIdea(Base):
     )
 
 
+class AppKeywordIntelligence(Base):
+    """
+    Per-(app, keyword) intelligence extracted from the app's own metadata
+    (title, subtitle, description) and enriched via iTunes Search API.
+    Separate from AppKeyword which tracks keyword search-rank snapshots.
+    """
+    __tablename__ = "app_keyword_intelligence"
+
+    id = Column(Integer, primary_key=True, index=True)
+    app_id = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
+    keyword_id = Column(Integer, ForeignKey("keywords.id", ondelete="CASCADE"), nullable=False)
+    source = Column(String(50))          # 'title' | 'subtitle' | 'description'
+    app_rank = Column(Integer)           # position of this app in iTunes results (None if absent)
+    result_count = Column(Integer, default=0)   # total iTunes results for keyword
+    search_volume = Column(Integer, default=0)  # heuristic 0-100
+    difficulty = Column(Float, default=0.0)     # heuristic 0-100
+    traffic_score = Column(Float, default=0.0)  # search_volume × CTR(rank)
+    extracted_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_aki_app", "app_id"),
+        Index("idx_aki_app_kw", "app_id", "keyword_id", unique=True),
+        Index("idx_aki_traffic", "app_id", "traffic_score"),
+    )
+
+
 class KeywordQueue(Base):
     """
     Decouples keyword discovery from enrichment.

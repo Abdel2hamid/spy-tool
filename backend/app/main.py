@@ -63,6 +63,22 @@ _MIGRATIONS = [
     "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ",
     # Keyword lifecycle status (Session 22)
     "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'raw'",
+    # App keyword intelligence — extracted from title/subtitle/description (Session 22)
+    """CREATE TABLE IF NOT EXISTS app_keyword_intelligence (
+        id SERIAL PRIMARY KEY,
+        app_id INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+        keyword_id INTEGER NOT NULL REFERENCES keywords(id) ON DELETE CASCADE,
+        source VARCHAR(50),
+        app_rank INTEGER,
+        result_count INTEGER DEFAULT 0,
+        search_volume INTEGER DEFAULT 0,
+        difficulty FLOAT DEFAULT 0.0,
+        traffic_score FLOAT DEFAULT 0.0,
+        extracted_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(app_id, keyword_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_aki_app ON app_keyword_intelligence (app_id)",
+    "CREATE INDEX IF NOT EXISTS idx_aki_traffic ON app_keyword_intelligence (app_id, traffic_score DESC)",
     # Keyword queue — decouples discovery from enrichment (Session 22)
     """CREATE TABLE IF NOT EXISTS keyword_queue (
         id SERIAL PRIMARY KEY,

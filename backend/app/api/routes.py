@@ -49,6 +49,8 @@ from app.models.schemas import (
     NicheRadarResponse,
     ReviewIntelligenceResponse,
     AppAutopsyResponse,
+    KeywordExtractionResponse,
+    ExtractedKeywordItem,
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
@@ -1707,6 +1709,83 @@ def get_keyword_intelligence(app_id: int, db: Session = Depends(get_db)):
             "last_scanned": None,
         }
     return result
+
+
+# ---------------------------------------------------------------------------
+# Keyword Extraction Intelligence — metadata-based keyword extraction
+# ---------------------------------------------------------------------------
+
+@router.get("/apps/{app_id}/keywords/intelligence", response_model=KeywordExtractionResponse)
+def get_keywords_intelligence(
+    app_id: int,
+    refresh: bool = Query(False, description="Force re-extraction even if data is fresh"),
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Return keyword intelligence extracted from the app's title, subtitle,
+    and description, enriched with iTunes Search API signals.
+
+    Returns cached data immediately.  A background extraction job is triggered
+    automatically when data is missing, stale (>24 h), or refresh=true.
+    """
+    app = db.query(models.App).filter(models.App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    from app.services.keyword_extraction_service import KeywordExtractionService
+    svc = KeywordExtractionService(db)
+
+    stored = svc.get_stored(app_id)
+    needs_extraction = refresh or svc.is_stale(app_id)
+
+    if needs_extraction and background_tasks is not None:
+        background_tasks.add_task(_run_keyword_extraction_bg, app_id)
+
+    last_extracted = stored[0]["extracted_at"] if stored else None
+
+    return {
+        "app_id": app.app_id,
+        "app_name": app.name,
+        "keywords": stored,
+        "extracting": needs_extraction,
+        "total": len(stored),
+        "last_extracted": last_extracted,
+    }
+
+
+@router.post("/apps/{app_id}/keywords/intelligence/extract")
+async def trigger_keyword_extraction(app_id: int, db: Session = Depends(get_db)):
+    """
+    Immediately trigger keyword extraction in the background.
+    Returns right away; poll GET /apps/{id}/keywords/intelligence for results.
+    """
+    app = db.query(models.App).filter(models.App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    asyncio.create_task(_run_keyword_extraction_async(app_id))
+    return {"status": "started", "app_id": app.app_id, "app_name": app.name}
+
+
+def _run_keyword_extraction_bg(app_id: int) -> None:
+    """BackgroundTasks-compatible wrapper (sync, called in thread pool)."""
+    from app.database import SessionLocal
+    from app.services.keyword_extraction_service import KeywordExtractionService
+    db = SessionLocal()
+    try:
+        svc = KeywordExtractionService(db)
+        svc.extract_keywords_for_app(app_id)
+    except Exception as exc:
+        logger.error(f"[KeywordExtraction] background job failed app={app_id}: {exc}")
+    finally:
+        db.close()
+
+
+async def _run_keyword_extraction_async(app_id: int) -> None:
+    """asyncio.create_task-compatible wrapper — runs in thread pool."""
+    import asyncio as _asyncio
+    await _asyncio.to_thread(_run_keyword_extraction_bg, app_id)
 
 
 # ---------------------------------------------------------------------------
