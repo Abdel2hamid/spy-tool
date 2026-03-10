@@ -1269,7 +1269,6 @@ function ExtractedKeywordsTable({ appId }: { appId: number }) {
       </div>
       <p className="text-right text-xs text-gray-400">
         {rows.length} of {data.total} keywords
-        {data.result_count !== undefined && ` · iTunes results shown per keyword`}
       </p>
     </div>
   );
