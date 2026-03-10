@@ -261,6 +261,20 @@ class AlphabetMiningService:
                 logger.warning(f"[AlphabetMining] enrich failed for {keyword!r}: {exc}")
 
         logger.info(f"[AlphabetMining] Stored {stored} new alphabet keywords for app {app_id}")
+
+        # Push candidates into the global keywords table for intelligence enrichment.
+        if candidates:
+            try:
+                from app.services.global_keyword_sink import GlobalKeywordSink
+                sink = GlobalKeywordSink(self.db)
+                sink.push(
+                    keywords=list(candidates),
+                    source="alphabet",
+                    discovered_from=seeds[0] if seeds else None,
+                )
+            except Exception as exc:
+                logger.warning(f"[AlphabetMining] global_keyword_sink failed: {exc}")
+
         return stored
 
     # ── Internal helpers ──────────────────────────────────────────────────────

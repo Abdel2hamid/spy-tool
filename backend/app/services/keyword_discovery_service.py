@@ -205,6 +205,21 @@ class KeywordDiscoveryService:
                 f"[Discovery] Top opportunity keyword: {best_keyword!r} "
                 f"(score={best_score:.1f})"
             )
+
+        # Push all new candidates into the global keywords table so the
+        # intelligence pipeline can enrich them with trends/signals.
+        if new_candidates:
+            try:
+                from app.services.global_keyword_sink import GlobalKeywordSink
+                sink = GlobalKeywordSink(self.db)
+                sink.push(
+                    keywords=new_candidates,
+                    source="discovered",
+                    discovered_from=seeds[0] if seeds else None,
+                )
+            except Exception as exc:
+                logger.warning(f"[Discovery] global_keyword_sink failed: {exc}")
+
         return stored
 
     def get_discovered(self, app_id: int, limit: int = 200) -> List[Dict]:

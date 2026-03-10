@@ -283,6 +283,20 @@ class CompetitorKeywordService:
                 logger.warning(f"[CompetitorMining] enrich failed for {phrase!r}: {exc}")
 
         logger.info(f"[CompetitorMining] Stored {stored} competitor keywords for app {app_id}")
+
+        # Push phrases into the global keywords table for intelligence enrichment.
+        if new_phrases:
+            try:
+                from app.services.global_keyword_sink import GlobalKeywordSink
+                sink = GlobalKeywordSink(self.db)
+                sink.push(
+                    keywords=new_phrases,
+                    source="competitor",
+                    discovered_from=seeds[0] if seeds else None,
+                )
+            except Exception as exc:
+                logger.warning(f"[CompetitorMining] global_keyword_sink failed: {exc}")
+
         return stored
 
     # ── Internal helpers ──────────────────────────────────────────────────────

@@ -817,7 +817,7 @@ class KeywordIntelligencePipeline:
     # Main entry points
     # ------------------------------------------------------------------
 
-    async def run_full_pipeline(self, max_keywords: int = 500) -> Dict:
+    async def run_full_pipeline(self, max_keywords: int = 5000) -> Dict:
         """
         Run all pipeline phases sequentially.
         Each phase is wrapped in try/except so a failing phase

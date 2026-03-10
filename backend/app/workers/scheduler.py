@@ -290,7 +290,7 @@ async def job_keyword_intelligence():
         db = SessionLocal()
         try:
             pipeline = KeywordIntelligencePipeline(db)
-            summary = await pipeline.run_full_pipeline(max_keywords=500)
+            summary = await pipeline.run_full_pipeline(max_keywords=5000)
             _log_done(
                 job_id, t0,
                 f"discovered={summary['discovered']}, "
