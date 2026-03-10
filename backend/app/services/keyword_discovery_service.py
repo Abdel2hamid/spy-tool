@@ -46,6 +46,7 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.services.apple_autocomplete_service import fetch_autocomplete
@@ -181,7 +182,25 @@ class KeywordDiscoveryService:
             f"{len(candidates)} expansions → {len(new_candidates)} new to enrich"
         )
 
-        # ── 4. Enrich + store ────────────────────────────────────────────
+        # ── 4. Per-app limit guard ────────────────────────────────────────
+        from app.models.models import AppDiscoveredKeyword as _ADK
+        _MAX_PER_APP = 100
+        current_count = (
+            self.db.query(func.count(_ADK.id))
+            .filter(_ADK.app_id == app_id)
+            .scalar() or 0
+        )
+        if current_count >= _MAX_PER_APP:
+            logger.info(
+                f"[KeywordLimit] app {app_id} already has {current_count} keywords "
+                f"(limit={_MAX_PER_APP}) — skipping insertion"
+            )
+            return 0
+        slots = _MAX_PER_APP - current_count
+        if len(new_candidates) > slots:
+            new_candidates = new_candidates[:slots]
+
+        # ── 5. Enrich + store ────────────────────────────────────────────
         stored = 0
         best_keyword = ""
         best_score = 0.0

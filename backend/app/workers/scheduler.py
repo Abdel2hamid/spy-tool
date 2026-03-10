@@ -12,7 +12,8 @@ Job schedule:
   hourly_reviews_ratings     1 h      1 h         Quick refresh (rating/reviews for all apps)
   hourly_scoring             1 h      65 min      Recompute scores + daily report
   full_metadata              6 h      6 h         Full metadata refresh for all tracked apps
-  keyword_discovery          24 h     20 min      Keyword expansion engine (10k-100k keywords)
+  keyword_discovery          24 h      2 min      Keyword expansion engine (10k-100k keywords)
+  keyword_cleanup_daily      24 h     45 min      Prune low-value / stale keywords from DB
 
 Discovery jobs have short first-run delays so coverage starts building
 immediately after deploy without waiting for the bootstrap endpoint.
@@ -496,6 +497,72 @@ async def job_keyword_discovery_phase1_daily():
 
 
 # ---------------------------------------------------------------------------
+# Job: every 24 h — keyword pruning (delete low-value stale rows)
+# ---------------------------------------------------------------------------
+
+async def job_keyword_cleanup_daily():
+    """
+    Delete low-value keywords that have not been enriched and are stale.
+
+    Cleanup rules
+    -------------
+    Global keywords table:
+      DELETE WHERE search_volume = 0 AND last_updated < NOW() - 30 days
+
+    App-specific discovered keywords:
+      DELETE WHERE opportunity_score < 5 AND created_at < NOW() - 30 days
+    """
+    job_id = "keyword_cleanup_daily"
+    t0 = _log_start(job_id)
+    try:
+        from app.database import SessionLocal
+        from app.models.models import Keyword, AppDiscoveredKeyword
+        from sqlalchemy import text
+
+        db = SessionLocal()
+        try:
+            # ── 1. Prune global keywords ──────────────────────────────────
+            result_kw = db.execute(
+                text(
+                    "DELETE FROM keywords "
+                    "WHERE search_volume = 0 "
+                    "AND last_updated < NOW() - INTERVAL '30 days'"
+                )
+            )
+            deleted_kw = result_kw.rowcount or 0
+
+            # ── 2. Prune app discovered keywords ──────────────────────────
+            result_adk = db.execute(
+                text(
+                    "DELETE FROM app_discovered_keywords "
+                    "WHERE opportunity_score < 5 "
+                    "AND created_at < NOW() - INTERVAL '30 days'"
+                )
+            )
+            deleted_adk = result_adk.rowcount or 0
+
+            db.commit()
+
+            _log_done(
+                job_id, t0,
+                f"removed {deleted_kw} stale keywords, "
+                f"{deleted_adk} low-value discovered keywords"
+            )
+            if deleted_kw or deleted_adk:
+                logger.info(
+                    f"[KeywordCleanup] removed {deleted_kw} old keywords, "
+                    f"{deleted_adk} low-value app keywords"
+                )
+        except Exception as exc:
+            db.rollback()
+            raise exc
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+# ---------------------------------------------------------------------------
 # Scheduler setup
 # ---------------------------------------------------------------------------
 
@@ -683,6 +750,20 @@ def setup_scheduler() -> AsyncIOScheduler:
         ),
         id="keyword_discovery_phase1_daily",
         name="Every 24h: Phase-1 Alphabet+Competitor+Gap Discovery",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── every 24 h: keyword pruning / cleanup ────────────────────────────────
+    # First run: 45 min after startup (well after discovery jobs have run).
+    scheduler.add_job(
+        job_keyword_cleanup_daily,
+        trigger=IntervalTrigger(
+            hours=24,
+            start_date=now + timedelta(minutes=45),
+            timezone="UTC",
+        ),
+        id="keyword_cleanup_daily",
+        name="Every 24h: Keyword Cleanup (prune low-value stale keywords)",
         **_JOB_DEFAULTS,
     )
 

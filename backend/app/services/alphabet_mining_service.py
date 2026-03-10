@@ -30,6 +30,7 @@ import logging
 import time
 from typing import Dict, List, Optional, Set
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.services.apple_autocomplete_service import fetch_autocomplete
@@ -241,10 +242,27 @@ class AlphabetMiningService:
 
         logger.info(f"[AlphabetMining] Total candidates to enrich: {len(candidates)}")
 
+        # ── Per-app limit guard ───────────────────────────────────────────────
+        from app.models.models import AppDiscoveredKeyword as _ADK
+        _MAX_PER_APP = 100
+        current_count = (
+            self.db.query(func.count(_ADK.id))
+            .filter(_ADK.app_id == app_id)
+            .scalar() or 0
+        )
+        if current_count >= _MAX_PER_APP:
+            logger.info(
+                f"[KeywordLimit] app {app_id} already has {current_count} keywords "
+                f"(limit={_MAX_PER_APP}) — skipping insertion"
+            )
+            return 0
+        slots = _MAX_PER_APP - current_count
+        candidates_list = list(candidates)[:slots]
+
         # Enrich + store each candidate
         app_store_id = str(app.app_id)
         stored = 0
-        for keyword in candidates:
+        for keyword in candidates_list:
             try:
                 enrich = _itunes_search_enrichment(keyword, app_store_id)
                 opp = _opportunity_score(
@@ -263,12 +281,12 @@ class AlphabetMiningService:
         logger.info(f"[AlphabetMining] Stored {stored} new alphabet keywords for app {app_id}")
 
         # Push candidates into the global keywords table for intelligence enrichment.
-        if candidates:
+        if candidates_list:
             try:
                 from app.services.global_keyword_sink import GlobalKeywordSink
                 sink = GlobalKeywordSink(self.db)
                 sink.push(
-                    keywords=list(candidates),
+                    keywords=candidates_list,
                     source="alphabet",
                     discovered_from=seeds[0] if seeds else None,
                 )

@@ -26,7 +26,10 @@ import logging
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
+
+from app.models.models import Keyword
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +79,23 @@ class GlobalKeywordSink:
         if not keywords:
             return 0, 0
 
+        # ── Global limit guard ────────────────────────────────────────────────
+        _MAX_GLOBAL = 500_000
+        global_count = self.db.query(func.count(Keyword.id)).scalar() or 0
+        if global_count >= _MAX_GLOBAL:
+            logger.warning(
+                f"[KeywordLimit] global keyword limit reached ({global_count:,} / {_MAX_GLOBAL:,}) "
+                f"— skipping insertion (source={source!r})"
+            )
+            return 0, 0
+
         # Normalise: lowercase, strip whitespace, deduplicate, min length 3
         normalised = list({kw.strip().lower() for kw in keywords if len(kw.strip()) >= 3})
+
+        # Cap to remaining slots
+        remaining = _MAX_GLOBAL - global_count
+        if len(normalised) > remaining:
+            normalised = normalised[:remaining]
 
         inserted = 0
         skipped = 0

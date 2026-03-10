@@ -27,6 +27,7 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -264,6 +265,24 @@ class CompetitorKeywordService:
             f"[CompetitorMining] app {app_id}: {len(all_phrases)} phrases → "
             f"{len(new_phrases)} new to enrich"
         )
+
+        # ── Per-app limit guard ───────────────────────────────────────────────
+        from app.models.models import AppDiscoveredKeyword as _ADK
+        _MAX_PER_APP = 100
+        current_count = (
+            self.db.query(func.count(_ADK.id))
+            .filter(_ADK.app_id == app_id)
+            .scalar() or 0
+        )
+        if current_count >= _MAX_PER_APP:
+            logger.info(
+                f"[KeywordLimit] app {app_id} already has {current_count} keywords "
+                f"(limit={_MAX_PER_APP}) — skipping insertion"
+            )
+            return 0
+        slots = _MAX_PER_APP - current_count
+        if len(new_phrases) > slots:
+            new_phrases = new_phrases[:slots]
 
         # 5. Enrich + store
         stored = 0
