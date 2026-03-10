@@ -176,7 +176,8 @@
       "Bash(python3 -m py_compile app/services/keyword_discovery_engine.py app/workers/scheduler.py && echo \"OK\")",
       "Bash(python3 -m py_compile \\\\\n  app/services/keyword_discovery_service.py \\\\\n  app/services/alphabet_mining_service.py \\\\\n  app/services/competitor_keyword_service.py \\\\\n  app/services/global_keyword_sink.py \\\\\n  app/workers/scheduler.py && echo \"ALL OK\")",
       "Bash(python3 -m py_compile \\\\\n  app/models/models.py \\\\\n  app/main.py \\\\\n  app/services/global_keyword_sink.py \\\\\n  app/services/keyword_discovery_service.py \\\\\n  app/services/alphabet_mining_service.py \\\\\n  app/services/competitor_keyword_service.py \\\\\n  app/services/backfill_keyword_structure.py && echo \"ALL OK\")",
-      "Bash(python3 -m py_compile app/scoring/idea_generator.py app/models/models.py app/models/schemas.py app/api/routes.py app/workers/tasks.py && echo \"OK\")"
+      "Bash(python3 -m py_compile app/scoring/idea_generator.py app/models/models.py app/models/schemas.py app/api/routes.py app/workers/tasks.py && echo \"OK\")",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m py_compile app/api/routes.py && echo \"OK\")"
     ]
   }
 }

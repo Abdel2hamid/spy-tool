@@ -330,6 +330,43 @@ def get_apps(
     return {"apps": apps, "total": total, "skip": effective_skip, "limit": limit}
 
 
+@router.get("/apps/latest-60-days", response_model=AppListResponse)
+def get_latest_apps(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    category: Optional[str] = Query(None),
+    sort_by: str = Query("release_date"),
+    sort_order: str = Query("desc"),
+    db: Session = Depends(get_db),
+):
+    cutoff = datetime.utcnow() - timedelta(days=60)
+
+    query = db.query(models.App).filter(
+        or_(
+            models.App.release_date >= cutoff,
+            models.App.created_at >= cutoff,
+        )
+    )
+
+    if category:
+        query = query.filter(
+            or_(
+                models.App.primary_category.ilike(f"%{category}%"),
+                models.App.secondary_category.ilike(f"%{category}%"),
+            )
+        )
+
+    sort_col = _VALID_SORT_FIELDS.get(sort_by, models.App.release_date)
+    query = query.order_by(
+        sort_col.desc() if sort_order == "desc" else sort_col.asc()
+    )
+
+    total = query.count()
+    apps = query.offset(offset).limit(limit).all()
+
+    return AppListResponse(apps=apps, total=total, skip=offset, limit=limit)
+
+
 @router.get("/apps/{app_id}", response_model=AppResponse)
 def get_app(app_id: int, db: Session = Depends(get_db)):
     app = db.query(models.App).filter(models.App.id == app_id).first()

@@ -23,6 +23,7 @@ const navSections = [
     items: [
       { href: '/', label: 'Dashboard', icon: LayoutDashboard },
       { href: '/apps', label: 'Apps', icon: AppWindow },
+      { href: '/latest-apps', label: 'Latest Apps', icon: Zap },
       { href: '/trending', label: 'Trending', icon: TrendingUp },
     ],
   },

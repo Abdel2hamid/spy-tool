@@ -392,6 +392,30 @@ export async function getFilteredApps(filters: AppFilters = {}): Promise<AppList
 }
 
 // ---------------------------------------------------------------------------
+// Latest 60 Days
+// ---------------------------------------------------------------------------
+
+export interface LatestAppsParams {
+  limit?: number;
+  offset?: number;
+  category?: string;
+  sort_by?: string;
+  sort_order?: 'asc' | 'desc';
+}
+
+export async function getLatestApps(params: LatestAppsParams = {}): Promise<AppListResponse> {
+  const p = new URLSearchParams();
+  if (params.limit)      p.set('limit',      String(params.limit));
+  if (params.offset)     p.set('offset',     String(params.offset));
+  if (params.category)   p.set('category',   params.category);
+  if (params.sort_by)    p.set('sort_by',    params.sort_by);
+  if (params.sort_order) p.set('sort_order', params.sort_order);
+  const res = await fetch(`${API_BASE}/apps/latest-60-days?${p.toString()}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
 
 async function fetchApi<T>(endpoint: string): Promise<T> {
   const controller = new AbortController();
