@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 _BATCH_SIZE = 500
 _MAX_PER_APP = 100
-_MAX_GLOBAL = 500_000
+_MAX_GLOBAL = 1_000_000
 
 
 def backfill_keyword_structure(db: Session) -> Dict[str, int]:

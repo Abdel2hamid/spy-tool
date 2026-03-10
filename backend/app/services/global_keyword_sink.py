@@ -50,8 +50,10 @@ logger = logging.getLogger(__name__)
 # Batch size for bulk inserts (keywords dictionary)
 _BATCH_SIZE = 500
 
-# Hard limits
-_MAX_GLOBAL_KEYWORDS = 500_000
+# Hard limits — unified with keyword_quality_engine.py thresholds
+_MAX_GLOBAL_KEYWORDS    = 1_000_000   # absolute ceiling (hard stop for all tiers)
+_TIER_C_STOP_THRESHOLD  =   900_000   # above this: reject Tier-C keywords
+_TIER_B_STOP_THRESHOLD  = 1_050_000   # above this: reject Tier-B too (Tier-A only)
 _MAX_PER_APP = 100
 
 
@@ -90,30 +92,104 @@ class GlobalKeywordSink:
         if not keywords:
             return 0, 0
 
-        # ── Global limit guard ────────────────────────────────────────────────
+        from app.services.keyword_quality_engine import KeywordQualityEngine
+
+        # ── Global count (single query, reused for all tier decisions) ────────
         global_count = self.db.query(func.count(Keyword.id)).scalar() or 0
+
         if global_count >= _MAX_GLOBAL_KEYWORDS:
             logger.warning(
-                f"[KeywordLimit] global keyword limit reached "
-                f"({global_count:,} / {_MAX_GLOBAL_KEYWORDS:,}) "
-                f"— skipping insertion (source={source!r})"
+                f"[KeywordSink] global_count={global_count:,} reached hard ceiling "
+                f"({_MAX_GLOBAL_KEYWORDS:,}) — skipping all insertions (source={source!r})"
             )
             return 0, 0
 
-        # Normalise: lowercase, strip, deduplicate, min length 3
-        normalised = list({kw.strip().lower() for kw in keywords if len(kw.strip()) >= 3})
+        # Determine admission threshold based on current fill level.
+        #
+        # Because push() receives bare terms with no Apple/Trends enrichment yet,
+        # we use *partial* quality scores (term + source only, max ~45).  The
+        # thresholds below are calibrated to approximate the intended tier gates:
+        #
+        #   fill > 1,050,000  → partial >= 42  ≈ Tier-A/B sources (title/subtitle/competitor)
+        #   fill >   900,000  → partial >= 35  ≈ block alphabet noise, pass trusted sources
+        #   fill <=  900,000  → no threshold   (pruning job handles cleanup post-enrichment)
+        #
+        # Enriched keywords with accurate quality_tier are maintained by
+        # keyword_quality_engine.prune_tier_c_to_target() which runs daily.
+        if global_count >= _TIER_B_STOP_THRESHOLD:
+            min_partial_score = 42.0   # blocks low-value sources at extreme fill
+        elif global_count >= _TIER_C_STOP_THRESHOLD:
+            min_partial_score = 35.0   # blocks alphabet noise, passes title/competitor
+        else:
+            min_partial_score = 0.0    # all terms accepted below 900k
 
-        # Cap to remaining slots
+        # ── Normalise + hard gate + canonical dedup ───────────────────────────
+        # Load existing canonical_terms for dedup (only when >900k where it matters)
+        existing_canonicals: set = set()
+        if global_count >= _TIER_C_STOP_THRESHOLD:
+            try:
+                rows = (
+                    self.db.query(Keyword.canonical_term)
+                    .filter(Keyword.canonical_term.isnot(None))
+                    .all()
+                )
+                existing_canonicals = {r[0] for r in rows if r[0]}
+            except Exception:
+                pass  # fail open — dedup is best-effort
+
+        accepted_terms: List[str] = []
+        rejected_tier_c = 0
+        rejected_tier_b = 0
+
+        seen_in_batch: set = set()
+
+        for raw in keywords:
+            if not raw:
+                continue
+            term = raw.strip().lower()
+            if len(term) < 3:
+                continue
+
+            # Deduplicate within this call
+            if term in seen_in_batch:
+                continue
+            seen_in_batch.add(term)
+
+            # Skip tier-based admission check when no pressure
+            if min_partial_score > 0.0:
+                # Canonical dedup: if canonical already in DB, bump times_seen instead
+                canonical = KeywordQualityEngine.canonicalize(term)
+                if canonical and canonical in existing_canonicals:
+                    # Term's canonical form already exists — treat as dedup, skip insert
+                    continue
+
+                # Compute partial quality score (term + source only; no Apple enrichment yet)
+                q_score, _, _ = KeywordQualityEngine.compute_quality_score(
+                    term=term,
+                    keyword_source=source,
+                )
+                tier = KeywordQualityEngine.assign_tier(q_score)
+
+                if q_score < min_partial_score:
+                    if global_count >= _TIER_B_STOP_THRESHOLD:
+                        rejected_tier_b += 1
+                    else:
+                        rejected_tier_c += 1
+                    continue
+
+            accepted_terms.append(term)
+
+        # Cap to remaining slots in the table
         remaining = _MAX_GLOBAL_KEYWORDS - global_count
-        if len(normalised) > remaining:
-            normalised = normalised[:remaining]
+        if len(accepted_terms) > remaining:
+            accepted_terms = accepted_terms[:remaining]
 
         inserted = 0
         skipped = 0
         now = datetime.now(timezone.utc)
 
-        for i in range(0, len(normalised), _BATCH_SIZE):
-            batch = normalised[i : i + _BATCH_SIZE]
+        for i in range(0, len(accepted_terms), _BATCH_SIZE):
+            batch = accepted_terms[i : i + _BATCH_SIZE]
             try:
                 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -126,6 +202,9 @@ class GlobalKeywordSink:
                                 "keyword_source": source,
                                 "discovered_from": discovered_from,
                                 "first_seen_at": now,
+                                "last_seen_at": now,
+                                "canonical_term": KeywordQualityEngine.canonicalize(kw),
+                                "times_seen": 1,
                             }
                             for kw in batch
                         ]
@@ -146,8 +225,11 @@ class GlobalKeywordSink:
                 )
 
         logger.info(
-            f"[GlobalKeywordSink] source={source!r}: "
-            f"{inserted} inserted, {skipped} skipped (already existed)"
+            f"[KeywordSink] global_count={global_count:,}, "
+            f"accepted={len(accepted_terms)}, "
+            f"rejected_tier_c={rejected_tier_c}, "
+            f"rejected_tier_b={rejected_tier_b}, "
+            f"inserted={inserted}, skipped={skipped} (source={source!r})"
         )
         return inserted, skipped
 
