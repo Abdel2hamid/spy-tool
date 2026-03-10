@@ -164,7 +164,9 @@
       "Bash(python3 -m py_compile app/api/routes.py && echo \"routes.py OK\")",
       "Bash(cd /Users/abdelhamid/appstore-spy-tool/frontend && npx tsc --noEmit 2>&1 | head -40)",
       "Bash(node_modules/.bin/tsc --noEmit 2>&1 | head -40)",
-      "Bash(./node_modules/.bin/tsc --noEmit 2>&1 | head -40)"
+      "Bash(./node_modules/.bin/tsc --noEmit 2>&1 | head -40)",
+      "Bash(npx tsc --noEmit 2>&1 | head -50)",
+      "Bash(node_modules/.bin/tsc --noEmit 2>&1 | head -60)"
     ]
   }
 }

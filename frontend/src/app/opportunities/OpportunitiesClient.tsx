@@ -66,12 +66,10 @@ export default function OpportunitiesClient() {
         )}
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+          <div className="card p-6">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Top Keyword Opportunities
-              </h3>
-              <Search className="h-5 w-5 text-gray-400" />
+              <h3 className="section-heading">Top Keyword Opportunities</h3>
+              <Search className="h-4 w-4 text-gray-400" />
             </div>
             <div className="space-y-3">
               {keywordOpportunities.slice(0, 5).map((kw, i) => (
@@ -109,12 +107,10 @@ export default function OpportunitiesClient() {
             </div>
           </div>
 
-          <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+          <div className="card p-6">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Opportunity Score Distribution
-              </h3>
-              <BarChart3 className="h-5 w-5 text-gray-400" />
+              <h3 className="section-heading">Score Distribution</h3>
+              <BarChart3 className="h-4 w-4 text-gray-400" />
             </div>
             {chartData.length > 0 ? (
               <SimpleChart
@@ -123,59 +119,46 @@ export default function OpportunitiesClient() {
                 xAxisKey="name"
                 type="bar"
                 color="#10b981"
-                height={250}
+                height={220}
               />
             ) : (
-              <div className="flex h-[250px] items-center justify-center text-gray-400">
-                No data available
+              <div className="flex h-[220px] flex-col items-center justify-center gap-2 text-center">
+                <BarChart3 className="h-8 w-8 text-gray-300 dark:text-gray-600" />
+                <p className="text-sm text-gray-400 dark:text-gray-500">No data available</p>
               </div>
             )}
           </div>
         </div>
 
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-          <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              All Keyword Opportunities
-            </h3>
+        <div className="card overflow-hidden">
+          <div className="border-b border-gray-200 px-6 py-4 dark:border-gray-800">
+            <h3 className="section-heading">All Keyword Opportunities</h3>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="data-table">
               <thead>
-                <tr className="border-b border-gray-200 dark:border-gray-700">
-                  <th className="pb-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    Keyword
-                  </th>
-                  <th className="pb-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    Search Volume
-                  </th>
-                  <th className="pb-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    Difficulty
-                  </th>
-                  <th className="pb-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    Trend
-                  </th>
-                  <th className="pb-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    Score
-                  </th>
-                  <th className="pb-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                    Apps
-                  </th>
+                <tr>
+                  <th>Keyword</th>
+                  <th className="text-right">Search Volume</th>
+                  <th className="text-right">Difficulty</th>
+                  <th className="text-right">Trend</th>
+                  <th className="text-right">Score</th>
+                  <th className="text-right">Apps</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+              <tbody>
                 {keywordOpportunities.map((kw) => (
-                  <tr key={kw.keyword} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                    <td className="py-3 font-medium text-gray-900 dark:text-white">
+                  <tr key={kw.keyword}>
+                    <td className="font-medium text-gray-900 dark:text-white">
                       {kw.keyword || 'N/A'}
                     </td>
-                    <td className="py-3 text-right text-gray-600 dark:text-gray-300">
+                    <td className="text-right text-gray-600 dark:text-gray-300">
                       {(kw.search_volume || 0).toLocaleString()}
                     </td>
-                    <td className="py-3 text-right">
+                    <td className="text-right">
                       <span
                         className={cn(
-                          'inline-flex rounded-full px-2 py-0.5 text-xs font-medium',
+                          'pill',
                           (kw.difficulty || 0) < 40
                             ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400'
                             : (kw.difficulty || 0) < 70
@@ -186,10 +169,10 @@ export default function OpportunitiesClient() {
                         {(kw.difficulty || 0).toFixed(0)}
                       </span>
                     </td>
-                    <td className="py-3 text-right">
+                    <td className="text-right">
                       <span
                         className={cn(
-                          'inline-flex items-center gap-1 text-sm font-medium',
+                          'text-sm font-medium',
                           (kw.trend || 0) > 0
                             ? 'text-emerald-600 dark:text-emerald-400'
                             : 'text-red-600 dark:text-red-400'
@@ -199,10 +182,10 @@ export default function OpportunitiesClient() {
                         {(kw.trend || 0).toFixed(1)}
                       </span>
                     </td>
-                    <td className="py-3 text-right font-semibold text-gray-900 dark:text-white">
+                    <td className="text-right font-semibold text-gray-900 dark:text-white">
                       {(kw.opportunity_score || 0).toFixed(0)}
                     </td>
-                    <td className="py-3 text-right text-gray-600 dark:text-gray-300">
+                    <td className="text-right text-gray-600 dark:text-gray-300">
                       {kw.current_apps || 0}
                     </td>
                   </tr>

@@ -50,69 +50,139 @@ function formatRevenue(min: number | null, max: number | null): string {
 
 function AppHeader({ app }: { app: AppDetail }) {
   return (
-    <div className="flex flex-col gap-6 md:flex-row">
-      <div className="flex-shrink-0">
-        {app.icon_url ? (
-          <img 
-            src={app.icon_url} 
-            alt={app.name} 
-            className="h-32 w-32 rounded-2xl object-cover shadow-lg"
-          />
-        ) : (
-          <div className="h-32 w-32 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
-            <span className="text-4xl font-bold text-white">{app.name?.[0] || '?'}</span>
+    <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
+      {/* Gradient accent bar */}
+      <div className="h-1.5 w-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500" />
+
+      <div className="p-6">
+        <div className="flex flex-col gap-5 sm:flex-row">
+          {/* App icon */}
+          <div className="flex-shrink-0">
+            {app.icon_url ? (
+              <img
+                src={app.icon_url}
+                alt={app.name}
+                className="h-24 w-24 rounded-2xl object-cover shadow-md ring-1 ring-black/5 dark:ring-white/10"
+              />
+            ) : (
+              <div className="flex h-24 w-24 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-md">
+                <span className="text-3xl font-bold text-white">{app.name?.[0] || '?'}</span>
+              </div>
+            )}
           </div>
-        )}
-      </div>
-      <div className="flex-1 space-y-2">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{app.name}</h1>
-        {app.subtitle && (
-          <p className="text-lg text-gray-500 dark:text-gray-400">{app.subtitle}</p>
-        )}
-        <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
-          {app.developer && (
-            <span className="flex items-center gap-1">
-              <Code className="h-4 w-4" />
-              {app.developer}
-            </span>
-          )}
-          {app.primary_category && (
-            <span className="flex items-center gap-1">
-              <Globe className="h-4 w-4" />
-              {app.primary_category}
-              {app.secondary_category && ` › ${app.secondary_category}`}
-            </span>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center gap-4">
-          <RatingStars rating={app.current_rating} />
-          <span className="text-gray-500 dark:text-gray-400">
-            {app.current_reviews?.toLocaleString() || 0} ratings
-          </span>
-          {app.current_version && (
-            <span className="flex items-center gap-1 text-gray-500 dark:text-gray-400">
-              <Calendar className="h-4 w-4" />
-              v{app.current_version}
-            </span>
-          )}
-          {app.is_free !== undefined && (
-            <span className={cn(
-              "px-2 py-1 rounded-full text-xs font-medium",
-              app.is_free ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400" : "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300"
-            )}>
-              {app.is_free ? 'Free' : `$${app.price}`}
-            </span>
-          )}
-          {app.url && (
-            <a 
-              href={app.url} 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="flex items-center gap-1 text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
-            >
-              View on App Store <ExternalLink className="h-4 w-4" />
-            </a>
-          )}
+
+          {/* App info */}
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">
+                  {app.name}
+                </h1>
+                {app.subtitle && (
+                  <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">{app.subtitle}</p>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {app.is_free !== undefined && (
+                  <span className={cn(
+                    'pill text-xs font-semibold',
+                    app.is_free
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-400'
+                      : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
+                  )}>
+                    {app.is_free ? 'Free' : `$${app.price}`}
+                  </span>
+                )}
+                {app.url && (
+                  <a
+                    href={app.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="pill bg-indigo-50 text-indigo-600 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:text-indigo-400 dark:hover:bg-indigo-950 transition-colors"
+                  >
+                    <ExternalLink className="mr-1 h-3 w-3" />
+                    App Store
+                  </a>
+                )}
+              </div>
+            </div>
+
+            {/* Developer + category */}
+            <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+              {app.developer && (
+                <span className="flex items-center gap-1.5">
+                  <Code className="h-3.5 w-3.5" />
+                  {app.developer}
+                </span>
+              )}
+              {app.primary_category && (
+                <span className="flex items-center gap-1.5">
+                  <Globe className="h-3.5 w-3.5" />
+                  {app.primary_category}
+                  {app.secondary_category && (
+                    <span className="text-gray-400 dark:text-gray-500"> › {app.secondary_category}</span>
+                  )}
+                </span>
+              )}
+            </div>
+
+            {/* Quick-stat chips */}
+            <div className="flex flex-wrap gap-2 pt-1">
+              {/* Rating */}
+              {app.current_rating != null && (
+                <div className="stat-card flex items-center gap-1.5">
+                  <Star className="h-3.5 w-3.5 fill-yellow-400 text-yellow-400" />
+                  <span className="text-sm font-semibold text-gray-900 dark:text-white">
+                    {app.current_rating.toFixed(2)}
+                  </span>
+                  <span className="text-xs text-gray-400">/ 5</span>
+                </div>
+              )}
+
+              {/* Reviews */}
+              {app.current_reviews != null && app.current_reviews > 0 && (
+                <div className="stat-card flex items-center gap-1.5">
+                  <MessageSquare className="h-3.5 w-3.5 text-indigo-400" />
+                  <span className="text-sm font-semibold text-gray-900 dark:text-white">
+                    {app.current_reviews.toLocaleString()}
+                  </span>
+                  <span className="text-xs text-gray-400">reviews</span>
+                </div>
+              )}
+
+              {/* Rank */}
+              {app.current_rank != null && (
+                <div className="stat-card flex items-center gap-1.5">
+                  <TrendingUp className="h-3.5 w-3.5 text-emerald-500" />
+                  <span className="text-sm font-semibold text-gray-900 dark:text-white">
+                    #{app.current_rank}
+                  </span>
+                  <span className="text-xs text-gray-400">rank</span>
+                </div>
+              )}
+
+              {/* Version */}
+              {app.current_version && (
+                <div className="stat-card flex items-center gap-1.5">
+                  <Calendar className="h-3.5 w-3.5 text-purple-400" />
+                  <span className="text-sm font-semibold text-gray-900 dark:text-white">
+                    v{app.current_version}
+                  </span>
+                </div>
+              )}
+
+              {/* Installs estimate */}
+              {app.estimated_installs_min != null && (
+                <div className="stat-card flex items-center gap-1.5">
+                  <Download className="h-3.5 w-3.5 text-sky-400" />
+                  <span className="text-sm font-semibold text-gray-900 dark:text-white">
+                    {formatRange(app.estimated_installs_min, app.estimated_installs_max)}
+                  </span>
+                  <span className="text-xs text-gray-400">installs/mo</span>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -351,68 +421,149 @@ function VersionsTab({ versions }: { versions: AppVersion[] }) {
   );
 }
 
+function RatingDistribution({ reviews }: { reviews: Review[] }) {
+  const total = reviews.length;
+  if (total === 0) return null;
+
+  const counts = [5, 4, 3, 2, 1].map(star => ({
+    star,
+    count: reviews.filter(r => r.rating === star).length,
+  }));
+  const avg = reviews.reduce((s, r) => s + (r.rating ?? 0), 0) / total;
+  const starColor = (star: number) =>
+    star >= 4 ? 'bg-emerald-400' : star === 3 ? 'bg-amber-400' : 'bg-red-400';
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+      <div className="flex items-center gap-6">
+        {/* Big average */}
+        <div className="flex-shrink-0 text-center">
+          <p className="text-4xl font-bold text-gray-900 dark:text-white">{avg.toFixed(1)}</p>
+          <div className="mt-1 flex justify-center">
+            {[1, 2, 3, 4, 5].map(s => (
+              <Star
+                key={s}
+                className={cn('h-3.5 w-3.5', s <= Math.round(avg) ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300')}
+              />
+            ))}
+          </div>
+          <p className="mt-0.5 text-xs text-gray-400">{total.toLocaleString()} reviews</p>
+        </div>
+
+        {/* Distribution bars */}
+        <div className="flex-1 space-y-1.5">
+          {counts.map(({ star, count }) => {
+            const pct = total > 0 ? (count / total) * 100 : 0;
+            return (
+              <div key={star} className="flex items-center gap-2">
+                <div className="flex w-6 items-center gap-0.5 flex-shrink-0">
+                  <span className="text-xs text-gray-500 dark:text-gray-400">{star}</span>
+                  <Star className="h-2.5 w-2.5 fill-gray-300 text-gray-300" />
+                </div>
+                <div className="h-2 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+                  <div
+                    className={cn('h-full rounded-full transition-all duration-500', starColor(star))}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <span className="w-8 text-right text-xs text-gray-400">{Math.round(pct)}%</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ReviewsTab({ reviews, appId }: { reviews: Review[], appId: number }) {
   const [filterRating, setFilterRating] = useState<number | null>(null);
-  const [filteredReviews, setFilteredReviews] = useState<Review[]>(reviews);
+  const [filterSentiment, setFilterSentiment] = useState<'all' | 'positive' | 'negative'>('all');
 
-  useEffect(() => {
-    if (filterRating) {
-      setFilteredReviews(reviews.filter(r => r.rating === filterRating));
-    } else {
-      setFilteredReviews(reviews);
-    }
-  }, [filterRating, reviews]);
+  const filteredReviews = reviews.filter(r => {
+    if (filterRating !== null && r.rating !== filterRating) return false;
+    if (filterSentiment === 'positive' && (r.rating ?? 0) < 4) return false;
+    if (filterSentiment === 'negative' && (r.rating ?? 0) > 2) return false;
+    return true;
+  });
 
   if (reviews.length === 0) {
     return (
-      <div className="rounded-xl border border-gray-200 bg-white p-8 text-center dark:border-gray-800 dark:bg-gray-900">
-        <MessageSquare className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600 mb-4" />
-        <p className="text-gray-500 dark:text-gray-400">No reviews available</p>
+      <div className="rounded-xl border border-gray-200 bg-white p-10 text-center dark:border-gray-800 dark:bg-gray-900">
+        <MessageSquare className="mx-auto h-10 w-10 text-gray-300 dark:text-gray-600 mb-3" />
+        <p className="font-medium text-gray-500 dark:text-gray-400">No reviews available</p>
+        <p className="mt-1 text-sm text-gray-400">Reviews appear after the first scrape cycle.</p>
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Filter className="h-4 w-4 text-gray-400" />
-        <span className="text-sm text-gray-500 dark:text-gray-400">Filter:</span>
-        <button
-          onClick={() => setFilterRating(null)}
-          className={cn(
-            "px-3 py-1 rounded-full text-sm",
-            filterRating === null 
-              ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-800 dark:text-indigo-300" 
-              : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
-          )}
-        >
-          All
-        </button>
-        {[5, 4, 3, 2, 1].map(rating => (
+      {/* Rating distribution */}
+      <RatingDistribution reviews={reviews} />
+
+      {/* Filter bar */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Sentiment quick filters */}
+        {(['all', 'positive', 'negative'] as const).map(s => (
           <button
-            key={rating}
-            onClick={() => setFilterRating(rating)}
+            key={s}
+            onClick={() => { setFilterSentiment(s); setFilterRating(null); }}
             className={cn(
-              "px-3 py-1 rounded-full text-sm flex items-center gap-1",
-              filterRating === rating 
-                ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-800 dark:text-indigo-300" 
-                : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+              'rounded-full px-3 py-1 text-sm font-medium capitalize transition-colors',
+              filterSentiment === s && filterRating === null
+                ? 'bg-indigo-600 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700',
             )}
           >
-            <Star className="h-3 w-3 fill-current" /> {rating}
+            {s === 'all' ? 'All Reviews' : s === 'positive' ? '👍 Positive (4-5★)' : '👎 Negative (1-2★)'}
           </button>
         ))}
+
+        <div className="ml-auto flex items-center gap-1.5">
+          <Filter className="h-3.5 w-3.5 text-gray-400" />
+          {[5, 4, 3, 2, 1].map(rating => (
+            <button
+              key={rating}
+              onClick={() => {
+                setFilterSentiment('all');
+                setFilterRating(filterRating === rating ? null : rating);
+              }}
+              className={cn(
+                'flex items-center gap-0.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
+                filterRating === rating
+                  ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-300'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400',
+              )}
+            >
+              <Star className="h-3 w-3 fill-current" /> {rating}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div className="space-y-4">
+      {/* Review count summary */}
+      <p className="text-xs text-gray-400">
+        Showing {filteredReviews.length} of {reviews.length} reviews
+      </p>
+
+      {/* Review cards */}
+      <div className="space-y-3">
         {filteredReviews.map((review) => (
-          <div 
+          <div
             key={review.id}
-            className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900"
+            className={cn(
+              'rounded-xl border p-4 transition-shadow hover:shadow-sm dark:hover:shadow-none',
+              (review.rating ?? 0) <= 2
+                ? 'border-red-100 bg-red-50/30 dark:border-red-900/30 dark:bg-red-950/10'
+                : (review.rating ?? 0) >= 4
+                ? 'border-emerald-100 bg-emerald-50/30 dark:border-emerald-900/30 dark:bg-emerald-950/10'
+                : 'border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900',
+            )}
           >
-            <div className="flex items-start justify-between mb-2">
-              <div>
-                <div className="flex items-center gap-2">
+            <div className="mb-2 flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium text-gray-900 dark:text-white">
                     {review.user_name || 'Anonymous'}
                   </span>
@@ -421,34 +572,36 @@ function ReviewsTab({ reviews, appId }: { reviews: Review[], appId: number }) {
                       <Star
                         key={star}
                         className={cn(
-                          "h-3 w-3",
-                          star <= (review.rating || 0) ? "fill-yellow-400 text-yellow-400" : "text-gray-300"
+                          'h-3 w-3',
+                          star <= (review.rating ?? 0) ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300',
                         )}
                       />
                     ))}
                   </div>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-gray-400">
-                  {review.date && (
-                    <span>{new Date(review.date).toLocaleDateString()}</span>
-                  )}
+                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-gray-400">
+                  {review.date && <span>{new Date(review.date).toLocaleDateString()}</span>}
                   {review.app_version && <span>v{review.app_version}</span>}
-                  {review.storefront && <span>{review.storefront}</span>}
+                  {review.storefront && (
+                    <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono dark:bg-gray-800">
+                      {review.storefront}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
             {review.title && (
-              <h4 className="font-medium text-gray-900 dark:text-white mb-1">{review.title}</h4>
+              <h4 className="mb-1 font-medium text-gray-900 dark:text-white">{review.title}</h4>
             )}
             {review.content && (
-              <p className="text-sm text-gray-600 dark:text-gray-300">{review.content}</p>
+              <p className="text-sm leading-relaxed text-gray-600 dark:text-gray-300">{review.content}</p>
             )}
             {review.developer_reply_text && (
-              <div className="mt-3 pl-3 border-l-2 border-indigo-200 dark:border-indigo-800">
-                <p className="text-xs font-medium text-indigo-600 dark:text-indigo-400 mb-1">Developer Reply</p>
+              <div className="mt-3 rounded-lg border-l-2 border-indigo-300 bg-indigo-50/50 py-2 pl-3 pr-2 dark:border-indigo-700 dark:bg-indigo-950/20">
+                <p className="mb-1 text-xs font-semibold text-indigo-600 dark:text-indigo-400">Developer Reply</p>
                 <p className="text-sm text-gray-600 dark:text-gray-300">{review.developer_reply_text}</p>
                 {review.developer_reply_date && (
-                  <p className="text-xs text-gray-400 mt-1">
+                  <p className="mt-1 text-xs text-gray-400">
                     {new Date(review.developer_reply_date).toLocaleDateString()}
                   </p>
                 )}
@@ -831,34 +984,48 @@ function MarketWeaknessTab({ appId }: { appId: number }) {
           </div>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-2">
           {data.countries.map((stat) => {
             const { flag, name } = getCountryLabel(stat.country);
+            const barColor =
+              stat.negative_ratio < 0.15
+                ? 'bg-emerald-400 dark:bg-emerald-500'
+                : stat.negative_ratio < 0.3
+                ? 'bg-amber-400 dark:bg-amber-500'
+                : 'bg-red-400 dark:bg-red-500';
             return (
               <div
                 key={stat.country}
                 className={cn(
-                  'flex items-center justify-between rounded-lg border p-4',
-                  negativeRatioBg(stat.negative_ratio)
+                  'rounded-xl border p-4',
+                  negativeRatioBg(stat.negative_ratio),
                 )}
               >
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">{flag}</span>
-                  <div>
-                    <p className="font-medium text-gray-900 dark:text-white">{name}</p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      {stat.total_reviews.toLocaleString()} reviews &middot; avg {stat.average_rating.toFixed(1)} ★
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-2xl flex-shrink-0">{flag}</span>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-gray-900 dark:text-white truncate">{name}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {stat.total_reviews.toLocaleString()} reviews · avg {stat.average_rating.toFixed(1)}★
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className={cn('text-xl font-bold tabular-nums', negativeRatioColor(stat.negative_ratio))}>
+                      {(stat.negative_ratio * 100).toFixed(1)}%
+                    </p>
+                    <p className={cn('text-xs font-medium', negativeRatioColor(stat.negative_ratio))}>
+                      {negativeRatioLabel(stat.negative_ratio)}
                     </p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className={cn('text-2xl font-bold', negativeRatioColor(stat.negative_ratio))}>
-                    {(stat.negative_ratio * 100).toFixed(1)}%
-                  </p>
-                  <p className={cn('text-xs font-medium', negativeRatioColor(stat.negative_ratio))}>
-                    {negativeRatioLabel(stat.negative_ratio)}
-                  </p>
-                  <p className="mt-0.5 text-xs text-gray-400">{stat.negative_reviews} negative</p>
+                {/* Progress bar */}
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+                  <div
+                    className={cn('h-full rounded-full transition-all duration-500', barColor)}
+                    style={{ width: `${Math.min(stat.negative_ratio * 100, 100)}%` }}
+                  />
                 </div>
               </div>
             );
@@ -1040,6 +1207,129 @@ function FeatureGapsTab({ appId }: { appId: number }) {
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
+// KeywordOpportunitiesHighlight — top 3 keyword opportunities for this app
+// ---------------------------------------------------------------------------
+
+function KeywordOpportunitiesHighlight({ appId }: { appId: number }) {
+  const [extracted, setExtracted] = useState<ExtractedKeyword[]>([]);
+  const [discovered, setDiscovered] = useState<DiscoveredKeyword[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    Promise.all([
+      getExtractedKeywords(appId).catch(() => null),
+      getDiscoveredKeywords(appId).catch(() => null),
+    ]).then(([ext, disc]) => {
+      setExtracted(ext?.keywords ?? []);
+      setDiscovered(disc?.keywords ?? []);
+      setLoading(false);
+    });
+  }, [appId]);
+
+  if (loading) {
+    return (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 animate-pulse">
+        {[1, 2, 3].map(i => (
+          <div key={i} className="h-28 rounded-xl bg-gray-100 dark:bg-gray-800" />
+        ))}
+      </div>
+    );
+  }
+
+  // Merge and pick top 3 by opportunity / traffic
+  const allKws = [
+    ...extracted.map(k => ({
+      keyword: k.keyword,
+      opportunity: k.traffic_score * 10 + k.search_volume * 0.5,
+      volume: k.search_volume,
+      difficulty: k.difficulty,
+      rank: k.app_rank,
+      trend: null as string | null,
+    })),
+    ...discovered.map(k => ({
+      keyword: k.keyword,
+      opportunity: k.opportunity_score,
+      volume: k.search_volume,
+      difficulty: k.difficulty,
+      rank: k.app_rank,
+      trend: k.trend_direction,
+    })),
+  ]
+    .sort((a, b) => b.opportunity - a.opportunity)
+    .slice(0, 3);
+
+  if (allKws.length === 0) return null;
+
+  const oppColor = (score: number) =>
+    score >= 70 ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-800/50 dark:bg-emerald-950/20'
+    : score >= 45 ? 'border-amber-200 bg-amber-50 dark:border-amber-800/50 dark:bg-amber-950/20'
+    : 'border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900';
+
+  const oppBadge = (score: number) =>
+    score >= 70 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300'
+    : score >= 45 ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-300'
+    : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
+
+  const trendIcon = (t: string | null) =>
+    t === 'rising' ? '↑' : t === 'declining' ? '↓' : '';
+
+  return (
+    <div>
+      <div className="mb-3 flex items-center gap-2">
+        <Target className="h-4 w-4 text-indigo-500" />
+        <h3 className="section-heading">Top Keyword Opportunities</h3>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {allKws.map((kw, i) => (
+          <div
+            key={kw.keyword}
+            className={cn('rounded-xl border p-4 shadow-sm transition-shadow hover:shadow-md', oppColor(kw.opportunity))}
+          >
+            <div className="mb-2 flex items-start justify-between gap-2">
+              <span className="text-xs font-semibold text-gray-400 dark:text-gray-500">
+                #{i + 1} Opportunity
+              </span>
+              <span className={cn('pill text-xs font-bold', oppBadge(kw.opportunity))}>
+                {kw.opportunity.toFixed(0)}
+                {kw.opportunity >= 70 ? ' High' : kw.opportunity >= 45 ? ' Med' : ' Low'}
+              </span>
+            </div>
+            <p className="mb-3 line-clamp-1 font-semibold text-gray-900 dark:text-white">
+              {kw.keyword}
+              {kw.trend && (
+                <span className={cn('ml-1.5 text-sm', kw.trend === 'rising' ? 'text-emerald-500' : 'text-red-400')}>
+                  {trendIcon(kw.trend)}
+                </span>
+              )}
+            </p>
+            <div className="grid grid-cols-3 gap-1 text-center">
+              <div>
+                <p className="text-xs text-gray-400">Volume</p>
+                <p className="text-sm font-semibold text-gray-900 dark:text-white">{kw.volume}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">Difficulty</p>
+                <p className={cn('text-sm font-semibold',
+                  kw.difficulty >= 70 ? 'text-red-500' : kw.difficulty >= 40 ? 'text-amber-500' : 'text-emerald-500'
+                )}>
+                  {Math.round(kw.difficulty)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">Rank</p>
+                <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                  {kw.rank != null ? `#${kw.rank}` : '—'}
+                </p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
 // ExtractedKeywordsTable — keywords extracted from app metadata + enriched
 // ---------------------------------------------------------------------------
 
@@ -1962,10 +2252,39 @@ export default function AppDetailPage() {
   if (loading) {
     return (
       <AppShell>
-        <div className="space-y-6">
-          <div className="animate-pulse space-y-4">
-            <div className="h-8 bg-gray-200 dark:bg-gray-800 rounded w-1/4"></div>
-            <div className="h-32 bg-gray-200 dark:bg-gray-800 rounded"></div>
+        <div className="space-y-5 animate-pulse">
+          {/* Back button skeleton */}
+          <div className="h-5 w-16 rounded bg-gray-200 dark:bg-gray-800" />
+          {/* Header card skeleton */}
+          <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
+            <div className="h-1.5 w-full bg-gray-200 dark:bg-gray-800" />
+            <div className="flex gap-5 p-6">
+              <div className="h-24 w-24 flex-shrink-0 rounded-2xl bg-gray-200 dark:bg-gray-800" />
+              <div className="flex-1 space-y-3">
+                <div className="h-6 w-48 rounded bg-gray-200 dark:bg-gray-800" />
+                <div className="h-4 w-72 rounded bg-gray-200 dark:bg-gray-800" />
+                <div className="flex gap-2">
+                  {[1, 2, 3, 4].map(i => (
+                    <div key={i} className="h-8 w-24 rounded-lg bg-gray-200 dark:bg-gray-800" />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+          {/* Tab bar skeleton */}
+          <div className="flex gap-2 border-b border-gray-200 pb-0 dark:border-gray-800">
+            {[1, 2, 3, 4, 5].map(i => (
+              <div key={i} className="h-10 w-24 rounded-t-lg bg-gray-200 dark:bg-gray-800" />
+            ))}
+          </div>
+          {/* Content skeleton */}
+          <div className="space-y-4">
+            <div className="h-40 rounded-xl bg-gray-200 dark:bg-gray-800" />
+            <div className="grid grid-cols-3 gap-4">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="h-24 rounded-xl bg-gray-200 dark:bg-gray-800" />
+              ))}
+            </div>
           </div>
         </div>
       </AppShell>
@@ -2002,38 +2321,48 @@ export default function AppDetailPage() {
 
   return (
     <AppShell>
-      <div className="space-y-6">
+      <div className="space-y-5">
+        {/* Back button */}
         <button
           onClick={() => router.back()}
-          className="flex items-center gap-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+          className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back
+          Back to Apps
         </button>
 
         <AppHeader app={app} />
 
-        <div className="border-b border-gray-200 dark:border-gray-700">
-          <nav className="flex space-x-8">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={cn(
-                  "flex items-center gap-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors",
-                  activeTab === tab.id
-                    ? "border-indigo-500 text-indigo-600 dark:text-indigo-400"
-                    : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                )}
-              >
-                <tab.icon className="h-4 w-4" />
-                {tab.label}
-              </button>
-            ))}
+        {/* Tab navigation — horizontally scrollable on mobile */}
+        <div className="relative">
+          <div className="absolute inset-x-0 bottom-0 h-px bg-gray-200 dark:bg-gray-800" />
+          <nav className="flex overflow-x-auto scrollbar-none gap-0.5 pb-0">
+            {tabs.map((tab) => {
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={cn(
+                    'relative flex flex-shrink-0 items-center gap-1.5 px-4 py-3 text-sm font-medium transition-all duration-150',
+                    isActive
+                      ? 'text-indigo-600 dark:text-indigo-400'
+                      : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200',
+                  )}
+                >
+                  <tab.icon className={cn('h-3.5 w-3.5', isActive ? 'text-indigo-500' : 'text-gray-400')} />
+                  <span className="whitespace-nowrap">{tab.label}</span>
+                  {isActive && (
+                    <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-t-full bg-indigo-500" />
+                  )}
+                </button>
+              );
+            })}
           </nav>
         </div>
 
-        <div>
+        {/* Tab content */}
+        <div className="min-h-0">
           {activeTab === 'overview' && <OverviewTab app={app} />}
           {activeTab === 'versions' && <VersionsTab versions={versions} />}
           {activeTab === 'reviews' && <ReviewsTab reviews={reviews} appId={appId} />}
@@ -2043,26 +2372,42 @@ export default function AppDetailPage() {
           {activeTab === 'gaps' && <FeatureGapsTab appId={appId} />}
           {activeTab === 'keywords' && (
             <div className="space-y-8">
+              {/* ── Best Opportunities highlight ── */}
+              <KeywordOpportunitiesHighlight appId={appId} />
+
+              {/* ── 1. Extracted Keywords ── */}
               <div>
-                <h3 className="mb-1 text-base font-semibold text-gray-800 dark:text-gray-200">Extracted Keywords</h3>
-                <p className="mb-4 text-xs text-gray-400">
-                  Keywords discovered from this app&apos;s title, subtitle, and description — enriched with search volume, difficulty, and traffic estimates.
-                </p>
+                <div className="mb-3 flex items-baseline justify-between">
+                  <div>
+                    <h3 className="section-heading">Extracted Keywords</h3>
+                    <p className="mt-0.5 text-xs text-gray-400">
+                      From this app&apos;s title, subtitle, and description — enriched with volume, difficulty, and traffic.
+                    </p>
+                  </div>
+                </div>
                 <ExtractedKeywordsTable appId={appId} />
               </div>
+
+              {/* ── 2. Discovered Keywords ── */}
               <div>
-                <h3 className="mb-1 text-base font-semibold text-gray-800 dark:text-gray-200">Discovered Keywords</h3>
-                <p className="mb-4 text-xs text-gray-400">
-                  New keyword candidates found via Apple autocomplete and prefix/suffix expansions — scored by opportunity for ASO targeting.
-                </p>
+                <div className="mb-3">
+                  <h3 className="section-heading">Discovered Keywords</h3>
+                  <p className="mt-0.5 text-xs text-gray-400">
+                    Found via Apple autocomplete + prefix/suffix expansions — scored by ASO opportunity.
+                  </p>
+                </div>
                 <DiscoveredKeywordsTable appId={appId} />
               </div>
+
+              {/* ── 3. Keyword Intelligence ── */}
               <div>
-                <h3 className="mb-4 text-base font-semibold text-gray-800 dark:text-gray-200">Keyword Intelligence</h3>
+                <h3 className="section-heading mb-4">Keyword Intelligence</h3>
                 <KeywordIntelligenceTab appId={appId} />
               </div>
+
+              {/* ── 4. Rank History ── */}
               <div>
-                <h3 className="mb-4 text-base font-semibold text-gray-800 dark:text-gray-200">Rank History</h3>
+                <h3 className="section-heading mb-4">Rank History</h3>
                 <KeywordHistoryPanel appId={appId} />
               </div>
             </div>

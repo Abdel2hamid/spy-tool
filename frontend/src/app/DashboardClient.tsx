@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { AppShell, StatsCard, TrendingAppCard, OpportunityOfDayCard } from '@/components';
 import { SimpleChart } from '@/components/Charts';
 import {
@@ -13,7 +14,7 @@ import {
   OpportunityOfDay,
   Keyword,
 } from '@/lib/api';
-import { AppWindow, Search, TrendingUp, Target, BarChart3, RefreshCw } from 'lucide-react';
+import { AppWindow, Search, TrendingUp, Target, BarChart3, RefreshCw, ArrowRight, Lightbulb } from 'lucide-react';
 
 export default function DashboardClient() {
   const [stats, setStats] = useState<DashboardStats>({
@@ -69,14 +70,32 @@ export default function DashboardClient() {
     return (
       <AppShell>
         <div className="space-y-6">
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          {/* Header skeleton */}
+          <div className="flex items-center justify-between">
+            <div className="space-y-2">
+              <div className="h-7 w-36 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-800" />
+              <div className="h-4 w-52 animate-pulse rounded bg-gray-100 dark:bg-gray-800/60" />
+            </div>
+            <div className="h-9 w-24 animate-pulse rounded-lg bg-gray-200 dark:bg-gray-800" />
+          </div>
+          {/* Stats skeleton */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {[...Array(4)].map((_, i) => (
               <div key={i} className="h-28 animate-pulse rounded-xl bg-gray-200 dark:bg-gray-800" />
             ))}
           </div>
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          {/* Opportunity skeleton */}
+          <div className="h-52 animate-pulse rounded-2xl bg-gray-200 dark:bg-gray-800" />
+          {/* Charts skeleton */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div className="h-64 animate-pulse rounded-xl bg-gray-200 dark:bg-gray-800" />
             <div className="h-64 animate-pulse rounded-xl bg-gray-200 dark:bg-gray-800" />
+          </div>
+          {/* Trending apps skeleton */}
+          <div className="space-y-3">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="h-20 animate-pulse rounded-xl bg-gray-200 dark:bg-gray-800" />
+            ))}
           </div>
         </div>
       </AppShell>
@@ -86,11 +105,14 @@ export default function DashboardClient() {
   return (
     <AppShell>
       <div className="space-y-6">
+        {/* Page header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              AI-powered App Store intelligence
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+              Dashboard
+            </h1>
+            <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+              AI-powered App Store intelligence — {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
             </p>
           </div>
           <button
@@ -99,114 +121,160 @@ export default function DashboardClient() {
             className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
           >
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-            Refresh
+            {refreshing ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Stats row */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatsCard
             title="Apps Tracked"
             value={stats?.total_apps_tracked?.toLocaleString() || '0'}
             icon={AppWindow}
             description="Total apps being monitored"
+            accent="indigo"
           />
           <StatsCard
             title="Keywords"
             value={stats?.total_keywords?.toLocaleString() || '0'}
             icon={Search}
             description="Tracked keywords"
+            accent="purple"
           />
           <StatsCard
             title="Trending Now"
             value={String(trendingApps.length)}
             icon={TrendingUp}
             description="Apps with positive velocity"
+            accent="emerald"
           />
           <StatsCard
             title="Opportunities"
             value={stats?.opportunities_count?.toLocaleString() || '0'}
             icon={Target}
             description="Identified opportunities"
+            accent="amber"
           />
         </div>
 
+        {/* Opportunity of the Day */}
         {opportunity && (
-          <div>
+          <section>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="section-heading flex items-center gap-2">
+                <Lightbulb className="h-4 w-4 text-indigo-500" />
+                Opportunity of the Day
+              </h2>
+              <Link
+                href="/opportunities"
+                className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+              >
+                View all <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
             <OpportunityOfDayCard opportunity={opportunity} />
-          </div>
+          </section>
         )}
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Keyword Trends
-              </h3>
-              <BarChart3 className="h-5 w-5 text-gray-400" />
-            </div>
-            {hasKeywordData ? (
-              <SimpleChart
-                data={keywordTrendData}
-                dataKey="trend"
-                xAxisKey="name"
-                type="bar"
-                color="#8b5cf6"
-                height={250}
-              />
-            ) : (
-              <div className="flex h-[250px] items-center justify-center text-gray-400">
-                No keyword trend data yet
-              </div>
-            )}
+        {/* Keyword charts */}
+        <section>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="section-heading flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 text-indigo-500" />
+              Keyword Intelligence
+            </h2>
+            <Link
+              href="/keywords"
+              className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+            >
+              View all <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
           </div>
-
-          <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Search Volume
-              </h3>
-              <Search className="h-5 w-5 text-gray-400" />
-            </div>
-            {hasKeywordData ? (
-              <SimpleChart
-                data={keywordTrendData}
-                dataKey="volume"
-                xAxisKey="name"
-                type="area"
-                color="#06b6d4"
-                height={250}
-              />
-            ) : (
-              <div className="flex h-[250px] items-center justify-center text-gray-400">
-                No search volume data yet
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="card p-6">
+              <div className="mb-4 flex items-center justify-between">
+                <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Keyword Trends</p>
+                <BarChart3 className="h-4 w-4 text-gray-400" />
               </div>
-            )}
-          </div>
-        </div>
+              {hasKeywordData ? (
+                <SimpleChart
+                  data={keywordTrendData}
+                  dataKey="trend"
+                  xAxisKey="name"
+                  type="bar"
+                  color="#8b5cf6"
+                  height={220}
+                />
+              ) : (
+                <div className="flex h-[220px] flex-col items-center justify-center gap-2 text-center">
+                  <BarChart3 className="h-8 w-8 text-gray-300 dark:text-gray-600" />
+                  <p className="text-sm text-gray-400 dark:text-gray-500">No trend data yet</p>
+                  <p className="text-xs text-gray-300 dark:text-gray-600">Run the keyword pipeline to populate</p>
+                </div>
+              )}
+            </div>
 
-        <div>
-          <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+            <div className="card p-6">
+              <div className="mb-4 flex items-center justify-between">
+                <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Search Volume</p>
+                <Search className="h-4 w-4 text-gray-400" />
+              </div>
+              {hasKeywordData ? (
+                <SimpleChart
+                  data={keywordTrendData}
+                  dataKey="volume"
+                  xAxisKey="name"
+                  type="area"
+                  color="#06b6d4"
+                  height={220}
+                />
+              ) : (
+                <div className="flex h-[220px] flex-col items-center justify-center gap-2 text-center">
+                  <Search className="h-8 w-8 text-gray-300 dark:text-gray-600" />
+                  <p className="text-sm text-gray-400 dark:text-gray-500">No volume data yet</p>
+                  <p className="text-xs text-gray-300 dark:text-gray-600">Run the keyword pipeline to populate</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* Trending apps */}
+        <section>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="section-heading flex items-center gap-2">
+              <TrendingUp className="h-4 w-4 text-indigo-500" />
               Top Trending Apps
-            </h3>
-            <TrendingUp className="h-5 w-5 text-gray-400" />
+            </h2>
+            <Link
+              href="/trending"
+              className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+            >
+              View all <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
           </div>
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             {trendingApps.length > 0 ? (
               trendingApps.map((app) => (
                 <TrendingAppCard key={app.id} app={app} />
               ))
             ) : (
-              <div className="rounded-xl border border-gray-200 bg-white p-8 text-center dark:border-gray-800 dark:bg-gray-900">
-                <TrendingUp className="mx-auto mb-4 h-12 w-12 text-gray-300 dark:text-gray-600" />
-                <p className="text-gray-500 dark:text-gray-400">No trending apps found</p>
+              <div className="card p-10 text-center">
+                <TrendingUp className="mx-auto mb-3 h-10 w-10 text-gray-300 dark:text-gray-700" />
+                <p className="font-medium text-gray-500 dark:text-gray-400">No trending apps yet</p>
                 <p className="mt-1 text-sm text-gray-400 dark:text-gray-500">
                   Velocity data builds up after multiple scraping cycles
                 </p>
+                <Link
+                  href="/apps"
+                  className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
+                >
+                  Browse tracked apps <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
               </div>
             )}
           </div>
-        </div>
+        </section>
       </div>
     </AppShell>
   );
