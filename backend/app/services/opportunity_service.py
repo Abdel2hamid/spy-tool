@@ -130,6 +130,17 @@ class OpportunityScoreService:
                 f"[OpportunityScore] Top opportunity keyword: {best_keyword!r} "
                 f"(score={best_score:.1f})"
             )
+
+        # Backfill global keywords table with every opportunity keyword so the
+        # intelligence pipeline can enrich them (covers old rows too).
+        try:
+            from app.services.global_keyword_sink import GlobalKeywordSink
+            terms = [row.keyword for row in rows]
+            sink = GlobalKeywordSink(self.db)
+            sink.push(keywords=terms, source="opportunity")
+        except Exception as exc:
+            logger.warning(f"[OpportunityScore] global_keyword_sink failed: {exc}")
+
         return updated
 
     def get_top_opportunities(self, app_id: int, limit: int = 50) -> List[Dict]:
