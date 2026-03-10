@@ -1350,6 +1350,7 @@ function TopKeywordOpportunitiesTable({ appId }: { appId: number }) {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(10);
 
   useEffect(() => {
     getKeywordOpportunitiesForApp(appId)
@@ -1387,6 +1388,7 @@ function TopKeywordOpportunitiesTable({ appId }: { appId: number }) {
   }
 
   const items = data?.opportunities ?? [];
+  const visibleItems = items.slice(0, visibleCount);
 
   return (
     <div className="space-y-4">
@@ -1437,7 +1439,7 @@ function TopKeywordOpportunitiesTable({ appId }: { appId: number }) {
                 </tr>
               </thead>
               <tbody>
-                {items.map((item) => (
+                {visibleItems.map((item) => (
                   <tr key={item.keyword}>
                     <td>
                       <div className="flex items-center gap-2">
@@ -1502,6 +1504,31 @@ function TopKeywordOpportunitiesTable({ appId }: { appId: number }) {
               </tbody>
             </table>
           </div>
+          {items.length > 10 && (
+            <div className="flex items-center justify-between border-t border-gray-100 px-4 py-2.5 dark:border-gray-800">
+              <span className="text-xs text-gray-400">
+                Showing {Math.min(visibleCount, items.length)} of {items.length}
+              </span>
+              <div className="flex items-center gap-3">
+                {visibleCount < items.length && (
+                  <button
+                    onClick={() => setVisibleCount(c => c + 10)}
+                    className="text-xs font-medium text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300"
+                  >
+                    Show More ↓
+                  </button>
+                )}
+                {visibleCount > 10 && (
+                  <button
+                    onClick={() => setVisibleCount(10)}
+                    className="text-xs font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                  >
+                    Show Less ↑
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1539,6 +1566,7 @@ function ExtractedKeywordsTable({ appId }: { appId: number }) {
   const [sortKey, setSortKey] = useState<keyof ExtractedKeyword>('traffic_score');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
+  const [visibleCount, setVisibleCount] = useState(10);
 
   const load = async (refresh = false) => {
     setLoading(true);
@@ -1578,6 +1606,7 @@ function ExtractedKeywordsTable({ appId }: { appId: number }) {
         ? (bv as number) - (av as number)
         : (av as number) - (bv as number);
     });
+  const visibleRows = rows.slice(0, visibleCount);
 
   const SortIcon = ({ col }: { col: keyof ExtractedKeyword }) => (
     <span className={`ml-1 text-xs ${sortKey === col ? 'opacity-100' : 'opacity-30'}`}>
@@ -1687,7 +1716,7 @@ function ExtractedKeywordsTable({ appId }: { appId: number }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-            {rows.map((kw) => (
+            {visibleRows.map((kw) => (
               <tr
                 key={kw.keyword}
                 className="bg-white transition-colors hover:bg-gray-50 dark:bg-gray-950 dark:hover:bg-gray-900"
@@ -1736,9 +1765,31 @@ function ExtractedKeywordsTable({ appId }: { appId: number }) {
           </tbody>
         </table>
       </div>
-      <p className="text-right text-xs text-gray-400">
-        {rows.length} of {data.total} keywords
-      </p>
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-gray-400">
+          Showing {Math.min(visibleCount, rows.length)} of {rows.length} keywords
+        </span>
+        {rows.length > 10 && (
+          <div className="flex items-center gap-3">
+            {visibleCount < rows.length && (
+              <button
+                onClick={() => setVisibleCount(c => c + 10)}
+                className="text-xs font-medium text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300"
+              >
+                Show More ↓
+              </button>
+            )}
+            {visibleCount > 10 && (
+              <button
+                onClick={() => setVisibleCount(10)}
+                className="text-xs font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              >
+                Show Less ↑
+              </button>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1767,6 +1818,7 @@ function DiscoveredKeywordsTable({ appId }: { appId: number }) {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
   const [error, setError] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(10);
 
   const load = async () => {
     setLoading(true);
@@ -1814,6 +1866,7 @@ function DiscoveredKeywordsTable({ appId }: { appId: number }) {
       const bv = (b[sortKey] ?? -1) as number;
       return sortDir === 'desc' ? bv - av : av - bv;
     });
+  const visibleRows = rows.slice(0, visibleCount);
 
   const SortIcon = ({ col }: { col: keyof DiscoveredKeyword }) => (
     <span className={`ml-1 text-xs ${sortKey === col ? 'opacity-100' : 'opacity-30'}`}>
@@ -1935,7 +1988,7 @@ function DiscoveredKeywordsTable({ appId }: { appId: number }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-            {rows.map((kw) => (
+            {visibleRows.map((kw) => (
               <tr
                 key={kw.keyword}
                 className="bg-white transition-colors hover:bg-gray-50 dark:bg-gray-950 dark:hover:bg-gray-900"
@@ -1999,9 +2052,31 @@ function DiscoveredKeywordsTable({ appId }: { appId: number }) {
           </tbody>
         </table>
       </div>
-      <p className="text-right text-xs text-gray-400">
-        {rows.length} of {data.total} keywords
-      </p>
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-gray-400">
+          Showing {Math.min(visibleCount, rows.length)} of {rows.length} keywords
+        </span>
+        {rows.length > 10 && (
+          <div className="flex items-center gap-3">
+            {visibleCount < rows.length && (
+              <button
+                onClick={() => setVisibleCount(c => c + 10)}
+                className="text-xs font-medium text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300"
+              >
+                Show More ↓
+              </button>
+            )}
+            {visibleCount > 10 && (
+              <button
+                onClick={() => setVisibleCount(10)}
+                className="text-xs font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              >
+                Show Less ↑
+              </button>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
