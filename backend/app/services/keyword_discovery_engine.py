@@ -414,25 +414,40 @@ class KeywordDiscoveryEngine:
     @staticmethod
     def _normalize_batch(candidates: List[str]) -> List[str]:
         """
-        Lowercase, strip, enforce length limits (3–60 chars), deduplicate.
-        Returns a list of unique, clean keyword strings.
+        Normalize, enforce length limits, apply hard quality gate, deduplicate.
+        Returns a list of unique, clean keyword strings that pass all checks.
         """
+        from app.services.keyword_quality_engine import KeywordQualityEngine
+
         seen: Set[str] = set()
         result: List[str] = []
+        rejected = 0
+
         for raw in candidates:
             if not raw:
                 continue
-            term = " ".join(raw.lower().strip().split())  # collapse whitespace
+            # Normalize via quality engine
+            term = KeywordQualityEngine.normalize(raw)
             if not term:
                 continue
-            if len(term) < 3 or len(term) > 60:
-                continue
-            # Only allow printable ASCII-ish content (filter garbage)
+            # ASCII-ish guard
             if re.search(r"[^\x20-\x7e]", term):
+                rejected += 1
+                continue
+            # Hard quality gate
+            passes, reason = KeywordQualityEngine.passes_hard_gate(term)
+            if not passes:
+                rejected += 1
                 continue
             if term not in seen:
                 seen.add(term)
                 result.append(term)
+
+        total = len(candidates)
+        logger.info(
+            f"[KeywordDiscovery] normalize_batch: generated={total}, "
+            f"hard_gate_rejected={rejected}, proceeding={len(result)}"
+        )
         return result
 
     # -----------------------------------------------------------------------
@@ -444,13 +459,16 @@ class KeywordDiscoveryEngine:
         Upsert keyword candidates into the keywords table AND enqueue them
         in keyword_queue for the enrichment pipeline to drain.
 
-        - New keywords: insert with keyword_source='discovery_engine', first_seen_at=now
-        - Existing keywords: skip (do NOT overwrite user-managed data)
+        - New keywords: insert with keyword_source='discovery_engine', first_seen_at=now,
+          canonical_term, last_seen_at, times_seen=1
+        - Existing canonical match: UPDATE times_seen += 1, last_seen_at = now
+        - Exact existing term: skip (do NOT overwrite user-managed data)
         - keyword_queue: INSERT ... ON CONFLICT DO NOTHING (idempotent)
 
         Returns (inserted, updated, skipped).
         """
         from app.models.models import Keyword, KeywordQueue
+        from app.services.keyword_quality_engine import KeywordQualityEngine
 
         if not candidates:
             return 0, 0, 0
@@ -460,26 +478,50 @@ class KeywordDiscoveryEngine:
         skipped = 0
         batch_size = 500
 
-        # Load existing terms into a set for fast lookup
+        # Load existing terms + canonical terms into lookup structures
         existing_terms: Set[str] = {
             row.term
             for row in self.db.query(Keyword.term).all()
+        }
+        # canonical_term → Keyword.id lookup for dedup updates
+        canonical_to_id: dict = {
+            row.canonical_term: row.id
+            for row in self.db.query(Keyword.id, Keyword.canonical_term)
+            .filter(Keyword.canonical_term.isnot(None))
+            .all()
         }
 
         for i in range(0, len(candidates), batch_size):
             batch = candidates[i : i + batch_size]
             new_keywords = []
             new_queue_terms = []
+            canonical_updates: list = []  # list of keyword ids to bump times_seen
 
             for term in batch:
+                canonical = KeywordQualityEngine.canonicalize(term)
+
                 if term in existing_terms:
+                    # Exact dup — still bump last_seen_at via canonical path
+                    if canonical in canonical_to_id:
+                        canonical_updates.append(canonical_to_id[canonical])
                     skipped += 1
                     continue
+
+                if canonical in canonical_to_id:
+                    # Different surface form but same canonical — bump counter, skip insert
+                    canonical_updates.append(canonical_to_id[canonical])
+                    existing_terms.add(term)  # prevent duplicate within batch
+                    updated += 1
+                    continue
+
                 new_keywords.append(
                     Keyword(
                         term=term,
                         keyword_source="discovery_engine",
                         first_seen_at=self._now,
+                        last_seen_at=self._now,
+                        canonical_term=canonical,
+                        times_seen=1,
                         search_volume=0,
                         difficulty=0.0,
                         trend=0.0,
@@ -488,11 +530,34 @@ class KeywordDiscoveryEngine:
                 new_queue_terms.append(term)
                 existing_terms.add(term)  # prevent duplicate within batch
 
+            # Apply canonical updates (bump times_seen + last_seen_at)
+            if canonical_updates:
+                try:
+                    from sqlalchemy import text
+                    # Use IN clause for efficiency
+                    ids_str = ",".join(str(x) for x in set(canonical_updates))
+                    self.db.execute(text(
+                        f"UPDATE keywords SET times_seen = COALESCE(times_seen,0)+1, "
+                        f"last_seen_at = NOW() WHERE id IN ({ids_str})"
+                    ))
+                    self.db.commit()
+                except Exception as exc:
+                    logger.warning(f"[KeywordDiscovery] canonical update failed: {exc}")
+                    try:
+                        self.db.rollback()
+                    except Exception:
+                        pass
+
             if new_keywords:
                 try:
                     self.db.bulk_save_objects(new_keywords)
                     self.db.commit()
                     inserted += len(new_keywords)
+                    # Register new canonical terms for the rest of this run
+                    for kw_obj in new_keywords:
+                        if kw_obj.canonical_term:
+                            # We don't have the ID yet but prevent re-insert same canonical
+                            canonical_to_id[kw_obj.canonical_term] = -1
                     logger.debug(
                         f"[KeywordDiscovery] Stored batch {i // batch_size + 1}: "
                         f"+{len(new_keywords)} keywords"
@@ -517,4 +582,8 @@ class KeywordDiscoveryEngine:
                     self.db.rollback()
                     logger.warning(f"[KeywordDiscovery] Queue insert failed: {exc}")
 
+        logger.info(
+            f"[KeywordDiscovery] _store_keywords: inserted={inserted}, "
+            f"canonical_dedup_updated={updated}, skipped={skipped}"
+        )
         return inserted, updated, skipped

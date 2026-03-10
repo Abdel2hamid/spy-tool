@@ -699,6 +699,158 @@ class ScoringWorker:
         logger.info("Daily report generated")
 
 
+def prune_keywords_job(db) -> dict:
+    """
+    Multi-rule keyword pruning job.  Deletes low-value, stale, and orphaned
+    keywords from the global keywords table in a fixed rule order.
+
+    Rules (executed sequentially):
+      1  low_quality_stale  — quality_score < 30 AND last_seen_at stale > 14 days
+      2  pruned_status      — status = 'pruned' (previously marked by enrichment)
+      3  orphaned_weak      — quality_score < 45 AND no app links AND not enriched recently
+      4  weak_alphabet      — alphabet source, quality_score < 50, times_seen < 2
+      5  zero_signal_stale  — apps_count=0 AND search_volume=0 AND stale > 90 days
+      6  tier_c_cap         — global cap: delete weakest Tier-C until count < 850k
+
+    Returns a dict with per-rule deleted counts and totals.
+    """
+    from sqlalchemy import text
+
+    stats = {
+        "low_quality_stale": 0,
+        "pruned_status": 0,
+        "orphaned_weak": 0,
+        "weak_alphabet": 0,
+        "zero_signal_stale": 0,
+        "tier_c_cap": 0,
+        "total_deleted": 0,
+        "remaining_keywords": 0,
+    }
+
+    # Rule 1 — low quality + stale (unseen > 14 days)
+    try:
+        r1 = db.execute(text("""
+            DELETE FROM keywords
+            WHERE quality_score < 30
+              AND (last_seen_at IS NULL OR last_seen_at < NOW() - INTERVAL '14 days')
+        """))
+        stats["low_quality_stale"] = r1.rowcount or 0
+        db.commit()
+    except Exception as exc:
+        logger.error(f"[Pruning] Rule 1 (low_quality_stale) failed: {exc}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+    # Rule 2 — PRUNED status (existing 2-pass merge: delete immediately)
+    try:
+        r2 = db.execute(text(
+            "DELETE FROM keywords WHERE status = 'pruned'"
+        ))
+        stats["pruned_status"] = r2.rowcount or 0
+        db.commit()
+    except Exception as exc:
+        logger.error(f"[Pruning] Rule 2 (pruned_status) failed: {exc}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+    # Rule 3 — orphaned weak: no app relations + weak + not recently enriched
+    try:
+        r3 = db.execute(text("""
+            DELETE FROM keywords
+            WHERE quality_score < 45
+              AND NOT EXISTS (
+                  SELECT 1 FROM app_keywords WHERE keyword_id = keywords.id
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM app_keyword_intelligence WHERE keyword_id = keywords.id
+              )
+              AND (last_enriched IS NULL OR last_enriched < NOW() - INTERVAL '30 days')
+        """))
+        stats["orphaned_weak"] = r3.rowcount or 0
+        db.commit()
+    except Exception as exc:
+        logger.error(f"[Pruning] Rule 3 (orphaned_weak) failed: {exc}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+    # Rule 4 — weak alphabet: low score + rarely seen
+    try:
+        r4 = db.execute(text("""
+            DELETE FROM keywords
+            WHERE keyword_source = 'alphabet'
+              AND quality_score < 50
+              AND COALESCE(times_seen, 1) < 2
+        """))
+        stats["weak_alphabet"] = r4.rowcount or 0
+        db.commit()
+    except Exception as exc:
+        logger.error(f"[Pruning] Rule 4 (weak_alphabet) failed: {exc}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+    # Rule 5 — zero signal stale: no Apple data, no volume, unseen > 90 days
+    try:
+        r5 = db.execute(text("""
+            DELETE FROM keywords
+            WHERE COALESCE(apps_count, 0) = 0
+              AND COALESCE(search_volume, 0) = 0
+              AND quality_score < 45
+              AND (last_seen_at IS NULL OR last_seen_at < NOW() - INTERVAL '90 days')
+        """))
+        stats["zero_signal_stale"] = r5.rowcount or 0
+        db.commit()
+    except Exception as exc:
+        logger.error(f"[Pruning] Rule 5 (zero_signal_stale) failed: {exc}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+    # Rule 6 — global Tier-C cap
+    try:
+        from app.services.keyword_quality_engine import KeywordQualityEngine
+        tier_c_deleted = KeywordQualityEngine.prune_tier_c_to_target(db)
+        stats["tier_c_cap"] = tier_c_deleted
+    except Exception as exc:
+        logger.error(f"[Pruning] Rule 6 (tier_c_cap) failed: {exc}")
+
+    # Final count
+    try:
+        remaining = db.execute(text("SELECT COUNT(*) FROM keywords")).scalar() or 0
+        stats["remaining_keywords"] = remaining
+    except Exception:
+        pass
+
+    stats["total_deleted"] = (
+        stats["low_quality_stale"]
+        + stats["pruned_status"]
+        + stats["orphaned_weak"]
+        + stats["weak_alphabet"]
+        + stats["zero_signal_stale"]
+        + stats["tier_c_cap"]
+    )
+
+    logger.info(
+        f"[Pruning] low_quality_stale={stats['low_quality_stale']}, "
+        f"pruned_status={stats['pruned_status']}, "
+        f"orphaned_weak={stats['orphaned_weak']}, "
+        f"weak_alphabet={stats['weak_alphabet']}, "
+        f"zero_signal_stale={stats['zero_signal_stale']}, "
+        f"tier_c_cap={stats['tier_c_cap']}, "
+        f"total_deleted={stats['total_deleted']}, "
+        f"remaining_keywords={stats['remaining_keywords']}"
+    )
+    return stats
+
+
 async def run_scrape_task():
     """
     Full pipeline:

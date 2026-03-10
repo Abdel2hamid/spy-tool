@@ -137,6 +137,18 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_ak_app_id ON app_keywords (app_id)",
     "CREATE INDEX IF NOT EXISTS idx_ak_keyword_id ON app_keywords (keyword_id)",
     "CREATE INDEX IF NOT EXISTS idx_ak_opportunity ON app_keywords (app_id, opportunity_score DESC)",
+    # Keyword quality engine columns (new session)
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS quality_score FLOAT DEFAULT 0.0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS quality_tier VARCHAR(1)",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS validation_score FLOAT DEFAULT 0.0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS relevance_score FLOAT DEFAULT 0.0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS canonical_term VARCHAR(255)",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS times_seen INTEGER DEFAULT 1",
+    "CREATE INDEX IF NOT EXISTS idx_kw_quality_score ON keywords (quality_score)",
+    "CREATE INDEX IF NOT EXISTS idx_kw_quality_tier ON keywords (quality_tier)",
+    "CREATE INDEX IF NOT EXISTS idx_kw_canonical ON keywords (canonical_term)",
+    "CREATE INDEX IF NOT EXISTS idx_kw_last_seen ON keywords (last_seen_at)",
 ]
 
 

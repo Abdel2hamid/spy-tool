@@ -665,6 +665,7 @@ class KeywordIntelligencePipeline:
 
                     # Mark this keyword as pipeline-processed regardless of iTunes results
                     kw.last_enriched = now
+                    kw.last_seen_at = now
                     kw.status = KeywordStatus.ENRICHED.value
 
                     if not result:
@@ -680,6 +681,27 @@ class KeywordIntelligencePipeline:
                     kw.apps_count = max(kw.apps_count or 0, apps_count)
                     updated += 1
                     batch_success += 1
+
+                    # Compute quality score using Apple signals
+                    try:
+                        from app.services.keyword_quality_engine import KeywordQualityEngine
+                        q_score, v_score, r_score = KeywordQualityEngine.compute_quality_score(
+                            term=kw.term,
+                            keyword_source=kw.keyword_source,
+                            apps_count=kw.apps_count or 0,
+                            search_volume=kw.search_volume or 0,
+                            difficulty=kw.difficulty or 0.0,
+                            trend_score=kw.trend_score or 0.0,
+                            apple_top_names=[result.get("top_app_name", "")],
+                        )
+                        kw.quality_score = q_score
+                        kw.quality_tier = KeywordQualityEngine.assign_tier(q_score)
+                        kw.validation_score = v_score
+                        # Mark very low quality as PRUNED (unless already ENRICHED by other means)
+                        if q_score < 45 and kw.status != KeywordStatus.ENRICHED.value:
+                            kw.status = KeywordStatus.PRUNED.value
+                    except Exception as qe:
+                        logger.debug(f"Apple signals: quality_score failed for '{kw.term}': {qe}")
 
                     logger.debug(
                         f"Apple signals: '{kw.term}' → apps_count={apps_count} "
@@ -761,14 +783,17 @@ class KeywordIntelligencePipeline:
 
     def recompute_scores(self, keywords: List[Keyword]) -> int:
         """
-        Recompute opportunity_score and feasibility_score for all keywords
-        using whatever signals are available (graceful fallback).
+        Recompute opportunity_score, feasibility_score, and quality_score/tier
+        for all keywords using whatever signals are available (graceful fallback).
         Returns count of keywords scored.
         """
+        from app.services.keyword_quality_engine import KeywordQualityEngine
+
         logger.info(f"recompute_scores: scoring {len(keywords)} keywords")
         updated = 0
         failed = 0
         high_opp = 0  # opportunity_score >= 40
+        tier_counts = {"A": 0, "B": 0, "C": 0, "unscored": 0}
 
         for kw in keywords:
             try:
@@ -791,8 +816,25 @@ class KeywordIntelligencePipeline:
                 updated += 1
                 if opp >= 40:
                     high_opp += 1
+
+                # Re-score quality tier using updated signals
+                q_score, v_score, _ = KeywordQualityEngine.compute_quality_score(
+                    term=kw.term,
+                    keyword_source=kw.keyword_source,
+                    apps_count=kw.apps_count or 0,
+                    search_volume=kw.search_volume or 0,
+                    difficulty=kw.difficulty or 0.0,
+                    trend_score=kw.trend_score or 0.0,
+                )
+                kw.quality_score = q_score
+                kw.quality_tier = KeywordQualityEngine.assign_tier(q_score)
+                kw.validation_score = v_score
+                tier = kw.quality_tier or "unscored"
+                tier_counts[tier if tier in tier_counts else "unscored"] += 1
+
                 logger.debug(
                     f"recompute_scores: '{kw.term}' → opp={opp:.1f} feas={feas:.1f} "
+                    f"quality={q_score:.1f} tier={kw.quality_tier} "
                     f"(trend={kw.trend_score or 0:.1f} apps={kw.apps_count or 0} dom={kw.dominance_score or 0:.1f})"
                 )
             except Exception as e:
@@ -803,6 +845,10 @@ class KeywordIntelligencePipeline:
             self.db.commit()
             logger.info(
                 f"recompute_scores: scored={updated} failed={failed} high_opp(>=40)={high_opp} — committed"
+            )
+            logger.info(
+                f"[Pipeline] Quality tiers: A={tier_counts['A']}, B={tier_counts['B']}, "
+                f"C={tier_counts['C']}, unscored={tier_counts['unscored']}"
             )
         except Exception as e:
             logger.error(f"recompute_scores: DB COMMIT FAILED: {type(e).__name__}: {e}", exc_info=True)

@@ -201,14 +201,56 @@ class KeywordDiscoveryService:
             new_candidates = new_candidates[:slots]
 
         # ── 5. Enrich + store ────────────────────────────────────────────
+        from app.services.keyword_quality_engine import KeywordQualityEngine
+        _qe = KeywordQualityEngine()
+        _reject_tier_c = _qe.should_reject_tier_c(self.db)
+
         stored = 0
         best_keyword = ""
         best_score = 0.0
         kw_enrichment_data: Dict[str, Dict] = {}
+        quota_rejected = 0
+        gate_rejected = 0
+        quality_rejected = 0
+        accepted = 0
 
         for kw in new_candidates:
             try:
+                # Quota check before expensive iTunes call
+                if not _qe.check_app_quota(self.db, app_id, "autocomplete"):
+                    quota_rejected += 1
+                    continue
+
+                # Hard gate
+                passes, reason = _qe.passes_hard_gate(kw)
+                if not passes:
+                    gate_rejected += 1
+                    continue
+
                 row = self._enrich_one(kw, seeds, app_id, str(app.app_id))
+
+                # Quality score using enriched data + app context
+                q_score, _, _ = _qe.compute_quality_score(
+                    term=kw,
+                    keyword_source=row["source"],
+                    apps_count=row.get("search_volume", 0),  # approximate via sv
+                    search_volume=row.get("search_volume", 0),
+                    difficulty=row.get("difficulty", 0.0),
+                    trend_score=row.get("trend_score", 0.0),
+                    app_title=app.name or "",
+                    app_subtitle=app.subtitle or "",
+                )
+                tier = _qe.assign_tier(q_score)
+
+                # Reject if below minimum threshold or Tier C when global cap hit
+                if tier is None:
+                    quality_rejected += 1
+                    continue
+                if tier == "C" and _reject_tier_c:
+                    quality_rejected += 1
+                    continue
+
+                accepted += 1
                 saved = self._save_one(app_id, row)
                 if saved:
                     stored += 1
@@ -225,6 +267,11 @@ class KeywordDiscoveryService:
             except Exception as exc:
                 logger.warning(f"[Discovery] enrich failed for {kw!r}: {exc}")
 
+        logger.info(
+            f"[Discovery] app {app_id}: quota_rejected={quota_rejected}, "
+            f"gate_rejected={gate_rejected}, quality_rejected={quality_rejected}, "
+            f"accepted={accepted}, stored={stored}"
+        )
         logger.info(f"[Discovery] Discovered {stored} new keywords for app {app_id}")
         if best_keyword:
             logger.info(

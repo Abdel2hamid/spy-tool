@@ -217,6 +217,14 @@ class Keyword(Base):
     # Lifecycle status (KeywordStatus enum values stored as VARCHAR)
     status = Column(String(20), nullable=False, server_default=KeywordStatus.RAW.value,
                     default=KeywordStatus.RAW.value)
+    # ── Quality engine columns (populated by KeywordQualityEngine) ────────────
+    quality_score    = Column(Float,   default=0.0)    # 0-100 composite quality score
+    quality_tier     = Column(String(1), nullable=True) # 'A'|'B'|'C'|None
+    validation_score = Column(Float,   default=0.0)    # Apple component (0-25)
+    relevance_score  = Column(Float,   default=0.0)    # app-context overlap (0-5)
+    canonical_term   = Column(String(255), nullable=True)  # normalized for dedup
+    last_seen_at     = Column(DateTime(timezone=True), nullable=True)  # last time generated
+    times_seen       = Column(Integer, default=1)       # how many times discovered
 
     apps = relationship("AppKeyword", back_populates="keyword")
     metrics = relationship("KeywordMetrics", back_populates="keyword", uselist=False, cascade="all, delete-orphan")
@@ -226,6 +234,10 @@ class Keyword(Base):
         Index("idx_keyword_opp_score", "opportunity_score"),
         Index("idx_keyword_trend_score", "trend_score"),
         Index("idx_keyword_enriched", "last_enriched"),
+        Index("idx_kw_quality_score", "quality_score"),
+        Index("idx_kw_quality_tier", "quality_tier"),
+        Index("idx_kw_canonical", "canonical_term"),
+        Index("idx_kw_last_seen", "last_seen_at"),
     )
 
 

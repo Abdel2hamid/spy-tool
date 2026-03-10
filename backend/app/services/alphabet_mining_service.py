@@ -260,12 +260,31 @@ class AlphabetMiningService:
         candidates_list = list(candidates)[:slots]
 
         # Enrich + store each candidate
+        from app.services.keyword_quality_engine import KeywordQualityEngine
+        _qe = KeywordQualityEngine()
+        _reject_tier_c = _qe.should_reject_tier_c(self.db)
+
         app_store_id = str(app.app_id)
         stored = 0
         kw_enrichment_data: Dict[str, Dict] = {}
+        quota_rejected = 0
+        gate_rejected = 0
+        quality_rejected = 0
+        accepted = 0
 
         for keyword in candidates_list:
             try:
+                # Quota check
+                if not _qe.check_app_quota(self.db, app_id, "alphabet"):
+                    quota_rejected += 1
+                    continue
+
+                # Hard gate
+                passes, reason = _qe.passes_hard_gate(keyword)
+                if not passes:
+                    gate_rejected += 1
+                    continue
+
                 enrich = _itunes_search_enrichment(keyword, app_store_id)
                 opp = _opportunity_score(
                     enrich["search_volume"],
@@ -273,6 +292,28 @@ class AlphabetMiningService:
                     0.0,  # no trend score (skipping Google Trends for speed)
                     enrich["app_rank"],
                 )
+
+                # Quality score — alphabet source has stricter threshold (>= 50)
+                q_score, _, _ = _qe.compute_quality_score(
+                    term=keyword,
+                    keyword_source="alphabet",
+                    apps_count=enrich.get("search_volume", 0),
+                    search_volume=enrich.get("search_volume", 0),
+                    difficulty=enrich.get("difficulty", 0.0),
+                    app_title=app.name or "",
+                    app_subtitle=app.subtitle or "",
+                )
+                tier = _qe.assign_tier(q_score)
+
+                # Stricter threshold for alphabet (lowest source weight)
+                if q_score < 50 or tier is None:
+                    quality_rejected += 1
+                    continue
+                if tier == "C" and _reject_tier_c:
+                    quality_rejected += 1
+                    continue
+
+                accepted += 1
                 saved = self._save_one(app_id, keyword, seeds[0], enrich, opp)
                 if saved:
                     stored += 1
@@ -286,6 +327,11 @@ class AlphabetMiningService:
             except Exception as exc:
                 logger.warning(f"[AlphabetMining] enrich failed for {keyword!r}: {exc}")
 
+        logger.info(
+            f"[AlphabetMining] app {app_id}: quota_rejected={quota_rejected}, "
+            f"gate_rejected={gate_rejected}, quality_rejected={quality_rejected}, "
+            f"accepted={accepted}"
+        )
         logger.info(f"[AlphabetMining] Stored {stored} new alphabet keywords for app {app_id}")
 
         # Push into global keywords dictionary + app_keywords relation table

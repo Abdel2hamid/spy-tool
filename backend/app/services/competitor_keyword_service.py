@@ -285,18 +285,58 @@ class CompetitorKeywordService:
             new_phrases = new_phrases[:slots]
 
         # 5. Enrich + store
+        from app.services.keyword_quality_engine import KeywordQualityEngine
+        _qe = KeywordQualityEngine()
+        _reject_tier_c = _qe.should_reject_tier_c(self.db)
+
         stored = 0
         source_kw = seeds[0] if seeds else ""
         kw_enrichment_data: Dict[str, Dict] = {}
+        quota_rejected = 0
+        gate_rejected = 0
+        quality_rejected = 0
+        accepted = 0
 
         for phrase in new_phrases:
             try:
+                # Quota check
+                if not _qe.check_app_quota(self.db, app_id, "competitor"):
+                    quota_rejected += 1
+                    continue
+
+                # Hard gate
+                passes, reason = _qe.passes_hard_gate(phrase)
+                if not passes:
+                    gate_rejected += 1
+                    continue
+
                 enrich = _enrich_one(phrase, app_store_id)
                 opp = _opportunity_score(
                     enrich["search_volume"],
                     enrich["difficulty"],
                     enrich["app_rank"],
                 )
+
+                # Quality score
+                q_score, _, _ = _qe.compute_quality_score(
+                    term=phrase,
+                    keyword_source="competitor",
+                    apps_count=enrich.get("search_volume", 0),
+                    search_volume=enrich.get("search_volume", 0),
+                    difficulty=enrich.get("difficulty", 0.0),
+                    app_title=app.name or "",
+                    app_subtitle=app.subtitle or "",
+                )
+                tier = _qe.assign_tier(q_score)
+
+                if tier is None:
+                    quality_rejected += 1
+                    continue
+                if tier == "C" and _reject_tier_c:
+                    quality_rejected += 1
+                    continue
+
+                accepted += 1
                 if self._save_one(app_id, phrase, source_kw, enrich, opp):
                     stored += 1
                 # Collect for app_keywords population
@@ -309,6 +349,11 @@ class CompetitorKeywordService:
             except Exception as exc:
                 logger.warning(f"[CompetitorMining] enrich failed for {phrase!r}: {exc}")
 
+        logger.info(
+            f"[CompetitorMining] app {app_id}: quota_rejected={quota_rejected}, "
+            f"gate_rejected={gate_rejected}, quality_rejected={quality_rejected}, "
+            f"accepted={accepted}"
+        )
         logger.info(f"[CompetitorMining] Stored {stored} competitor keywords for app {app_id}")
 
         # Push into global keywords dictionary + app_keywords relation table

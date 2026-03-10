@@ -563,6 +563,40 @@ async def job_keyword_cleanup_daily():
 
 
 # ---------------------------------------------------------------------------
+# Job: every 24 h — keyword quality pruning (multi-rule DB cleanup)
+# ---------------------------------------------------------------------------
+
+async def job_keyword_quality_pruning():
+    """
+    Multi-rule quality pruning for the global keywords table:
+      1. Delete low-quality + stale keywords (quality_score < 30, unseen > 14 d)
+      2. Delete PRUNED-status keywords (pipeline rejects)
+      3. Delete orphaned weak keywords (no app links, not enriched recently)
+      4. Delete weak alphabet keywords (score < 50, seen < 2 times)
+      5. Delete zero-signal stale keywords (no Apple data, unseen > 90 d)
+      6. Enforce global Tier-C cap (prune weakest until count < 850k)
+    """
+    job_id = "keyword_quality_pruning"
+    t0 = _log_start(job_id)
+    try:
+        from app.workers.tasks import prune_keywords_job
+        from app.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            stats = await asyncio.to_thread(prune_keywords_job, db)
+            _log_done(
+                job_id, t0,
+                f"total_deleted={stats['total_deleted']}, "
+                f"remaining={stats['remaining_keywords']}"
+            )
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+# ---------------------------------------------------------------------------
 # Scheduler setup
 # ---------------------------------------------------------------------------
 
@@ -764,6 +798,20 @@ def setup_scheduler() -> AsyncIOScheduler:
         ),
         id="keyword_cleanup_daily",
         name="Every 24h: Keyword Cleanup (prune low-value stale keywords)",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── every 24 h: keyword quality pruning (multi-rule quality gate) ─────────
+    # First run: 2 h after startup (after cleanup_daily and discovery jobs settle).
+    scheduler.add_job(
+        job_keyword_quality_pruning,
+        trigger=IntervalTrigger(
+            hours=24,
+            start_date=now + timedelta(hours=2),
+            timezone="UTC",
+        ),
+        id="keyword_quality_pruning",
+        name="Every 24h: Keyword Quality Pruning (multi-rule quality gate)",
         **_JOB_DEFAULTS,
     )
 
