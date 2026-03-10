@@ -158,7 +158,13 @@
       "Bash(grep -n \"KeywordHistoryPanel\\\\|function KeywordHistoryPanel\" /Users/abdelhamid/appstore-spy-tool/frontend/src/app/apps/\\\\[id\\\\]/page.tsx)",
       "Bash(grep -n \"keywords\\\\|KeywordIntelligence\\\\|KeywordHistory\\\\|activeTab === 'keyword\" /Users/abdelhamid/appstore-spy-tool/frontend/src/app/apps/\\\\[id\\\\]/page.tsx | head -40)",
       "Bash(python3 -m py_compile app/models/models.py app/models/schemas.py app/main.py app/api/routes.py app/services/keyword_extraction_service.py && echo \"ALL OK\")",
-      "Bash(python3 -m py_compile app/services/keyword_extraction_service.py && echo \"OK\")"
+      "Bash(python3 -m py_compile app/services/keyword_extraction_service.py && echo \"OK\")",
+      "Bash(python3 -c \"import pytrends; print\\('pytrends', pytrends.__version__\\)\" 2>/dev/null || echo \"NOT_INSTALLED\")",
+      "Bash(python3 -m py_compile app/models/models.py && echo \"models.py OK\" && python3 -m py_compile app/models/schemas.py && echo \"schemas.py OK\" && python3 -m py_compile app/main.py && echo \"main.py OK\" && python3 -m py_compile app/workers/scheduler.py && echo \"scheduler.py OK\")",
+      "Bash(python3 -m py_compile app/api/routes.py && echo \"routes.py OK\")",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/frontend && npx tsc --noEmit 2>&1 | head -40)",
+      "Bash(node_modules/.bin/tsc --noEmit 2>&1 | head -40)",
+      "Bash(./node_modules/.bin/tsc --noEmit 2>&1 | head -40)"
     ]
   }
 }

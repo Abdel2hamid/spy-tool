@@ -417,31 +417,68 @@ class KeywordExtractionService:
 
     # ── Score heuristics ──────────────────────────────────────────────────────
 
-    @staticmethod
+    # Generic single words that appear in countless app names and must not
+    # inflate volume scores via title/subtitle hits.
+    _GENERIC_TERMS: Set[str] = {
+        "official", "world", "best", "free", "easy", "top", "app",
+        "new", "pro", "plus", "premium", "lite", "go", "one",
+    }
+
+    @classmethod
     def _estimate_volume(
-        keyword: str, items: List[Dict], result_count: int
+        cls, keyword: str, items: List[Dict], result_count: int
     ) -> int:
         """
         Heuristic search volume 0-100.
 
-        • iTunes result count  (log-scaled)               → 0-40 pts
-        • Keyword in top-10 names/subtitles               → 0-30 pts
-        • Avg userRatingCount of top-5 apps (log-scaled)  → 0-30 pts
+        • iTunes result count  (log-scaled)                     → 0-40 pts
+        • Exact-token matches in top-10 names/subtitles         → 0-30 pts
+          (unigram +2, bigram +5, trigram +8 per hit;
+           generic unigrams multiplied by 0.4)
+        • Avg userRatingCount of top-5 apps (log-scaled)        → 0-30 pts
         """
         score = 0.0
 
+        # ── Component 1: result count (unchanged) ──────────────────────────
         if result_count > 0:
             score += min(math.log10(result_count + 1) / math.log10(1001) * 40, 40)
 
-        kw_lower = keyword.lower()
-        title_hits = sum(
-            1
-            for item in items[:10]
-            if kw_lower in (item.get("trackName") or "").lower()
-            or kw_lower in (item.get("subtitle") or "").lower()
-        )
-        score += min(title_hits * 6, 30)
+        # ── Component 2: exact-token title/subtitle hits ───────────────────
+        kw_words = keyword.lower().split()
+        phrase_len = len(kw_words)
 
+        # Per-hit point value by phrase length
+        if phrase_len == 1:
+            hit_pts = 2.0
+        elif phrase_len == 2:
+            hit_pts = 5.0
+        else:
+            hit_pts = 8.0
+
+        # Dampen generic unigrams to avoid inflation from ubiquitous words
+        if phrase_len == 1 and keyword.lower() in cls._GENERIC_TERMS:
+            hit_pts *= 0.4
+
+        title_score = 0.0
+        for item in items[:10]:
+            name_tokens = set(re.findall(r"[a-z0-9]+", (item.get("trackName") or "").lower()))
+            sub_tokens  = set(re.findall(r"[a-z0-9]+", (item.get("subtitle")   or "").lower()))
+            all_tokens  = name_tokens | sub_tokens
+
+            if phrase_len == 1:
+                # Single keyword must be an exact token
+                matched = kw_words[0] in all_tokens
+            else:
+                # Multi-word: all constituent words must appear as tokens
+                # (order-independent — close enough for a heuristic)
+                matched = all(w in all_tokens for w in kw_words)
+
+            if matched:
+                title_score += hit_pts
+
+        score += min(title_score, 30)
+
+        # ── Component 3: rating count signal (unchanged) ───────────────────
         counts = [
             item.get("userRatingCount", 0)
             for item in items[:5]

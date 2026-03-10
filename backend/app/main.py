@@ -91,6 +91,25 @@ _MIGRATIONS = [
     )""",
     "CREATE INDEX IF NOT EXISTS idx_kwq_status_priority ON keyword_queue (status, priority)",
     "CREATE INDEX IF NOT EXISTS idx_kwq_added_at ON keyword_queue (added_at)",
+    # App discovered keywords — autocomplete + affix expansion per app (Session 23)
+    """CREATE TABLE IF NOT EXISTS app_discovered_keywords (
+        id SERIAL PRIMARY KEY,
+        app_id INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+        keyword VARCHAR(255) NOT NULL,
+        source VARCHAR(50),
+        source_keyword VARCHAR(255),
+        search_volume INTEGER DEFAULT 0,
+        difficulty FLOAT DEFAULT 0.0,
+        traffic_score FLOAT DEFAULT 0.0,
+        app_rank INTEGER,
+        trend_score FLOAT DEFAULT 0.0,
+        trend_direction VARCHAR(20) DEFAULT 'stable',
+        opportunity_score FLOAT DEFAULT 0.0,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(app_id, keyword)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_adk_app ON app_discovered_keywords (app_id)",
+    "CREATE INDEX IF NOT EXISTS idx_adk_opp_score ON app_discovered_keywords (app_id, opportunity_score DESC)",
 ]
 
 

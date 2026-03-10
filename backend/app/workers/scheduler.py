@@ -365,6 +365,55 @@ async def job_keyword_discovery():
 
 
 # ---------------------------------------------------------------------------
+# Job: every 24 h — per-app keyword discovery (autocomplete + affix expansion)
+# ---------------------------------------------------------------------------
+
+async def job_keyword_discovery_daily():
+    """
+    For each tracked app, discover new keyword candidates via:
+    - Apple MZSearchHints autocomplete (from seed keywords)
+    - Prefix/suffix affix expansions ("best {kw}", "{kw} app", …)
+    Enriches each candidate with iTunes + Google Trends signals and
+    stores results in app_discovered_keywords.
+    Processes apps in batches of 10 to respect API rate limits.
+    """
+    job_id = "keyword_discovery_daily"
+    t0 = _log_start(job_id)
+    try:
+        from app.services.keyword_discovery_service import KeywordDiscoveryService
+        from app.database import SessionLocal
+        from app.models.models import App
+
+        db = SessionLocal()
+        try:
+            apps = db.query(App.id).order_by(App.id).all()
+            app_ids = [row[0] for row in apps]
+            total_discovered = 0
+            BATCH = 10
+
+            for i in range(0, len(app_ids), BATCH):
+                batch = app_ids[i: i + BATCH]
+                for app_id in batch:
+                    batch_db = SessionLocal()
+                    try:
+                        svc = KeywordDiscoveryService(batch_db)
+                        count = svc.discover_for_app(app_id)
+                        total_discovered += count
+                    except Exception as exc:
+                        logger.warning(f"[{job_id}] app {app_id} failed: {exc}")
+                    finally:
+                        batch_db.close()
+                # brief pause between batches to avoid hammering APIs
+                await asyncio.sleep(2)
+
+            _log_done(job_id, t0, f"{len(app_ids)} apps, {total_discovered} new keywords")
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+# ---------------------------------------------------------------------------
 # Scheduler setup
 # ---------------------------------------------------------------------------
 
@@ -524,6 +573,20 @@ def setup_scheduler() -> AsyncIOScheduler:
         ),
         id="keyword_discovery",
         name="Every 24h: Keyword Discovery Engine",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── every 24 h: per-app keyword discovery (autocomplete + affixes) ───────
+    # First run: 25 min after startup (just after keyword_discovery).
+    scheduler.add_job(
+        job_keyword_discovery_daily,
+        trigger=IntervalTrigger(
+            hours=24,
+            start_date=now + timedelta(minutes=25),
+            timezone="UTC",
+        ),
+        id="keyword_discovery_daily",
+        name="Every 24h: Per-App Keyword Discovery",
         **_JOB_DEFAULTS,
     )
 

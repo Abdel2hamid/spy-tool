@@ -733,6 +733,55 @@ export async function triggerKeywordExtraction(appId: number): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Keyword Discovery (autocomplete + affix expansion per app)
+// ---------------------------------------------------------------------------
+
+export interface DiscoveredKeyword {
+  keyword: string;
+  source: 'autocomplete' | 'prefix' | 'suffix';
+  source_keyword: string;
+  search_volume: number;
+  difficulty: number;
+  traffic_score: number;
+  app_rank: number | null;
+  trend_score: number;
+  trend_direction: 'rising' | 'stable' | 'declining';
+  opportunity_score: number;
+  created_at: string | null;
+}
+
+export interface DiscoveredKeywordsResponse {
+  app_id: string;
+  app_name: string;
+  keywords: DiscoveredKeyword[];
+  total: number;
+  discovering: boolean;
+  last_discovered: string | null;
+}
+
+export async function getDiscoveredKeywords(
+  appId: number,
+  limit = 200,
+): Promise<DiscoveredKeywordsResponse> {
+  const res = await fetch(`${API_BASE}/apps/${appId}/keywords/discovered?limit=${limit}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function triggerKeywordDiscovery(
+  appId: number,
+): Promise<DiscoveredKeywordsResponse> {
+  const res = await fetch(`${API_BASE}/apps/${appId}/keywords/discover`, {
+    method: 'POST',
+    cache: 'no-store',
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
 // Install & Revenue Estimates
 // ---------------------------------------------------------------------------
 

@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { AppShell } from '@/components';
-import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, getAppDetail, getAppVersions, getAppReviews, getAppAnalytics, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, RankHistory } from '@/lib/api';
+import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, getAppDetail, getAppVersions, getAppReviews, getAppAnalytics, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, RankHistory } from '@/lib/api';
 import {
   ArrowLeft, Star, Download, Calendar, Globe, MessageSquare,
   TrendingUp, BarChart3, AlertTriangle, ThumbsUp, Code, ExternalLink,
@@ -1274,6 +1274,245 @@ function ExtractedKeywordsTable({ appId }: { appId: number }) {
   );
 }
 
+// DiscoveredKeywordsTable — keywords found via autocomplete + affix expansion
+// ---------------------------------------------------------------------------
+
+const DISCOVERY_SOURCE_BADGE: Record<string, string> = {
+  autocomplete: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300',
+  prefix: 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300',
+  suffix: 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300',
+};
+
+const TREND_BADGE: Record<string, string> = {
+  rising: 'text-emerald-600 dark:text-emerald-400',
+  stable: 'text-gray-500 dark:text-gray-400',
+  declining: 'text-red-500 dark:text-red-400',
+};
+const TREND_ICON: Record<string, string> = { rising: '↑', stable: '→', declining: '↓' };
+
+function DiscoveredKeywordsTable({ appId }: { appId: number }) {
+  const [data, setData] = useState<DiscoveredKeywordsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [discovering, setDiscovering] = useState(false);
+  const [sortKey, setSortKey] = useState<keyof DiscoveredKeyword>('opportunity_score');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [sourceFilter, setSourceFilter] = useState<string>('all');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await getDiscoveredKeywords(appId);
+      setData(res);
+    } catch {}
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [appId]);
+
+  const handleDiscover = async () => {
+    setDiscovering(true);
+    try {
+      await triggerKeywordDiscovery(appId);
+      // Poll after a delay — discovery takes a while
+      await new Promise(r => setTimeout(r, 8000));
+      await load();
+    } catch {}
+    setDiscovering(false);
+  };
+
+  const toggleSort = (key: keyof DiscoveredKeyword) => {
+    if (sortKey === key) setSortDir(d => d === 'desc' ? 'asc' : 'desc');
+    else { setSortKey(key); setSortDir('desc'); }
+  };
+
+  const rows = (data?.keywords ?? [])
+    .filter(kw => sourceFilter === 'all' || kw.source === sourceFilter)
+    .sort((a, b) => {
+      const av = (a[sortKey] ?? -1) as number;
+      const bv = (b[sortKey] ?? -1) as number;
+      return sortDir === 'desc' ? bv - av : av - bv;
+    });
+
+  const SortIcon = ({ col }: { col: keyof DiscoveredKeyword }) => (
+    <span className={`ml-1 text-xs ${sortKey === col ? 'opacity-100' : 'opacity-30'}`}>
+      {sortKey === col ? (sortDir === 'desc' ? '↓' : '↑') : '↕'}
+    </span>
+  );
+
+  if (loading) {
+    return (
+      <div className="space-y-2">
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className="h-10 animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />
+        ))}
+      </div>
+    );
+  }
+
+  if (!data || data.total === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-8 text-center dark:border-gray-700 dark:bg-gray-900">
+        <Lightbulb className="mx-auto mb-3 h-8 w-8 text-gray-300" />
+        <p className="mb-1 text-sm font-medium text-gray-600 dark:text-gray-400">
+          {discovering ? 'Discovery in progress…' : 'No discovered keywords yet'}
+        </p>
+        <p className="mb-4 text-xs text-gray-400 dark:text-gray-500">
+          Expand extracted keywords via Apple autocomplete and affix variations
+        </p>
+        <button
+          onClick={handleDiscover}
+          disabled={discovering}
+          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60"
+        >
+          <Zap className={`h-4 w-4 ${discovering ? 'animate-spin' : ''}`} />
+          {discovering ? 'Discovering…' : 'Discover Keywords'}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Header row */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          {(['all', 'autocomplete', 'prefix', 'suffix'] as const).map(src => (
+            <button
+              key={src}
+              onClick={() => setSourceFilter(src)}
+              className={cn(
+                'rounded-full px-3 py-1 text-xs font-medium capitalize transition-colors',
+                sourceFilter === src
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400',
+              )}
+            >
+              {src}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 text-xs text-gray-400">
+          {data.last_discovered && (
+            <span>Last run {new Date(data.last_discovered).toLocaleDateString()}</span>
+          )}
+          <button
+            onClick={handleDiscover}
+            disabled={discovering}
+            className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:text-gray-400"
+          >
+            <RefreshCw className={`h-3 w-3 ${discovering ? 'animate-spin' : ''}`} />
+            {discovering ? 'Discovering…' : 'Refresh'}
+          </button>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-200 bg-gray-50 text-left dark:border-gray-800 dark:bg-gray-900/60">
+              <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Keyword</th>
+              <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Source</th>
+              <th
+                className="cursor-pointer px-4 py-3 font-medium text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200"
+                onClick={() => toggleSort('search_volume')}
+              >
+                Volume <SortIcon col="search_volume" />
+              </th>
+              <th
+                className="cursor-pointer px-4 py-3 font-medium text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200"
+                onClick={() => toggleSort('difficulty')}
+              >
+                Difficulty <SortIcon col="difficulty" />
+              </th>
+              <th
+                className="cursor-pointer px-4 py-3 font-medium text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200"
+                onClick={() => toggleSort('trend_score')}
+              >
+                Trend <SortIcon col="trend_score" />
+              </th>
+              <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Rank</th>
+              <th
+                className="cursor-pointer px-4 py-3 font-medium text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200"
+                onClick={() => toggleSort('opportunity_score')}
+              >
+                Opportunity <SortIcon col="opportunity_score" />
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+            {rows.map((kw) => (
+              <tr
+                key={kw.keyword}
+                className="bg-white transition-colors hover:bg-gray-50 dark:bg-gray-950 dark:hover:bg-gray-900"
+              >
+                <td className="px-4 py-3">
+                  <div className="font-medium text-gray-900 dark:text-gray-100">{kw.keyword}</div>
+                  <div className="text-xs text-gray-400">from: {kw.source_keyword}</div>
+                </td>
+                <td className="px-4 py-3">
+                  <span className={cn(
+                    'rounded-full px-2 py-0.5 text-xs font-medium capitalize',
+                    DISCOVERY_SOURCE_BADGE[kw.source] ?? DISCOVERY_SOURCE_BADGE.autocomplete,
+                  )}>
+                    {kw.source}
+                  </span>
+                </td>
+                <td className="px-4 py-3">
+                  <ScoreBar value={kw.search_volume} color="bg-emerald-400" />
+                </td>
+                <td className="px-4 py-3">
+                  <ScoreBar
+                    value={Math.round(kw.difficulty)}
+                    color={kw.difficulty >= 70 ? 'bg-red-400' : kw.difficulty >= 40 ? 'bg-amber-400' : 'bg-emerald-400'}
+                  />
+                </td>
+                <td className="px-4 py-3">
+                  <span className={cn('text-sm font-medium', TREND_BADGE[kw.trend_direction] ?? TREND_BADGE.stable)}>
+                    {TREND_ICON[kw.trend_direction]} {kw.trend_score}
+                  </span>
+                </td>
+                <td className="px-4 py-3">
+                  {kw.app_rank != null ? (
+                    <span className={cn(
+                      'rounded-full px-2 py-0.5 text-xs font-semibold',
+                      kw.app_rank <= 3
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                        : kw.app_rank <= 10
+                        ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                        : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+                    )}>
+                      #{kw.app_rank}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-gray-400">—</span>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  <span className={cn(
+                    'text-sm font-semibold',
+                    kw.opportunity_score >= 70
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : kw.opportunity_score >= 50
+                      ? 'text-amber-600 dark:text-amber-400'
+                      : 'text-gray-600 dark:text-gray-400',
+                  )}>
+                    {kw.opportunity_score.toFixed(1)}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-right text-xs text-gray-400">
+        {rows.length} of {data.total} keywords
+      </p>
+    </div>
+  );
+}
+
+
 // KeywordIntelligenceTab
 // ---------------------------------------------------------------------------
 
@@ -1810,6 +2049,13 @@ export default function AppDetailPage() {
                   Keywords discovered from this app&apos;s title, subtitle, and description — enriched with search volume, difficulty, and traffic estimates.
                 </p>
                 <ExtractedKeywordsTable appId={appId} />
+              </div>
+              <div>
+                <h3 className="mb-1 text-base font-semibold text-gray-800 dark:text-gray-200">Discovered Keywords</h3>
+                <p className="mb-4 text-xs text-gray-400">
+                  New keyword candidates found via Apple autocomplete and prefix/suffix expansions — scored by opportunity for ASO targeting.
+                </p>
+                <DiscoveredKeywordsTable appId={appId} />
               </div>
               <div>
                 <h3 className="mb-4 text-base font-semibold text-gray-800 dark:text-gray-200">Keyword Intelligence</h3>

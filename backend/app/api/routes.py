@@ -51,6 +51,8 @@ from app.models.schemas import (
     AppAutopsyResponse,
     KeywordExtractionResponse,
     ExtractedKeywordItem,
+    DiscoveredKeywordsResponse,
+    DiscoveredKeywordItem,
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
@@ -1786,6 +1788,89 @@ async def _run_keyword_extraction_async(app_id: int) -> None:
     """asyncio.create_task-compatible wrapper — runs in thread pool."""
     import asyncio as _asyncio
     await _asyncio.to_thread(_run_keyword_extraction_bg, app_id)
+
+
+# ---------------------------------------------------------------------------
+# Keyword Discovery — autocomplete + affix expansion per app
+# ---------------------------------------------------------------------------
+
+@router.get("/apps/{app_id}/keywords/discovered", response_model=DiscoveredKeywordsResponse)
+def get_discovered_keywords(
+    app_id: int,
+    limit: int = Query(200, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    """
+    Return keywords discovered for this app via autocomplete expansion,
+    sorted by opportunity_score DESC.
+    """
+    app = db.query(models.App).filter(models.App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    from app.services.keyword_discovery_service import KeywordDiscoveryService
+    svc = KeywordDiscoveryService(db)
+    rows = svc.get_discovered(app_id, limit=limit)
+
+    last_discovered = rows[0]["created_at"] if rows else None
+
+    return {
+        "app_id": app.app_id,
+        "app_name": app.name,
+        "keywords": rows,
+        "total": len(rows),
+        "discovering": False,
+        "last_discovered": last_discovered,
+    }
+
+
+@router.post("/apps/{app_id}/keywords/discover", response_model=DiscoveredKeywordsResponse)
+async def trigger_keyword_discovery(app_id: int, db: Session = Depends(get_db)):
+    """
+    Trigger keyword discovery for this app in the background.
+    Returns immediately; poll GET /apps/{id}/keywords/discovered for results.
+    """
+    app = db.query(models.App).filter(models.App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    from app.services.keyword_discovery_service import KeywordDiscoveryService
+
+    # Return current state immediately and kick off discovery in background
+    svc = KeywordDiscoveryService(db)
+    existing = svc.get_discovered(app_id, limit=200)
+    last_discovered = existing[0]["created_at"] if existing else None
+
+    asyncio.create_task(_run_keyword_discovery_async(app_id))
+
+    return {
+        "app_id": app.app_id,
+        "app_name": app.name,
+        "keywords": existing,
+        "total": len(existing),
+        "discovering": True,
+        "last_discovered": last_discovered,
+    }
+
+
+def _run_keyword_discovery_bg(app_id: int) -> None:
+    """BackgroundTasks-compatible sync wrapper (runs in thread pool)."""
+    from app.database import SessionLocal
+    from app.services.keyword_discovery_service import KeywordDiscoveryService
+    db = SessionLocal()
+    try:
+        svc = KeywordDiscoveryService(db)
+        count = svc.discover_for_app(app_id)
+        logger.info(f"[Discovery] background job: {count} new keywords for app {app_id}")
+    except Exception as exc:
+        logger.error(f"[Discovery] background job failed app={app_id}: {exc}")
+    finally:
+        db.close()
+
+
+async def _run_keyword_discovery_async(app_id: int) -> None:
+    """asyncio.create_task-compatible wrapper — runs in thread pool."""
+    await asyncio.to_thread(_run_keyword_discovery_bg, app_id)
 
 
 # ---------------------------------------------------------------------------

@@ -460,6 +460,35 @@ class KeywordQueue(Base):
     )
 
 
+class AppDiscoveredKeyword(Base):
+    """
+    Keywords discovered for an app via autocomplete expansion + enrichment.
+    Populated by KeywordDiscoveryService; separate from app_keyword_intelligence
+    (which is extracted from the app's own text).
+    """
+    __tablename__ = "app_discovered_keywords"
+
+    id = Column(Integer, primary_key=True, index=True)
+    app_id = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
+    keyword = Column(String(255), nullable=False)
+    source = Column(String(50))           # 'autocomplete' | 'prefix' | 'suffix'
+    source_keyword = Column(String(255))  # which seed keyword generated this
+    search_volume = Column(Integer, default=0)
+    difficulty = Column(Float, default=0.0)
+    traffic_score = Column(Float, default=0.0)
+    app_rank = Column(Integer)            # app's position in iTunes results; None if absent
+    trend_score = Column(Float, default=0.0)
+    trend_direction = Column(String(20), default="stable")  # 'rising'|'stable'|'declining'
+    opportunity_score = Column(Float, default=0.0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_adk_app", "app_id"),
+        Index("idx_adk_app_kw", "app_id", "keyword", unique=True),
+        Index("idx_adk_opp_score", "app_id", "opportunity_score"),
+    )
+
+
 class KeywordTrend(Base):
     """
     Time-series Google Trends interest data per keyword (weekly granularity).

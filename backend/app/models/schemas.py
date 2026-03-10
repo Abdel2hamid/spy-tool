@@ -642,6 +642,33 @@ class KeywordExtractionResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Keyword Discovery (autocomplete + affix expansion per app)
+# ---------------------------------------------------------------------------
+
+class DiscoveredKeywordItem(BaseModel):
+    keyword: str
+    source: str                    # 'autocomplete' | 'prefix' | 'suffix'
+    source_keyword: str
+    search_volume: int
+    difficulty: float
+    traffic_score: float
+    app_rank: Optional[int]
+    trend_score: float
+    trend_direction: str           # 'rising' | 'stable' | 'declining'
+    opportunity_score: float
+    created_at: Optional[datetime] = None
+
+
+class DiscoveredKeywordsResponse(BaseModel):
+    app_id: str
+    app_name: str
+    keywords: List[DiscoveredKeywordItem]
+    total: int
+    discovering: bool              # True when a background job just started
+    last_discovered: Optional[datetime] = None
+
+
+# ---------------------------------------------------------------------------
 # Keyword History
 # ---------------------------------------------------------------------------
 
