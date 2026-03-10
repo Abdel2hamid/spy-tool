@@ -56,6 +56,8 @@ from app.models.schemas import (
     KeywordOpportunitiesResponse,
     KeywordOpportunityItem,
     KeywordDiscoverResponse,
+    AppImportSearchResponse,
+    AppLookupResponse,
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
@@ -407,6 +409,49 @@ def search_apps_by_keyword(
     
     if result.get("new_app_ids"):
         background_tasks.add_task(service.trigger_background_enrichment, result["new_app_ids"])
+    
+    return result
+
+
+@router.get("/apps/import", response_model=AppImportSearchResponse)
+def import_search_apps(
+    q: str = Query(..., min_length=2, description="App name to search"),
+    limit: int = Query(10, ge=1, le=20, description="Max results"),
+    db: Session = Depends(get_db)
+):
+    """
+    Search for apps: first checks local database, then queries iTunes API if needed.
+    Returns top results with source info (database or itunes).
+    """
+    from app.services.app_import_service import AppImportService
+    
+    service = AppImportService(db)
+    return service.search_apps(q, limit=limit)
+
+
+@router.get("/apps/lookup/{track_id}", response_model=AppLookupResponse)
+def lookup_app(
+    track_id: str,
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Lookup full app details by trackId from iTunes API.
+    - Fetches full metadata from iTunes Lookup API
+    - Inserts/updates app in database
+    - Returns complete app details
+    - Triggers background enrichment for new imports
+    """
+    from app.services.app_import_service import AppImportService
+    
+    service = AppImportService(db)
+    result = service.lookup_app(track_id)
+    
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    
+    if result.get("is_new") and result.get("id"):
+        background_tasks.add_task(service.trigger_enrichment, result["id"])
     
     return result
 

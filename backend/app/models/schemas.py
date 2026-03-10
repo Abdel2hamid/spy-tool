@@ -228,6 +228,73 @@ class KeywordDiscoverResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# App Import / On-Demand Import
+# ---------------------------------------------------------------------------
+
+class AppImportSearchItem(BaseModel):
+    """App item in import search results."""
+    id: int
+    app_id: str
+    name: str
+    developer: Optional[str] = None
+    icon_url: Optional[str] = None
+    current_rating: Optional[float] = None
+    current_reviews: Optional[int] = None
+    primary_category: Optional[str] = None
+    price: float = 0
+    is_free: bool = True
+    url: Optional[str] = None
+    is_new: bool = False
+    source: str = "database"
+
+    class Config:
+        from_attributes = True
+
+
+class AppImportSearchResponse(BaseModel):
+    """Response for app import search."""
+    query: str
+    results: List[AppImportSearchItem]
+    total: int
+    from_cache: int
+
+    class Config:
+        from_attributes = True
+
+
+class AppLookupResponse(BaseModel):
+    """Full app details from lookup."""
+    id: int
+    app_id: str
+    name: str
+    subtitle: Optional[str] = None
+    description: Optional[str] = None
+    developer: Optional[str] = None
+    developer_id: Optional[str] = None
+    icon_url: Optional[str] = None
+    screenshots: List[str] = []
+    primary_category: Optional[str] = None
+    secondary_category: Optional[str] = None
+    price: float = 0
+    currency: str = "USD"
+    is_free: bool = True
+    in_app_purchases: Optional[List[Dict]] = None
+    current_version: Optional[str] = None
+    minimum_ios_version: Optional[str] = None
+    supported_languages: Optional[List[str]] = None
+    release_date: Optional[str] = None
+    last_updated: Optional[str] = None
+    content_rating: Optional[str] = None
+    current_rating: Optional[float] = None
+    current_reviews: Optional[int] = None
+    url: Optional[str] = None
+    is_new: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+# ---------------------------------------------------------------------------
 # Ranking
 # ---------------------------------------------------------------------------
 

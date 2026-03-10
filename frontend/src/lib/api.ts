@@ -505,6 +505,73 @@ export async function searchAppsByKeyword(
   return fetchApi<KeywordSearchResponse>(`/search/apps?${params}`);
 }
 
+// ---------------------------------------------------------------------------
+// On-Demand App Import
+// ---------------------------------------------------------------------------
+
+export interface AppImportSearchItem {
+  id: number;
+  app_id: string;
+  name: string;
+  developer: string | null;
+  icon_url: string | null;
+  current_rating: number | null;
+  current_reviews: number | null;
+  primary_category: string | null;
+  price: number;
+  is_free: boolean;
+  url: string | null;
+  is_new: boolean;
+  source: string;
+}
+
+export interface AppImportSearchResponse {
+  query: string;
+  results: AppImportSearchItem[];
+  total: number;
+  from_cache: number;
+}
+
+export interface AppLookupResponse {
+  id: number;
+  app_id: string;
+  name: string;
+  subtitle: string | null;
+  description: string | null;
+  developer: string | null;
+  developer_id: string | null;
+  icon_url: string | null;
+  screenshots: string[];
+  primary_category: string | null;
+  secondary_category: string | null;
+  price: number;
+  currency: string;
+  is_free: boolean;
+  in_app_purchases: { name: string; price: number }[] | null;
+  current_version: string | null;
+  minimum_ios_version: string | null;
+  supported_languages: string[] | null;
+  release_date: string | null;
+  last_updated: string | null;
+  content_rating: string | null;
+  current_rating: number | null;
+  current_reviews: number | null;
+  url: string | null;
+  is_new: boolean;
+}
+
+export async function searchAppsImport(
+  query: string,
+  limit: number = 10
+): Promise<AppImportSearchResponse> {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  return fetchApi<AppImportSearchResponse>(`/apps/import?${params}`);
+}
+
+export async function lookupApp(trackId: string): Promise<AppLookupResponse> {
+  return fetchApi<AppLookupResponse>(`/apps/lookup/${trackId}`);
+}
+
 export async function getCategories(): Promise<Category[]> {
   return fetchApi<Category[]>('/categories');
 }
