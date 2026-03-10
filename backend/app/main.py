@@ -114,6 +114,29 @@ _MIGRATIONS = [
     "ALTER TABLE app_discovered_keywords ADD COLUMN IF NOT EXISTS competitor_rank INTEGER",
     "ALTER TABLE app_discovered_keywords ADD COLUMN IF NOT EXISTS keyword_gap BOOLEAN DEFAULT FALSE",
     "CREATE INDEX IF NOT EXISTS idx_adk_gap ON app_discovered_keywords (app_id, keyword_gap)",
+    # 3-table keyword architecture (Session 26)
+    # keyword_metrics: normalised metrics separated from the keyword dictionary
+    """CREATE TABLE IF NOT EXISTS keyword_metrics (
+        id SERIAL PRIMARY KEY,
+        keyword_id INTEGER NOT NULL REFERENCES keywords(id) ON DELETE CASCADE,
+        search_volume INTEGER DEFAULT 0,
+        difficulty FLOAT DEFAULT 0.0,
+        trend_score FLOAT DEFAULT 0.0,
+        last_updated TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(keyword_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_km_keyword_id ON keyword_metrics (keyword_id)",
+    "CREATE INDEX IF NOT EXISTS idx_km_search_volume ON keyword_metrics (search_volume)",
+    "CREATE INDEX IF NOT EXISTS idx_km_difficulty ON keyword_metrics (difficulty)",
+    # app_keywords: add target-architecture columns (legacy position/relevance kept)
+    "ALTER TABLE app_keywords ADD COLUMN IF NOT EXISTS rank INTEGER",
+    "ALTER TABLE app_keywords ADD COLUMN IF NOT EXISTS traffic FLOAT DEFAULT 0.0",
+    "ALTER TABLE app_keywords ADD COLUMN IF NOT EXISTS opportunity_score FLOAT DEFAULT 0.0",
+    "ALTER TABLE app_keywords ADD COLUMN IF NOT EXISTS source VARCHAR(50)",
+    "ALTER TABLE app_keywords ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()",
+    "CREATE INDEX IF NOT EXISTS idx_ak_app_id ON app_keywords (app_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ak_keyword_id ON app_keywords (keyword_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ak_opportunity ON app_keywords (app_id, opportunity_score DESC)",
 ]
 
 

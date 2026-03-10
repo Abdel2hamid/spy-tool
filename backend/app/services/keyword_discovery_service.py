@@ -204,6 +204,7 @@ class KeywordDiscoveryService:
         stored = 0
         best_keyword = ""
         best_score = 0.0
+        kw_enrichment_data: Dict[str, Dict] = {}
 
         for kw in new_candidates:
             try:
@@ -214,6 +215,12 @@ class KeywordDiscoveryService:
                     if row["opportunity_score"] > best_score:
                         best_score = row["opportunity_score"]
                         best_keyword = kw
+                # Collect enrichment data for app_keywords population
+                kw_enrichment_data[kw] = {
+                    "rank": row.get("app_rank"),
+                    "traffic": row.get("traffic_score", 0.0),
+                    "opportunity_score": row.get("opportunity_score", 0.0),
+                }
                 time.sleep(_REQUEST_DELAY)
             except Exception as exc:
                 logger.warning(f"[Discovery] enrich failed for {kw!r}: {exc}")
@@ -225,8 +232,7 @@ class KeywordDiscoveryService:
                 f"(score={best_score:.1f})"
             )
 
-        # Push all new candidates into the global keywords table so the
-        # intelligence pipeline can enrich them with trends/signals.
+        # Push into global keywords dictionary + app_keywords relation table
         if new_candidates:
             try:
                 from app.services.global_keyword_sink import GlobalKeywordSink
@@ -235,6 +241,11 @@ class KeywordDiscoveryService:
                     keywords=new_candidates,
                     source="discovered",
                     discovered_from=seeds[0] if seeds else None,
+                )
+                sink.push_app_keywords(
+                    app_id=app_id,
+                    kw_data=kw_enrichment_data,
+                    source="discovered",
                 )
             except Exception as exc:
                 logger.warning(f"[Discovery] global_keyword_sink failed: {exc}")

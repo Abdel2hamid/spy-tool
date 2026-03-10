@@ -287,6 +287,8 @@ class CompetitorKeywordService:
         # 5. Enrich + store
         stored = 0
         source_kw = seeds[0] if seeds else ""
+        kw_enrichment_data: Dict[str, Dict] = {}
+
         for phrase in new_phrases:
             try:
                 enrich = _enrich_one(phrase, app_store_id)
@@ -297,13 +299,19 @@ class CompetitorKeywordService:
                 )
                 if self._save_one(app_id, phrase, source_kw, enrich, opp):
                     stored += 1
+                # Collect for app_keywords population
+                kw_enrichment_data[phrase] = {
+                    "rank": enrich.get("app_rank"),
+                    "traffic": enrich.get("traffic_score", 0.0),
+                    "opportunity_score": opp,
+                }
                 time.sleep(_REQUEST_DELAY)
             except Exception as exc:
                 logger.warning(f"[CompetitorMining] enrich failed for {phrase!r}: {exc}")
 
         logger.info(f"[CompetitorMining] Stored {stored} competitor keywords for app {app_id}")
 
-        # Push phrases into the global keywords table for intelligence enrichment.
+        # Push into global keywords dictionary + app_keywords relation table
         if new_phrases:
             try:
                 from app.services.global_keyword_sink import GlobalKeywordSink
@@ -312,6 +320,11 @@ class CompetitorKeywordService:
                     keywords=new_phrases,
                     source="competitor",
                     discovered_from=seeds[0] if seeds else None,
+                )
+                sink.push_app_keywords(
+                    app_id=app_id,
+                    kw_data=kw_enrichment_data,
+                    source="competitor",
                 )
             except Exception as exc:
                 logger.warning(f"[CompetitorMining] global_keyword_sink failed: {exc}")

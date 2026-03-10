@@ -219,6 +219,7 @@ class Keyword(Base):
                     default=KeywordStatus.RAW.value)
 
     apps = relationship("AppKeyword", back_populates="keyword")
+    metrics = relationship("KeywordMetrics", back_populates="keyword", uselist=False, cascade="all, delete-orphan")
     trends = relationship("KeywordTrend", back_populates="keyword", cascade="all, delete-orphan")
 
     __table_args__ = (
@@ -228,20 +229,65 @@ class Keyword(Base):
     )
 
 
+class KeywordMetrics(Base):
+    """
+    Normalised keyword metrics table — separates intelligence signals from the
+    keyword dictionary so the keywords table stays lean.
+
+    One row per keyword (1-1 with keywords.id).
+    Populated/updated by the KeywordIntelligencePipeline enrichment phases.
+    """
+    __tablename__ = "keyword_metrics"
+
+    id = Column(Integer, primary_key=True, index=True)
+    keyword_id = Column(
+        Integer,
+        ForeignKey("keywords.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    search_volume = Column(Integer, default=0)
+    difficulty = Column(Float, default=0.0)
+    trend_score = Column(Float, default=0.0)
+    last_updated = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    keyword = relationship("Keyword", back_populates="metrics")
+
+    __table_args__ = (
+        Index("idx_km_keyword_id", "keyword_id"),
+        Index("idx_km_search_volume", "search_volume"),
+        Index("idx_km_difficulty", "difficulty"),
+    )
+
+
 class AppKeyword(Base):
     __tablename__ = "app_keywords"
 
     id = Column(Integer, primary_key=True, index=True)
     app_id = Column(Integer, ForeignKey("apps.id"), nullable=False)
     keyword_id = Column(Integer, ForeignKey("keywords.id"), nullable=False)
+    # Legacy columns (keyword search tracker)
     position = Column(Integer)
     relevance = Column(Float, default=0)
+    # New target-architecture columns
+    rank = Column(Integer)                       # app's position for this keyword in iTunes
+    traffic = Column(Float, default=0.0)         # estimated traffic score
+    opportunity_score = Column(Float, default=0.0)
+    source = Column(String(50))                  # 'extracted'|'discovered'|'alphabet'|'competitor'
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     app = relationship("App", back_populates="keywords")
     keyword = relationship("Keyword", back_populates="apps")
 
     __table_args__ = (
         Index("idx_app_keyword", "app_id", "keyword_id", unique=True),
+        Index("idx_ak_app_id", "app_id"),
+        Index("idx_ak_keyword_id", "keyword_id"),
+        Index("idx_ak_opportunity", "app_id", "opportunity_score"),
     )
 
 

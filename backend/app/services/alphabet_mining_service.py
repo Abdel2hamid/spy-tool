@@ -262,6 +262,8 @@ class AlphabetMiningService:
         # Enrich + store each candidate
         app_store_id = str(app.app_id)
         stored = 0
+        kw_enrichment_data: Dict[str, Dict] = {}
+
         for keyword in candidates_list:
             try:
                 enrich = _itunes_search_enrichment(keyword, app_store_id)
@@ -274,13 +276,19 @@ class AlphabetMiningService:
                 saved = self._save_one(app_id, keyword, seeds[0], enrich, opp)
                 if saved:
                     stored += 1
+                # Collect for app_keywords population
+                kw_enrichment_data[keyword] = {
+                    "rank": enrich.get("app_rank"),
+                    "traffic": enrich.get("traffic_score", 0.0),
+                    "opportunity_score": opp,
+                }
                 time.sleep(0.3)
             except Exception as exc:
                 logger.warning(f"[AlphabetMining] enrich failed for {keyword!r}: {exc}")
 
         logger.info(f"[AlphabetMining] Stored {stored} new alphabet keywords for app {app_id}")
 
-        # Push candidates into the global keywords table for intelligence enrichment.
+        # Push into global keywords dictionary + app_keywords relation table
         if candidates_list:
             try:
                 from app.services.global_keyword_sink import GlobalKeywordSink
@@ -289,6 +297,11 @@ class AlphabetMiningService:
                     keywords=candidates_list,
                     source="alphabet",
                     discovered_from=seeds[0] if seeds else None,
+                )
+                sink.push_app_keywords(
+                    app_id=app_id,
+                    kw_data=kw_enrichment_data,
+                    source="alphabet",
                 )
             except Exception as exc:
                 logger.warning(f"[AlphabetMining] global_keyword_sink failed: {exc}")
