@@ -668,7 +668,32 @@ def get_keywords_enhanced(
     if search:
         q = q.filter(models.Keyword.term.ilike(f"%{search}%"))
 
-    rows = q.limit(500).all()  # over-fetch; pagination applied after scoring
+    # ── TRUE total: COUNT(*) with current SQL filters, before Python-only filters ──
+    total_count = q.count()
+
+    # ── DB-level ORDER BY so results are deterministic and pagination is correct ──
+    _DB_SORT_MAP = {
+        "term":             models.Keyword.term,
+        "search_volume":    models.Keyword.search_volume,
+        "difficulty":       models.Keyword.difficulty,
+        "opportunity_score": models.Keyword.opportunity_score,
+        "feasibility_score": models.Keyword.feasibility_score,
+        "trend":            models.Keyword.trend,
+        "trend_score":      models.Keyword.trend_score,
+        "trend_growth":     models.Keyword.trend_growth,
+        "trend_velocity":   models.Keyword.trend_velocity,
+        "dominance_score":  models.Keyword.dominance_score,
+        "apps_count":       func.coalesce(apps_count_sq.c.cnt, 0),
+    }
+    sort_col = _DB_SORT_MAP.get(sort_by, models.Keyword.opportunity_score)
+    q = q.order_by(sort_col.desc() if sort_order == "desc" else sort_col.asc())
+
+    # When a classification filter is active (Python-only), over-fetch a large
+    # window so we can filter + paginate in memory.  Without it, paginate at DB level.
+    if classification:
+        rows = q.limit(5000).all()
+    else:
+        rows = q.offset(skip).limit(limit).all()
 
     items = []
     for kw, apps_count_raw in rows:
@@ -712,25 +737,13 @@ def get_keywords_enhanced(
 
     if classification:
         items = [i for i in items if i.classification == classification]
-
-    _SORT_MAP = {
-        "term": lambda x: x.term.lower(),
-        "search_volume": lambda x: x.search_volume,
-        "difficulty": lambda x: x.difficulty,
-        "opportunity_score": lambda x: x.opportunity_score,
-        "feasibility_score": lambda x: x.feasibility_score,
-        "trend": lambda x: x.trend,
-        "trend_score": lambda x: x.trend_score,
-        "trend_growth": lambda x: x.trend_growth,
-        "apps_count": lambda x: x.apps_count,
-        "dominance_score": lambda x: x.dominance_score,
-    }
-    fn = _SORT_MAP.get(sort_by, lambda x: x.opportunity_score)
-    items.sort(key=fn, reverse=(sort_order == "desc"))
+        page = items[skip: skip + limit]
+    else:
+        page = items  # already paginated at DB level
 
     return KeywordListResponse(
-        keywords=items[skip: skip + limit],
-        total=len(items),
+        keywords=page,
+        total=total_count,  # TRUE DB count with SQL filters — never capped at 500
         skip=skip,
         limit=limit,
     )
