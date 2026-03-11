@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { TrendingUp as TrendUpIcon, Star, TrendingDown } from 'lucide-react';
+import { TrendingUp as TrendUpIcon, Star, TrendingDown, ShieldCheck } from 'lucide-react';
 import { TrendingApp } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -10,10 +10,12 @@ interface TrendingAppCardProps {
 }
 
 export function TrendingAppCard({ app }: TrendingAppCardProps) {
-  const isTrendingUp = (app?.rank_velocity || 0) > 0;
+  const isTrendingUp = (app?.momentum_7d || 0) > 0;
   const currentRank = app?.current_rank ?? '-';
-  const rankVelocity = app?.rank_velocity ?? 0;
-  const reviewGrowth = app?.review_growth ?? 0;
+  const momentum7d = app?.momentum_7d ?? 0;
+  const consistencyScore = app?.consistency_score ?? 0;
+  const confidenceFactor = app?.confidence_factor ?? 0;
+  const reviewMomentum = app?.review_momentum ?? 0;
   const trendScore = app?.trend_score ?? 0;
 
   return (
@@ -62,13 +64,19 @@ export function TrendingAppCard({ app }: TrendingAppCardProps) {
                 ) : (
                   <TrendingDown className="h-3 w-3" />
                 )}
-                {Math.abs(rankVelocity).toFixed(1)}
+                {Math.abs(momentum7d).toFixed(1)}
               </span>
 
               <span className="inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
                 <Star className="h-3 w-3 text-yellow-500" />
-                {reviewGrowth.toFixed(1)}%
+                {reviewMomentum.toFixed(1)}
               </span>
+
+              {confidenceFactor >= 0.7 && (
+                <span className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400" title="High confidence">
+                  <ShieldCheck className="h-3 w-3" />
+                </span>
+              )}
             </div>
           </div>
 
