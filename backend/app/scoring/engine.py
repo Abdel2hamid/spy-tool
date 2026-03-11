@@ -1249,6 +1249,271 @@ class ScoringEngine:
         opportunities.sort(key=lambda x: x["opportunity_score"], reverse=True)
         return opportunities[:20]
 
+    def get_fresh_risers(
+        self,
+        mode: str = "fresh_risers",
+        limit: int = 20,
+        category_id: Optional[int] = None
+    ) -> List[Dict]:
+        """
+        Get fresh riser apps - newly released apps showing early traction.
+        
+        Modes:
+        - fresh_risers: Default - apps with best fresh_riser_score
+        - newest: Most recently released apps
+        - hidden_gems: Apps with high momentum but lower visibility
+        
+        Eligibility:
+        - Release date within last 7 days (or fallback to created_at)
+        - At least 5 reviews
+        - At least 3 ranking snapshots in last 7 days
+        - Valid category_id
+        """
+        cutoff_7_days = datetime.utcnow() - timedelta(days=7)
+        cutoff_14_days = datetime.utcnow() - timedelta(days=14)
+        
+        base_query = self.db.query(App).filter(
+            App.category_id.isnot(None)
+        )
+        
+        if category_id:
+            base_query = base_query.filter(App.category_id == category_id)
+        
+        all_apps = base_query.all()
+        
+        fresh_risers = []
+        
+        for app in all_apps:
+            eligibility = self._check_fresh_riser_eligibility(app, cutoff_7_days, cutoff_14_days)
+            
+            if not eligibility["eligible"]:
+                continue
+            
+            scores = self._calculate_fresh_riser_scores(app, eligibility, cutoff_7_days)
+            
+            if mode == "hidden_gems":
+                final_score = (
+                    scores["momentum_score"] * 0.40 +
+                    scores["niche_viability_score"] * 0.30 +
+                    scores["rank_quality_score"] * 0.20 +
+                    scores["review_traction_score"] * 0.10
+                )
+            elif mode == "newest":
+                final_score = scores["freshness_score"]
+            else:
+                final_score = scores["fresh_riser_score"]
+            
+            fresh_risers.append({
+                "app_id": app.id,
+                "app_name": app.name,
+                "developer": app.developer,
+                "release_date": app.release_date.isoformat() if app.release_date else None,
+                "current_rank": app.current_rank,
+                "current_reviews": app.current_reviews or 0,
+                "category": app.category.name if app.category else None,
+                "fresh_riser_score": round(final_score, 2),
+                "freshness_score": scores["freshness_score"],
+                "review_traction_score": scores["review_traction_score"],
+                "rank_quality_score": scores["rank_quality_score"],
+                "momentum_score": scores["momentum_score"],
+                "niche_viability_score": scores["niche_viability_score"],
+                "ranking_snapshots_count": eligibility["ranking_count"],
+                "age_days": eligibility["age_days"],
+            })
+        
+        fresh_risers.sort(key=lambda x: x["fresh_riser_score"], reverse=True)
+        return fresh_risers[:limit]
+
+    def _check_fresh_riser_eligibility(
+        self,
+        app: App,
+        cutoff_7_days: datetime,
+        cutoff_14_days: datetime
+    ) -> Dict:
+        """Check if app is eligible for fresh risers."""
+        now = datetime.utcnow()
+        
+        release_date = app.release_date
+        created_at = app.created_at
+        
+        if not release_date:
+            if created_at:
+                age = now - created_at
+                age_days = age.days
+                if age_days <= 14:
+                    release_date = created_at
+                else:
+                    return {"eligible": False, "reason": "no_valid_release_date"}
+            else:
+                return {"eligible": False, "reason": "no_release_date"}
+        else:
+            age = now - release_date
+            age_days = age.days
+        
+        if age_days > 7:
+            return {"eligible": False, "reason": "too_old"}
+        
+        reviews_count = app.current_reviews or 0
+        if reviews_count < 5:
+            return {"eligible": False, "reason": "insufficient_reviews"}
+        
+        ranking_count = (
+            self.db.query(Ranking)
+            .filter(Ranking.app_id == app.id)
+            .filter(Ranking.recorded_at >= cutoff_7_days)
+            .count()
+        )
+        
+        if ranking_count < 3:
+            return {"eligible": False, "reason": "insufficient_ranking_history"}
+        
+        if app.current_rank and app.current_rank > 500:
+            return {"eligible": False, "reason": "rank_too_low"}
+        
+        return {
+            "eligible": True,
+            "age_days": age_days,
+            "ranking_count": ranking_count,
+            "reviews_count": reviews_count,
+        }
+
+    def _calculate_fresh_riser_scores(
+        self,
+        app: App,
+        eligibility: Dict,
+        cutoff_7_days: datetime
+    ) -> Dict:
+        """Calculate all fresh riser score components."""
+        age_days = eligibility["age_days"]
+        
+        freshness_score = self._calculate_freshness_score(age_days)
+        
+        review_traction_score = self._calculate_review_traction_score(
+            eligibility["reviews_count"], age_days
+        )
+        
+        rank_quality_score = self._calculate_rank_quality_score(app.current_rank)
+        
+        momentum_score = self._calculate_momentum_score(app.id, cutoff_7_days, app.current_rank)
+        
+        niche_viability_score = self._calculate_niche_viability_score(app.category_id)
+        
+        fresh_riser_score = (
+            freshness_score * 0.25 +
+            review_traction_score * 0.25 +
+            rank_quality_score * 0.20 +
+            momentum_score * 0.20 +
+            niche_viability_score * 0.10
+        )
+        
+        return {
+            "fresh_riser_score": fresh_riser_score,
+            "freshness_score": freshness_score,
+            "review_traction_score": review_traction_score,
+            "rank_quality_score": rank_quality_score,
+            "momentum_score": momentum_score,
+            "niche_viability_score": niche_viability_score,
+        }
+
+    def _calculate_freshness_score(self, age_days: int) -> float:
+        """Calculate freshness score based on app age."""
+        if age_days <= 2:
+            return 100.0
+        elif age_days <= 4:
+            return 80.0
+        elif age_days <= 7:
+            return 60.0
+        else:
+            return 0.0
+
+    def _calculate_review_traction_score(self, reviews_count: int, age_days: int) -> float:
+        """Calculate review traction score based on velocity."""
+        if age_days < 1:
+            age_days = 1
+        velocity = reviews_count / age_days
+        
+        if velocity >= 5:
+            return 100.0
+        elif velocity >= 2:
+            return 70.0
+        elif velocity >= 1:
+            return 40.0
+        else:
+            return 10.0
+
+    def _calculate_rank_quality_score(self, current_rank: Optional[int]) -> float:
+        """Calculate rank quality score based on best rank."""
+        if not current_rank:
+            return 10.0
+        
+        if current_rank <= 10:
+            return 100.0
+        elif current_rank <= 50:
+            return 80.0
+        elif current_rank <= 100:
+            return 60.0
+        elif current_rank <= 300:
+            return 30.0
+        else:
+            return 10.0
+
+    def _calculate_momentum_score(
+        self,
+        app_id: int,
+        cutoff_7_days: datetime,
+        current_rank: Optional[int]
+    ) -> float:
+        """Calculate momentum score based on ranking improvement."""
+        if not current_rank:
+            return 10.0
+        
+        oldest_rank = (
+            self.db.query(Ranking)
+            .filter(Ranking.app_id == app_id)
+            .filter(Ranking.recorded_at >= cutoff_7_days)
+            .order_by(Ranking.recorded_at.asc())
+            .first()
+        )
+        
+        if not oldest_rank:
+            return 10.0
+        
+        rank_7_days_ago = oldest_rank.rank if oldest_rank.rank else current_rank
+        momentum = rank_7_days_ago - current_rank
+        
+        if momentum >= 100:
+            return 100.0
+        elif momentum >= 50:
+            return 70.0
+        elif momentum >= 20:
+            return 40.0
+        else:
+            return 10.0
+
+    def _calculate_niche_viability_score(self, category_id: Optional[int]) -> float:
+        """Calculate niche viability based on category competition."""
+        if not category_id:
+            return 50.0
+        
+        avg_reviews = (
+            self.db.query(func.avg(App.current_reviews))
+            .filter(App.category_id == category_id)
+            .filter(App.current_reviews.isnot(None))
+            .scalar()
+        )
+        
+        if not avg_reviews:
+            return 50.0
+        
+        if avg_reviews < 1000:
+            return 90.0
+        elif avg_reviews < 5000:
+            return 70.0
+        elif avg_reviews < 20000:
+            return 50.0
+        else:
+            return 30.0
+
     STOPWORDS = frozenset({
         "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
         "of", "with", "by", "from", "up", "about", "into", "through", "during",

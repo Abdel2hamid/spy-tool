@@ -61,6 +61,7 @@ from app.models.schemas import (
     TrendingAppsResponse,
     OpportunityOfDayWrapperResponse,
     KeywordOpportunitiesWrapperResponse,
+    FreshRisersResponse,
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
@@ -672,6 +673,69 @@ def get_trending_apps_v2(
         "message": "No trending apps found with current signals.",
         "required_signals": None,
         "items": []
+    }
+
+
+@router.get("/fresh-risers", response_model=FreshRisersResponse)
+def get_fresh_risers(
+    mode: str = Query("fresh_risers", description="Mode: fresh_risers, newest, hidden_gems"),
+    limit: int = Query(20, ge=1, le=50),
+    category_id: Optional[int] = Query(None, description="Filter by category ID"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get fresh riser apps - newly released apps showing early traction.
+    
+    Modes:
+    - fresh_risers (default): Apps with best overall fresh_riser_score
+    - newest: Most recently released apps
+    - hidden_gems: Apps with high momentum but lower visibility
+    
+    Eligibility:
+    - Release date within last 7 days (or fallback to created_at within 14 days)
+    - At least 5 reviews
+    - At least 3 ranking snapshots in last 7 days
+    - Valid category
+    
+    Scoring:
+    - freshness_score (25%): How new the app is
+    - review_traction_score (25%): Review velocity
+    - rank_quality_score (20%): Best rank achieved
+    - momentum_score (20%): Ranking improvement
+    - niche_viability_score (10%): Category competition level
+    """
+    engine = ScoringEngine(db)
+    fresh_risers = engine.get_fresh_risers(
+        mode=mode,
+        limit=limit,
+        category_id=category_id
+    )
+    
+    if not fresh_risers:
+        app_count = db.query(func.count(models.App.id)).scalar() or 0
+        
+        if app_count == 0:
+            logger.info("fresh-risers endpoint: no apps in database")
+            return {
+                "status": "empty",
+                "message": "No apps in database. Add apps to discover fresh risers.",
+                "required_signals": ["apps"],
+                "items": []
+            }
+        
+        logger.info("fresh-risers endpoint: no apps meet eligibility criteria")
+        return {
+            "status": "insufficient_data",
+            "message": "No apps meet fresh riser eligibility criteria (7-day old, 5+ reviews, 3+ ranking snapshots).",
+            "required_signals": ["release_date", "reviews", "ranking_history"],
+            "items": []
+        }
+    
+    return {
+        "status": "success",
+        "message": None,
+        "required_signals": None,
+        "items": fresh_risers
     }
 
 

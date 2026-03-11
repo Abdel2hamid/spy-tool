@@ -460,6 +460,33 @@ class KeywordOpportunitiesWrapperResponse(BaseModel):
     items: List[KeywordOpportunityResponse]
 
 
+class FreshRiserItem(BaseModel):
+    """Individual fresh riser app with scoring details."""
+    app_id: int
+    app_name: str
+    developer: Optional[str] = None
+    release_date: Optional[str] = None
+    current_rank: Optional[int] = None
+    current_reviews: int
+    category: Optional[str] = None
+    fresh_riser_score: float
+    freshness_score: float
+    review_traction_score: float
+    rank_quality_score: float
+    momentum_score: float
+    niche_viability_score: float
+    ranking_snapshots_count: int
+    age_days: int
+
+
+class FreshRisersResponse(BaseModel):
+    """Wrapper response for fresh risers discovery."""
+    status: str  # "success" | "insufficient_data" | "empty"
+    message: Optional[str] = None
+    required_signals: Optional[List[str]] = None
+    items: List[FreshRiserItem]
+
+
 # ---------------------------------------------------------------------------
 # Enhanced Keyword Intelligence (keyword intelligence module)
 # ---------------------------------------------------------------------------
