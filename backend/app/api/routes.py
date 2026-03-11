@@ -55,10 +55,10 @@ from app.models.schemas import (
     DiscoveredKeywordsResponse,
     DiscoveredKeywordItem,
     KeywordOpportunitiesResponse,
-    KeywordOpportunityItem,
     KeywordDiscoverResponse,
-    AppImportSearchResponse,
-    AppLookupResponse,
+    TrendingAppsResponse,
+    OpportunityOfDayWrapperResponse,
+    KeywordOpportunitiesWrapperResponse,
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
@@ -538,7 +538,20 @@ def get_rank_history(
     }
 
 
-@router.get("/trending", response_model=List[TrendingAppV2Response])
+logger = logging.getLogger(__name__)
+
+
+def _check_ranking_history(db: Session, app_ids: List[int]) -> bool:
+    """Check if apps have ranking history data."""
+    if not app_ids:
+        return False
+    has_history = db.query(models.Ranking).filter(
+        models.Ranking.app_id.in_(app_ids)
+    ).first() is not None
+    return has_history
+
+
+@router.get("/trending", response_model=TrendingAppsResponse)
 def get_trending_apps(
     limit: int = Query(10, ge=1, le=50),
     category_id: Optional[int] = Query(None, description="Filter by category ID"),
@@ -556,36 +569,51 @@ def get_trending_apps(
     - Category normalization
     
     This replaces the legacy algorithm that was prone to false positives.
+    
+    Returns:
+        TrendingAppsResponse with status field indicating success/insufficient_data/empty
     """
     engine = ScoringEngine(db)
     trending = engine.get_top_trending_apps_v2(limit=limit, category_id=category_id)
     
-    if not trending:
-        apps = db.query(models.App).limit(limit).all()
-        if apps:
-            return [{
-                "id": app.id,
-                "app_id": app.app_id,
-                "name": app.name,
-                "developer": app.developer,
-                "icon_url": app.icon_url,
-                "current_rank": app.current_rank,
-                "current_rating": app.current_rating,
-                "current_reviews": app.current_reviews,
-                "trend_score": 0.0,
-                "momentum_3d": 0.0,
-                "momentum_7d": 0.0,
-                "consistency_score": 0.0,
-                "confidence_factor": 0.0,
-                "absolute_rank_bonus": 0.0,
-                "review_momentum": 0.0,
-            } for app in apps]
-        return []
+    if trending:
+        return {
+            "status": "success",
+            "message": None,
+            "required_signals": None,
+            "items": trending
+        }
     
-    return trending
+    app_count = db.query(func.count(models.App.id)).scalar() or 0
+    
+    if app_count == 0:
+        logger.info("trending endpoint: no apps in database")
+        return {
+            "status": "empty",
+            "message": "No apps in database. Add apps to track trending.",
+            "required_signals": ["apps"],
+            "items": []
+        }
+    
+    has_ranking_history = _check_ranking_history(db, [])
+    if not has_ranking_history:
+        logger.info("trending endpoint: apps exist but no ranking history")
+        return {
+            "status": "insufficient_data",
+            "message": "Apps exist but no ranking history to compute trends yet.",
+            "required_signals": ["ranking_history", "recent_snapshots"],
+            "items": []
+        }
+    
+    return {
+        "status": "success",
+        "message": "No trending apps found with current signals.",
+        "required_signals": None,
+        "items": []
+    }
 
 
-@router.get("/trending/v2", response_model=List[TrendingAppV2Response])
+@router.get("/trending/v2", response_model=TrendingAppsResponse)
 def get_trending_apps_v2(
     limit: int = Query(10, ge=1, le=50),
     category_id: Optional[int] = Query(None, description="Filter by category ID"),
@@ -601,18 +629,58 @@ def get_trending_apps_v2(
     - Absolute rank bonus for strong positions
     - Bounded review growth (tiny apps don't dominate)
     - Category normalization
+    
+    Returns:
+        TrendingAppsResponse with status field indicating success/insufficient_data/empty
     """
     engine = ScoringEngine(db)
     trending = engine.get_top_trending_apps_v2(limit=limit, category_id=category_id)
     
-    if not trending:
-        return []
+    if trending:
+        return {
+            "status": "success",
+            "message": None,
+            "required_signals": None,
+            "items": trending
+        }
     
-    return trending
+    app_count = db.query(func.count(models.App.id)).scalar() or 0
+    
+    if app_count == 0:
+        logger.info("trending/v2 endpoint: no apps in database")
+        return {
+            "status": "empty",
+            "message": "No apps in database. Add apps to track trending.",
+            "required_signals": ["apps"],
+            "items": []
+        }
+    
+    has_ranking_history = _check_ranking_history(db, [])
+    if not has_ranking_history:
+        logger.info("trending/v2 endpoint: apps exist but no ranking history")
+        return {
+            "status": "insufficient_data",
+            "message": "Apps exist but no ranking history to compute trends yet.",
+            "required_signals": ["ranking_history", "recent_snapshots"],
+            "items": []
+        }
+    
+    return {
+        "status": "success",
+        "message": "No trending apps found with current signals.",
+        "required_signals": None,
+        "items": []
+    }
 
 
-@router.get("/opportunity-of-day", response_model=OpportunityOfDayResponse)
+@router.get("/opportunity-of-day", response_model=OpportunityOfDayWrapperResponse)
 def get_opportunity_of_day(db: Session = Depends(get_db)):
+    """
+    Get the opportunity of the day based on scoring engine analysis.
+    
+    Returns:
+        OpportunityOfDayWrapperResponse with status field indicating success/insufficient_data/empty
+    """
     today = datetime.utcnow().date()
     
     report = db.query(models.DailyReport).filter(
@@ -620,71 +688,111 @@ def get_opportunity_of_day(db: Session = Depends(get_db)):
     ).first()
     
     if report and report.opportunity_of_day:
-        return report.opportunity_of_day
+        return {
+            "status": "success",
+            "message": None,
+            "required_signals": None,
+            "item": report.opportunity_of_day
+        }
     
     engine = ScoringEngine(db)
     opportunity = engine.generate_opportunity_of_day()
     
-    if not opportunity:
-        app = db.query(models.App).first()
-        if not app:
-            return {
-                "app_id": 0,
-                "app_name": "No apps available",
-                "primary_keyword": "N/A",
-                "competition_score": 0.0,
-                "trend_score": 0.0,
-                "success_probability": 0.0,
-                "ai_integration_potential": 0.0,
-                "rank_velocity": 0.0,
-                "review_growth": 0.0,
-                "rating_velocity": 0.0,
-                "category_growth": 0.0,
-                "category": "general",
-                "recommendation": "No opportunity data available. Add apps to generate opportunities."
-            }
+    if opportunity:
         return {
-            "app_id": app.id,
-            "app_name": app.name,
-            "primary_keyword": engine.select_primary_keyword(app.id)[0] if engine else (app.name.split()[0].lower() if app.name else "app"),
-            "competition_score": 50.0,
-            "trend_score": 0.0,
-            "success_probability": 0.0,
-            "ai_integration_potential": 30.0,
-            "rank_velocity": 0.0,
-            "review_growth": 0.0,
-            "rating_velocity": 0.0,
-            "category_growth": 0.0,
-            "category": "general",
-            "recommendation": "Not enough data to generate opportunity. Keep tracking apps."
+            "status": "success",
+            "message": None,
+            "required_signals": None,
+            "item": opportunity
         }
     
-    return opportunity
+    app_count = db.query(func.count(models.App.id)).scalar() or 0
+    
+    if app_count == 0:
+        logger.info("opportunity-of-day endpoint: no apps in database")
+        return {
+            "status": "empty",
+            "message": "No apps in database. Add apps to generate opportunities.",
+            "required_signals": ["apps"],
+            "item": None
+        }
+    
+    has_ranking = db.query(models.App).filter(
+        models.App.current_rank.isnot(None)
+    ).first() is not None
+    
+    if not has_ranking:
+        logger.info("opportunity-of-day endpoint: apps exist but no ranking data")
+        return {
+            "status": "insufficient_data",
+            "message": "Apps exist but no ranking data to compute opportunity scores.",
+            "required_signals": ["ranking_history", "current_rank"],
+            "item": None
+        }
+    
+    logger.info("opportunity-of-day endpoint: apps and ranking exist but no qualifying opportunity")
+    return {
+        "status": "insufficient_data",
+        "message": "Not enough signals to generate opportunity. Keep tracking apps.",
+        "required_signals": ["keyword_intelligence", "discovered_keywords", "rank_velocity"],
+        "item": None
+    }
 
 
-@router.get("/keyword-opportunities", response_model=List[KeywordOpportunityResponse])
+@router.get("/keyword-opportunities", response_model=KeywordOpportunitiesWrapperResponse)
 def get_keyword_opportunities(
     min_difficulty: float = Query(0, ge=0, le=100),
     max_difficulty: float = Query(60, ge=0, le=100),
     db: Session = Depends(get_db)
 ):
+    """
+    Get keyword opportunities based on difficulty and other signals.
+    
+    Returns:
+        KeywordOpportunitiesWrapperResponse with status field indicating success/insufficient_data/empty
+    """
     engine = ScoringEngine(db)
     opportunities = engine.get_keyword_opportunities(min_difficulty, max_difficulty)
     
-    if not opportunities:
-        keywords = db.query(models.Keyword).limit(20).all()
-        if keywords:
-            return [{
-                "keyword": kw.term,
-                "search_volume": kw.search_volume or 0,
-                "difficulty": kw.difficulty or 0,
-                "trend": kw.trend or 0,
-                "opportunity_score": 0.0,
-                "current_apps": 0
-            } for kw in keywords]
-        return []
+    if opportunities:
+        return {
+            "status": "success",
+            "message": None,
+            "required_signals": None,
+            "items": opportunities
+        }
     
-    return opportunities
+    keyword_count = db.query(func.count(models.Keyword.id)).scalar() or 0
+    
+    if keyword_count == 0:
+        logger.info("keyword-opportunities endpoint: no keywords in database")
+        return {
+            "status": "empty",
+            "message": "No keywords in database. Run keyword discovery to generate opportunities.",
+            "required_signals": ["keywords"],
+            "items": []
+        }
+    
+    has_enrichment = db.query(models.Keyword).filter(
+        models.Keyword.search_volume.isnot(None)
+    ).first() is not None
+    
+    if not has_enrichment:
+        logger.info("keyword-opportunities endpoint: keywords exist but not enriched")
+        return {
+            "status": "insufficient_data",
+            "message": "Keywords exist but not enriched with search volume/difficulty data.",
+            "required_signals": ["search_volume", "difficulty", "trend"],
+            "items": []
+        }
+    
+    logger.info("keyword-opportunities endpoint: no qualifying opportunities with current filters")
+    return {
+        "status": "insufficient_data",
+        "message": f"No keyword opportunities found within difficulty range {min_difficulty}-{max_difficulty}.",
+        "required_signals": None,
+        "items": []
+    }
 
 
 @router.get("/keywords", response_model=List[KeywordResponse])

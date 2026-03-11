@@ -434,6 +434,30 @@ class KeywordOpportunityResponse(BaseModel):
     current_apps: int
 
 
+class TrendingAppsResponse(BaseModel):
+    """Wrapper response for trending apps with status information."""
+    status: str  # "success" | "insufficient_data" | "empty" | "pipeline_not_run"
+    message: Optional[str] = None
+    required_signals: Optional[List[str]] = None
+    items: List[TrendingAppV2Response]
+
+
+class OpportunityOfDayWrapperResponse(BaseModel):
+    """Wrapper response for opportunity of the day with status information."""
+    status: str  # "success" | "insufficient_data" | "empty" | "pipeline_not_run"
+    message: Optional[str] = None
+    required_signals: Optional[List[str]] = None
+    item: Optional[OpportunityOfDayResponse] = None
+
+
+class KeywordOpportunitiesWrapperResponse(BaseModel):
+    """Wrapper response for keyword opportunities with status information."""
+    status: str  # "success" | "insufficient_data" | "empty" | "pipeline_not_run"
+    message: Optional[str] = None
+    required_signals: Optional[List[str]] = None
+    items: List[KeywordOpportunityResponse]
+
+
 # ---------------------------------------------------------------------------
 # Enhanced Keyword Intelligence (keyword intelligence module)
 # ---------------------------------------------------------------------------
