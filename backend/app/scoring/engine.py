@@ -236,27 +236,52 @@ class ScoringEngine:
         return min(recent_count * 5, 100)
 
     def calculate_ai_potential(self, app_id: int, app_name: str, description: str = "") -> float:
-        ai_keywords = [
-            "ai", "chat", "gpt", "llm", "assistant", "bot", "smart", "automation",
-            "generate", "create", "write", "image", "voice", "transcribe",
-            "translate", "summarize", "analyze", "predict", "learn"
-        ]
+        """Return a 0-100 AI potential score for an app (float, backward-compatible)."""
+        result = self.calculate_ai_potential_structured(app_id)
+        return result["ai_potential_score"]
 
-        text = f"{app_name or ''} {description or ''}".lower()
-        matches = sum(1 for kw in ai_keywords if kw in text)
+    def calculate_ai_potential_structured(
+        self, app_id: int
+    ) -> Dict:
+        """
+        Return the full structured AI potential result:
+            {
+                "ai_potential_score":  float,   # 0-100
+                "ai_opportunity_type": str,     # 'ai_native' | 'ai_enhanced' | 'weak'
+                "ai_signal_sources":   list,    # labels of detected signals
+            }
 
-        base_score = (matches / len(ai_keywords)) * 100
-
-        if matches > 0:
-            return min(base_score + 20, 100)
+        Uses a weighted multi-signal model defined in app.scoring.ai_potential.
+        Signals:
+          - title_signal       ×0.35  (explicit AI terms in title)
+          - description_signal ×0.25  (AI phrases in subtitle/description)
+          - feature_gap_signal ×0.20  (user reviews requesting AI features)
+          - category_signal    ×0.10  (category name associated with AI opportunity)
+          - keyword_signal     ×0.10  (discovered keywords contain AI phrases)
+        """
+        from app.scoring.ai_potential import calculate_ai_potential_v2
+        from app.models.models import FeatureGap, AppDiscoveredKeyword
 
         app = self.db.query(App).filter(App.id == app_id).first()
-        if app and app.category_id:
-            ai_categories = [1, 2, 3]
-            if app.category_id in ai_categories:
-                return 60.0
+        if not app:
+            return {
+                "ai_potential_score":  0.0,
+                "ai_opportunity_type": "weak",
+                "ai_signal_sources":   [],
+            }
 
-        return 30.0
+        feature_gaps = (
+            self.db.query(FeatureGap)
+            .filter(FeatureGap.app_id == app_id)
+            .all()
+        )
+        discovered = (
+            self.db.query(AppDiscoveredKeyword)
+            .filter(AppDiscoveredKeyword.app_id == app_id)
+            .all()
+        )
+
+        return calculate_ai_potential_v2(app, feature_gaps, discovered)
 
     def calculate_success_probability(
         self,
