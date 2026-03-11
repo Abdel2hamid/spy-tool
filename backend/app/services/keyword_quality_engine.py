@@ -42,6 +42,14 @@ _JUNK_PHRASES = frozenset({
 })
 
 # ---------------------------------------------------------------------------
+# Weak single-word keywords (generic, low value)
+# ---------------------------------------------------------------------------
+_WEAK_SINGLE_WORDS = frozenset({
+    "best", "easy", "free", "smart", "simple", "new", "cool", "top",
+    "pro", "lite", "hd", "app", "apps", "game", "run", "get", "use",
+})
+
+# ---------------------------------------------------------------------------
 # Source score weights (0–15)
 # ---------------------------------------------------------------------------
 _SOURCE_WEIGHTS: dict = {
@@ -146,25 +154,30 @@ class KeywordQualityEngine:
         Fast pre-insertion quality gate.
 
         Returns (True, "") on pass, or (False, reason_code) on reject.
+        
+        Single-word keywords are allowed if they pass stricter validation:
+        - Minimum length >= 6
+        - Not a weak/stopword
+        - Not numeric/junk
         """
         if not term:
             return False, "empty"
 
         norm = KeywordQualityEngine.normalize(term)
 
-        # Character length
+        words = norm.split()
+
+        if len(words) == 1:
+            return KeywordQualityEngine._check_single_word_gate(norm, words[0])
+
+        if len(words) > 4:
+            return False, "too_many_words"
+
+        # Character length for multi-word
         if len(norm) < 5:
             return False, "too_short"
         if len(norm) > 45:
             return False, "too_long"
-
-        words = norm.split()
-
-        # Word count
-        if len(words) < 2:
-            return False, "single_word"
-        if len(words) > 4:
-            return False, "too_many_words"
 
         # Repeated tokens (e.g. "app app")
         if len(set(words)) < len(words):
@@ -190,6 +203,37 @@ class KeywordQualityEngine:
         # Junk phrase exact match
         if norm in _JUNK_PHRASES:
             return False, "junk_phrase"
+
+        return True, ""
+
+    @staticmethod
+    def _check_single_word_gate(norm: str, word: str) -> Tuple[bool, str]:
+        """
+        Validate single-word keyword with stricter rules.
+        
+        Single-word keywords are only accepted if:
+        - Not a weak/stopword (checked first for important filtering)
+        - Not numeric only
+        - Not repeated characters
+        - Length >= 6 characters
+        """
+        if word in _WEAK_SINGLE_WORDS:
+            return False, "single_word_weak"
+
+        if word in _STOPWORDS:
+            return False, "single_word_stopword"
+
+        if word.isdigit():
+            return False, "single_word_numeric"
+
+        if len(set(word)) < len(word) / 2:
+            return False, "single_word_repeated_chars"
+
+        if len(word) < 6:
+            return False, "single_word_too_short"
+
+        if len(word) > 45:
+            return False, "too_long"
 
         return True, ""
 
@@ -339,6 +383,12 @@ class KeywordQualityEngine:
             + trend_component
             + relevance_score
         )
+        
+        # Apply penalty for single-word keywords
+        SINGLE_WORD_PENALTY = 0.85
+        if len(words) == 1:
+            total = total * SINGLE_WORD_PENALTY
+        
         quality_score = round(min(total, 100.0), 1)
         return quality_score, round(validation_score, 1), round(relevance_score, 1)
 
