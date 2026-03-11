@@ -458,9 +458,10 @@ class KeywordDiscoveryEngine:
         """
         Upsert keyword candidates into the keywords table AND enqueue them
         in keyword_queue for the enrichment pipeline to drain.
+        
+        Uses GlobalKeywordSink to enforce the global keyword limit of 1M.
 
-        - New keywords: insert with keyword_source='discovery_engine', first_seen_at=now,
-          canonical_term, last_seen_at, times_seen=1
+        - New keywords: insert via GlobalKeywordSink (enforces limit)
         - Existing canonical match: UPDATE times_seen += 1, last_seen_at = now
         - Exact existing term: skip (do NOT overwrite user-managed data)
         - keyword_queue: INSERT ... ON CONFLICT DO NOTHING (idempotent)
@@ -469,21 +470,22 @@ class KeywordDiscoveryEngine:
         """
         from app.models.models import Keyword, KeywordQueue
         from app.services.keyword_quality_engine import KeywordQualityEngine
+        from app.services.global_keyword_sink import GlobalKeywordSink
 
         if not candidates:
             return 0, 0, 0
+
+        sink = GlobalKeywordSink(self.db)
 
         inserted = 0
         updated = 0
         skipped = 0
         batch_size = 500
 
-        # Load existing terms + canonical terms into lookup structures
         existing_terms: Set[str] = {
             row.term
             for row in self.db.query(Keyword.term).all()
         }
-        # canonical_term → Keyword.id lookup for dedup updates
         canonical_to_id: dict = {
             row.canonical_term: row.id
             for row in self.db.query(Keyword.id, Keyword.canonical_term)
@@ -493,48 +495,32 @@ class KeywordDiscoveryEngine:
 
         for i in range(0, len(candidates), batch_size):
             batch = candidates[i : i + batch_size]
-            new_keywords = []
             new_queue_terms = []
-            canonical_updates: list = []  # list of keyword ids to bump times_seen
+            canonical_updates: list = []
 
+            terms_to_insert = []
             for term in batch:
                 canonical = KeywordQualityEngine.canonicalize(term)
 
                 if term in existing_terms:
-                    # Exact dup — still bump last_seen_at via canonical path
                     if canonical in canonical_to_id:
                         canonical_updates.append(canonical_to_id[canonical])
                     skipped += 1
                     continue
 
                 if canonical in canonical_to_id:
-                    # Different surface form but same canonical — bump counter, skip insert
                     canonical_updates.append(canonical_to_id[canonical])
-                    existing_terms.add(term)  # prevent duplicate within batch
+                    existing_terms.add(term)
                     updated += 1
                     continue
 
-                new_keywords.append(
-                    Keyword(
-                        term=term,
-                        keyword_source="discovery_engine",
-                        first_seen_at=self._now,
-                        last_seen_at=self._now,
-                        canonical_term=canonical,
-                        times_seen=1,
-                        search_volume=0,
-                        difficulty=0.0,
-                        trend=0.0,
-                    )
-                )
+                terms_to_insert.append(term)
                 new_queue_terms.append(term)
-                existing_terms.add(term)  # prevent duplicate within batch
+                existing_terms.add(term)
 
-            # Apply canonical updates (bump times_seen + last_seen_at)
             if canonical_updates:
                 try:
                     from sqlalchemy import text
-                    # Use IN clause for efficiency
                     ids_str = ",".join(str(x) for x in set(canonical_updates))
                     self.db.execute(text(
                         f"UPDATE keywords SET times_seen = COALESCE(times_seen,0)+1, "
@@ -548,27 +534,21 @@ class KeywordDiscoveryEngine:
                     except Exception:
                         pass
 
-            if new_keywords:
-                try:
-                    self.db.bulk_save_objects(new_keywords)
-                    self.db.commit()
-                    inserted += len(new_keywords)
-                    # Register new canonical terms for the rest of this run
-                    for kw_obj in new_keywords:
-                        if kw_obj.canonical_term:
-                            # We don't have the ID yet but prevent re-insert same canonical
-                            canonical_to_id[kw_obj.canonical_term] = -1
+            if terms_to_insert:
+                sink_inserted, sink_skipped = sink.push(
+                    keywords=terms_to_insert,
+                    source="discovery_engine",
+                    discovered_from=None,
+                )
+                inserted += sink_inserted
+                skipped += sink_skipped
+
+                if sink_inserted > 0:
                     logger.debug(
                         f"[KeywordDiscovery] Stored batch {i // batch_size + 1}: "
-                        f"+{len(new_keywords)} keywords"
+                        f"+{sink_inserted} keywords"
                     )
-                except Exception as exc:
-                    self.db.rollback()
-                    logger.error(f"[KeywordDiscovery] Batch insert error: {exc}")
-                    skipped += len(new_keywords)
-                    new_queue_terms = []  # don't enqueue if keyword insert failed
 
-            # Enqueue newly inserted keywords for the enrichment pipeline
             if new_queue_terms:
                 try:
                     from sqlalchemy.dialects.postgresql import insert as pg_insert

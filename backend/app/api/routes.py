@@ -652,11 +652,19 @@ def get_keywords(
 
 @router.post("/keywords", response_model=KeywordResponse)
 def create_keyword(keyword: KeywordCreate, db: Session = Depends(get_db)):
-    db_keyword = models.Keyword(**keyword.dict())
-    db.add(db_keyword)
-    db.commit()
-    db.refresh(db_keyword)
-    return db_keyword
+    from app.services.global_keyword_sink import GlobalKeywordSink
+    
+    sink = GlobalKeywordSink(db)
+    inserted, skipped = sink.push(
+        keywords=[keyword.term],
+        source="api",
+        discovered_from=None,
+    )
+    
+    existing = db.query(models.Keyword).filter(models.Keyword.term == keyword.term).first()
+    if not existing:
+        raise HTTPException(status_code=400, detail="Keyword could not be inserted (limit reached)")
+    return existing
 
 
 # ---------------------------------------------------------------------------

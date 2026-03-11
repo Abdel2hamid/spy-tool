@@ -490,23 +490,22 @@ class KeywordIntelligencePipeline:
         """
         Add seed keywords and Google Trends related queries to the DB.
         Returns count of newly added keywords.
+        Uses GlobalKeywordSink to enforce the global keyword limit.
         """
-        new_count = 0
+        from app.services.global_keyword_sink import GlobalKeywordSink
 
-        # 1a. Add all seed keywords not yet in DB
-        for term in _SEED_KEYWORDS:
-            existing = self.db.query(Keyword).filter(Keyword.term == term).first()
-            if not existing:
-                kw = Keyword(term=term, search_volume=0, difficulty=30.0, trend=3.0)
-                self.db.add(kw)
-                new_count += 1
+        sink = GlobalKeywordSink(self.db)
 
-        if new_count > 0:
-            self.db.commit()
-            logger.info(f"Keyword discovery: added {new_count} seed keywords")
+        # 1a. Add all seed keywords not yet in DB via sink
+        inserted, skipped = sink.push(
+            keywords=_SEED_KEYWORDS,
+            source="seed",
+            discovered_from=None,
+        )
+        logger.info(f"Keyword discovery: added {inserted} seed keywords via sink")
 
         # 1b. Discover related keywords from Google Trends (one seed per category)
-        related_new = 0
+        related_keywords = []
         if settings.google_trends_enabled:
             for category, seeds in _CATEGORY_SEEDS.items():
                 if not seeds:
@@ -517,20 +516,20 @@ class KeywordIntelligencePipeline:
                         term = raw_term.lower().strip()
                         if len(term) < 3 or len(term) > 80:
                             continue
-                        existing = self.db.query(Keyword).filter(Keyword.term == term).first()
-                        if not existing:
-                            kw = Keyword(term=term, search_volume=0, difficulty=40.0, trend=5.0)
-                            self.db.add(kw)
-                            related_new += 1
+                        related_keywords.append(term)
                     time.sleep(2.0)  # polite delay
                 except Exception as e:
                     logger.warning(f"Related keyword discovery failed for '{seeds[0]}': {e}")
 
-            if related_new > 0:
-                self.db.commit()
-                logger.info(f"Keyword discovery: added {related_new} related keywords via Google Trends")
+        if related_keywords:
+            inserted, skipped = sink.push(
+                keywords=related_keywords,
+                source="trends_related",
+                discovered_from=None,
+            )
+            logger.info(f"Keyword discovery: added {inserted} related keywords via Google Trends")
 
-        return new_count + related_new
+        return inserted + skipped
 
     # ------------------------------------------------------------------
     # Phase 2: Google Trends enrichment

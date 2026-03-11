@@ -114,30 +114,37 @@ class ScraperWorker:
         self.db.commit()
     
     async def scrape_search_results(self, keywords: List[str]):
+        from app.services.global_keyword_sink import GlobalKeywordSink
+
         logger.info(f"Starting search results scrape for {len(keywords)} keywords (uncapped)")
+
+        sink = GlobalKeywordSink(self.db)
+        processed_keywords = set()
 
         for keyword in keywords:
             try:
                 results = await self.scraper.get_search_results(keyword, limit=200)
                 logger.info(f"Found {len(results)} results for '{keyword}'")
 
+                if keyword not in processed_keywords:
+                    sink.push(keywords=[keyword], source="search_scrape", discovered_from=None)
+                    processed_keywords.add(keyword)
+
+                existing_keyword = self.db.query(Keyword).filter(
+                    Keyword.term == keyword
+                ).first()
+
+                if not existing_keyword:
+                    continue
+
                 for i, result in enumerate(results):
                     app = self.get_or_create_app(result)
-                    
-                    existing_keyword = self.db.query(Keyword).filter(
-                        Keyword.term == keyword
-                    ).first()
-                    if not existing_keyword:
-                        existing_keyword = Keyword(term=keyword)
-                        self.db.add(existing_keyword)
-                        self.db.commit()
-                        self.db.refresh(existing_keyword)
-                    
+
                     app_keyword = self.db.query(AppKeyword).filter(
                         AppKeyword.app_id == app.id,
                         AppKeyword.keyword_id == existing_keyword.id
                     ).first()
-                    
+
                     if not app_keyword:
                         app_keyword = AppKeyword(
                             app_id=app.id,
@@ -146,12 +153,12 @@ class ScraperWorker:
                             relevance=1.0 - (i * 0.02)
                         )
                         self.db.add(app_keyword)
-                
+
                 self.db.commit()
-                
+
             except Exception as e:
                 logger.error(f"Error scraping keyword '{keyword}': {e}")
-        
+
         logger.info("Search results scrape completed")
     
     async def scrape_top_charts(self, chart_types: List[str] = None, categories: List[str] = None):

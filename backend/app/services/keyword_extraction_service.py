@@ -537,23 +537,21 @@ class KeywordExtractionService:
 
     def _save(self, app_id: int, enriched: List[Dict]) -> None:
         from app.models.models import Keyword, KeywordStatus, AppKeywordIntelligence
+        from app.services.global_keyword_sink import GlobalKeywordSink
 
         if not enriched:
             return
+
+        sink = GlobalKeywordSink(self.db)
+        terms = [item["keyword"] for item in enriched]
+        sink.push(keywords=terms, source="extraction", discovered_from=None)
 
         now = datetime.now(timezone.utc)
         for item in enriched:
             try:
                 kw = self.db.query(Keyword).filter(Keyword.term == item["keyword"]).first()
                 if not kw:
-                    kw = Keyword(
-                        term=item["keyword"],
-                        keyword_source="extraction",
-                        first_seen_at=now,
-                        status=KeywordStatus.RAW.value,
-                    )
-                    self.db.add(kw)
-                    self.db.flush()
+                    continue
 
                 aki = (
                     self.db.query(AppKeywordIntelligence)

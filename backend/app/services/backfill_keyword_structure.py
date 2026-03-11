@@ -55,6 +55,8 @@ def backfill_keyword_structure(db: Session) -> Dict[str, int]:
     Migrate ``app_discovered_keywords`` → ``keywords`` + ``keyword_metrics``
     + ``app_keywords``.
 
+    Uses GlobalKeywordSink to enforce the global keyword limit of 1M.
+
     Returns a stats dict with keys:
       terms_inserted, terms_skipped, app_keywords_inserted, metrics_upserted,
       apps_processed, rows_read
@@ -62,6 +64,9 @@ def backfill_keyword_structure(db: Session) -> Dict[str, int]:
     from sqlalchemy import text
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     from app.models.models import Keyword, KeywordMetrics, AppKeyword
+    from app.services.global_keyword_sink import GlobalKeywordSink
+
+    sink = GlobalKeywordSink(db)
 
     now = datetime.now(timezone.utc)
     stats = {
@@ -90,47 +95,20 @@ def backfill_keyword_structure(db: Session) -> Dict[str, int]:
 
     logger.info(f"[Backfill] Starting migration of {len(rows)} app_discovered_keywords rows")
 
-    # ── Step 2: collect unique terms, check global limit ─────────────────────
+    # ── Step 2: collect unique terms, use sink to enforce limit ─────────────────
     all_terms = list({r.keyword for r in rows})
-    global_count = db.query(Keyword.id).count()
-    if global_count >= _MAX_GLOBAL:
-        logger.warning(
-            f"[Backfill] global keyword limit reached ({global_count:,}) — skipping"
-        )
-        return stats
 
-    terms_to_insert = all_terms[: _MAX_GLOBAL - global_count]
-
-    # ── Step 3: upsert unique terms into keywords ─────────────────────────────
-    for i in range(0, len(terms_to_insert), _BATCH_SIZE):
-        batch = terms_to_insert[i : i + _BATCH_SIZE]
-        try:
-            stmt = (
-                pg_insert(Keyword.__table__)
-                .values(
-                    [
-                        {
-                            "term": t,
-                            "keyword_source": "backfill",
-                            "first_seen_at": now,
-                        }
-                        for t in batch
-                    ]
-                )
-                .on_conflict_do_nothing(index_elements=["term"])
-            )
-            result = db.execute(stmt)
-            db.commit()
-            batch_inserted = result.rowcount or 0
-            stats["terms_inserted"] += batch_inserted
-            stats["terms_skipped"] += len(batch) - batch_inserted
-        except Exception as exc:
-            db.rollback()
-            logger.error(f"[Backfill] keyword batch insert failed: {exc}", exc_info=True)
+    inserted, skipped = sink.push(
+        keywords=all_terms,
+        source="backfill",
+        discovered_from=None,
+    )
+    stats["terms_inserted"] = inserted
+    stats["terms_skipped"] = skipped
 
     logger.info(
         f"[Backfill] keywords: {stats['terms_inserted']} inserted, "
-        f"{stats['terms_skipped']} already existed"
+        f"{stats['terms_skipped']} skipped via sink"
     )
 
     # ── Step 4: build term → keyword_id mapping ───────────────────────────────
