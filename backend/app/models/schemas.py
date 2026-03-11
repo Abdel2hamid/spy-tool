@@ -431,6 +431,8 @@ class KeywordOpportunityResponse(BaseModel):
     difficulty: float
     trend: float
     opportunity_score: float
+    base_opportunity_score: Optional[float] = None
+    signal_confidence: Optional[float] = None
     current_apps: int
 
 

@@ -3,7 +3,7 @@ from typing import List, Dict, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 
-from app.models.models import App, Ranking, Review, Keyword, AppKeyword, Opportunity, Category, AppKeywordIntelligence, AppDiscoveredKeyword
+from app.models.models import App, Ranking, Review, Keyword, AppKeyword, Opportunity, Category, AppKeywordIntelligence, AppDiscoveredKeyword, KeywordStatus
 from app.scoring.weights import SCORING_WEIGHTS
 
 # ---------------------------------------------------------------------------
@@ -1106,6 +1106,95 @@ class ScoringEngine:
 
         return results
 
+    def calculate_keyword_signal_confidence(self, keyword: Keyword) -> float:
+        """
+        Calculate signal confidence score (0-1) for a keyword based on data quality.
+        
+        Factors:
+        - completeness: how many metrics are present
+        - freshness: how recently the data was updated
+        - source reliability: observed vs estimated signals
+        """
+        completeness = self._calculate_completeness_factor(keyword)
+        freshness = self._calculate_freshness_factor(keyword)
+        reliability = self._calculate_source_reliability_factor(keyword)
+        
+        confidence = completeness * freshness * reliability
+        return max(0.0, min(1.0, confidence))
+
+    def _calculate_completeness_factor(self, keyword: Keyword) -> float:
+        """
+        Calculate completeness factor based on presence of key metrics.
+        
+        Returns 0-1 score where:
+        - All metrics present = 1.0
+        - Some metrics missing = proportionally less
+        """
+        metrics_present = 0
+        total_metrics = 5
+        
+        if keyword.search_volume and keyword.search_volume > 0:
+            metrics_present += 1
+        if keyword.difficulty and keyword.difficulty > 0:
+            metrics_present += 1
+        if keyword.trend_score and keyword.trend_score > 0:
+            metrics_present += 1
+        if keyword.trend_growth is not None and keyword.trend_growth != 0:
+            metrics_present += 1
+        if keyword.last_enriched is not None:
+            metrics_present += 1
+        
+        return metrics_present / total_metrics
+
+    def _calculate_freshness_factor(self, keyword: Keyword) -> float:
+        """
+        Calculate freshness factor based on last update time.
+        
+        Returns:
+        - <7 days old = 1.0
+        - <30 days = 0.85
+        - <90 days = 0.65
+        - older = 0.4
+        """
+        if not keyword.last_enriched:
+            if not keyword.last_updated:
+                return 0.4
+            age = datetime.utcnow() - keyword.last_updated
+        else:
+            age = datetime.utcnow() - keyword.last_enriched
+        
+        days_old = age.days
+        
+        if days_old < 7:
+            return 1.0
+        elif days_old < 30:
+            return 0.85
+        elif days_old < 90:
+            return 0.65
+        else:
+            return 0.4
+
+    def _calculate_source_reliability_factor(self, keyword: Keyword) -> float:
+        """
+        Calculate source reliability factor based on data source.
+        
+        Returns:
+        - Observed/real data = 1.0
+        - Unknown source = 0.5
+        """
+        if keyword.status == KeywordStatus.ENRICHED.value:
+            return 1.0
+        elif keyword.status == KeywordStatus.RAW.value:
+            return 0.5
+        elif keyword.quality_tier == 'A':
+            return 1.0
+        elif keyword.quality_tier == 'B':
+            return 0.8
+        elif keyword.quality_tier == 'C':
+            return 0.6
+        
+        return 0.5
+
     def get_keyword_opportunities(
         self,
         min_difficulty: float = 0,
@@ -1136,19 +1225,24 @@ class ScoringEngine:
             difficulty = kw.difficulty or 0
             trend = kw.trend or 0
 
-            opportunity_score = (
+            base_opportunity_score = (
                 (100 - difficulty) * 0.3 +
                 trend * 0.4 +
                 (search_volume / 1000) * 0.2 +
                 (1 / (app_count + 1)) * 10
             )
 
+            confidence = self.calculate_keyword_signal_confidence(kw)
+            adjusted_opportunity_score = base_opportunity_score * confidence
+
             opportunities.append({
                 "keyword": kw.term,
                 "search_volume": search_volume,
                 "difficulty": difficulty,
                 "trend": trend,
-                "opportunity_score": round(opportunity_score, 2),
+                "opportunity_score": round(adjusted_opportunity_score, 2),
+                "base_opportunity_score": round(base_opportunity_score, 2),
+                "signal_confidence": round(confidence, 2),
                 "current_apps": app_count
             })
 

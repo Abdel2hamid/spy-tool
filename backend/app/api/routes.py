@@ -56,6 +56,8 @@ from app.models.schemas import (
     DiscoveredKeywordItem,
     KeywordOpportunitiesResponse,
     KeywordDiscoverResponse,
+    AppImportSearchResponse,
+    AppLookupResponse,
     TrendingAppsResponse,
     OpportunityOfDayWrapperResponse,
     KeywordOpportunitiesWrapperResponse,
