@@ -387,6 +387,25 @@ class TrendingAppResponse(BaseModel):
     trend_score: float
 
 
+class TrendingAppV2Response(BaseModel):
+    """Enhanced trending app response with multi-factor scoring details."""
+    id: int
+    app_id: str
+    name: str
+    developer: Optional[str] = None
+    icon_url: Optional[str] = None
+    current_rank: Optional[int] = None
+    current_rating: Optional[float] = None
+    current_reviews: Optional[int] = None
+    trend_score: float
+    momentum_3d: float
+    momentum_7d: float
+    consistency_score: float
+    confidence_factor: float
+    absolute_rank_bonus: float
+    review_momentum: float
+
+
 class OpportunityOfDayResponse(BaseModel):
     app_id: int
     app_name: str

@@ -20,6 +20,7 @@ from app.models.schemas import (
     OpportunityResponse,
     OpportunityCreate,
     TrendingAppResponse,
+    TrendingAppV2Response,
     OpportunityOfDayResponse,
     KeywordOpportunityResponse,
     KeywordCompetitorItem,
@@ -537,13 +538,27 @@ def get_rank_history(
     }
 
 
-@router.get("/trending", response_model=List[TrendingAppResponse])
+@router.get("/trending", response_model=List[TrendingAppV2Response])
 def get_trending_apps(
     limit: int = Query(10, ge=1, le=50),
+    category_id: Optional[int] = Query(None, description="Filter by category ID"),
     db: Session = Depends(get_db)
 ):
+    """
+    Get trending apps using the improved multi-factor algorithm (v2).
+    
+    Features:
+    - Multi-window momentum (3d, 7d, 14d)
+    - Confidence penalty for sparse data
+    - Consistency bonus for sustained movers
+    - Absolute rank bonus for strong positions
+    - Bounded review growth
+    - Category normalization
+    
+    This replaces the legacy algorithm that was prone to false positives.
+    """
     engine = ScoringEngine(db)
-    trending = engine.get_top_trending_apps(limit)
+    trending = engine.get_top_trending_apps_v2(limit=limit, category_id=category_id)
     
     if not trending:
         apps = db.query(models.App).limit(limit).all()
@@ -555,11 +570,42 @@ def get_trending_apps(
                 "developer": app.developer,
                 "icon_url": app.icon_url,
                 "current_rank": app.current_rank,
-                "rank_velocity": 0.0,
-                "review_growth": 0.0,
-                "rating_velocity": 0.0,
-                "trend_score": 0.0
+                "current_rating": app.current_rating,
+                "current_reviews": app.current_reviews,
+                "trend_score": 0.0,
+                "momentum_3d": 0.0,
+                "momentum_7d": 0.0,
+                "consistency_score": 0.0,
+                "confidence_factor": 0.0,
+                "absolute_rank_bonus": 0.0,
+                "review_momentum": 0.0,
             } for app in apps]
+        return []
+    
+    return trending
+
+
+@router.get("/trending/v2", response_model=List[TrendingAppV2Response])
+def get_trending_apps_v2(
+    limit: int = Query(10, ge=1, le=50),
+    category_id: Optional[int] = Query(None, description="Filter by category ID"),
+    db: Session = Depends(get_db)
+):
+    """
+    Enhanced trending apps using multi-factor trend algorithm.
+    
+    Features:
+    - Multi-window momentum (3d, 7d, 14d)
+    - Confidence penalty for sparse data
+    - Consistency bonus for sustained movers
+    - Absolute rank bonus for strong positions
+    - Bounded review growth (tiny apps don't dominate)
+    - Category normalization
+    """
+    engine = ScoringEngine(db)
+    trending = engine.get_top_trending_apps_v2(limit=limit, category_id=category_id)
+    
+    if not trending:
         return []
     
     return trending

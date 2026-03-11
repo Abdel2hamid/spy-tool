@@ -43,11 +43,16 @@ export interface TrendingApp {
   name: string;
   developer: string | null;
   icon_url: string | null;
-  current_rank: number;
-  rank_velocity: number;
-  review_growth: number;
-  rating_velocity: number;
+  current_rank: number | null;
+  current_rating: number | null;
+  current_reviews: number | null;
   trend_score: number;
+  momentum_3d: number;
+  momentum_7d: number;
+  consistency_score: number;
+  confidence_factor: number;
+  absolute_rank_bonus: number;
+  review_momentum: number;
 }
 
 export interface OpportunityOfDay {

@@ -617,6 +617,360 @@ class ScoringEngine:
         trending.sort(key=lambda x: x["trend_score"], reverse=True)
         return trending[:limit]
 
+    # ---------------------------------------------------------------------------
+    # New Multi-Factor Trending Algorithm
+    # ---------------------------------------------------------------------------
+    # SOURCE OF TRUTH: All trend metrics are computed ON THE FLY from raw ranking
+    # history, NOT from stored rank_velocity. This ensures consistency and accuracy.
+    # ---------------------------------------------------------------------------
+
+    def _get_ranking_history(self, app_id: int, days: int = 14) -> List[Dict]:
+        """
+        Fetch ranking history for an app within the given time window.
+        Returns list of {rank, recorded_at, previous_rank} sorted by date.
+        """
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        rankings = (
+            self.db.query(Ranking)
+            .filter(
+                and_(
+                    Ranking.app_id == app_id,
+                    Ranking.recorded_at >= cutoff
+                )
+            )
+            .order_by(Ranking.recorded_at)
+            .all()
+        )
+        return [
+            {
+                "rank": r.rank,
+                "previous_rank": r.previous_rank,
+                "recorded_at": r.recorded_at,
+            }
+            for r in rankings
+            if r.rank is not None
+        ]
+
+    def compute_momentum_score(self, app_id: int) -> Dict:
+        """
+        Compute multi-window momentum scores.
+        
+        Returns:
+            momentum_3d: 3-day momentum (positions gained per day)
+            momentum_7d: 7-day momentum
+            momentum_14d: 14-day momentum
+            momentum_weighted: Weighted combination favoring sustained trends
+        """
+        history_3d = self._get_ranking_history(app_id, days=3)
+        history_7d = self._get_ranking_history(app_id, days=7)
+        history_14d = self._get_ranking_history(app_id, days=14)
+
+        def calc_momentum(history):
+            if len(history) < 2:
+                return 0.0
+            first_rank = history[0]["rank"]
+            last_rank = history[-1]["rank"]
+            days_span = max((history[-1]["recorded_at"] - history[0]["recorded_at"]).days, 1)
+            return (first_rank - last_rank) / days_span
+
+        mom_3d = calc_momentum(history_3d)
+        mom_7d = calc_momentum(history_7d)
+        mom_14d = calc_momentum(history_14d)
+
+        momentum_weighted = (mom_3d * 0.2) + (mom_7d * 0.35) + (mom_14d * 0.45)
+
+        return {
+            "momentum_3d": round(mom_3d, 3),
+            "momentum_7d": round(mom_7d, 3),
+            "momentum_14d": round(mom_14d, 3),
+            "momentum_weighted": round(momentum_weighted, 3),
+        }
+
+    def compute_consistency_score(self, app_id: int) -> float:
+        """
+        Compute consistency/stability score based on ranking variance.
+        
+        Higher score = more consistent upward movement.
+        Lower score = volatile/noisy movement.
+        
+        Uses coefficient of variation of daily rank changes.
+        """
+        history = self._get_ranking_history(app_id, days=14)
+        
+        if len(history) < 3:
+            return 0.0
+
+        daily_changes = []
+        for i in range(1, len(history)):
+            change = history[i-1]["rank"] - history[i]["rank"]
+            daily_changes.append(change)
+
+        if not daily_changes:
+            return 0.0
+
+        positive_moves = [c for c in daily_changes if c > 0]
+        negative_moves = [c for c in daily_changes if c < 0]
+
+        if not positive_moves:
+            return 0.0
+
+        consistency_ratio = len(positive_moves) / len(daily_changes)
+        
+        avg_improvement = sum(positive_moves) / len(positive_moves) if positive_moves else 0
+        
+        consistency_score = (consistency_ratio * 0.6) + (min(avg_improvement / 10, 1.0) * 0.4)
+        
+        return round(consistency_score * 100, 2)
+
+    def compute_confidence_score(self, app_id: int) -> float:
+        """
+        Compute confidence score based on data quality.
+        
+        Factors:
+        - Number of ranking snapshots (more = higher confidence)
+        - Coverage within time window
+        - Presence of recent data
+        
+        Returns 0.0 to 1.0 multiplier.
+        """
+        history_14d = self._get_ranking_history(app_id, days=14)
+        history_7d = self._get_ranking_history(app_id, days=7)
+        
+        snapshot_score = min(len(history_14d) / 10, 1.0) * 0.4
+        
+        coverage_14d = len(history_14d) / 14 if history_14d else 0
+        coverage_score = min(coverage_14d, 1.0) * 0.3
+        
+        has_recent = 1.0 if history_7d else 0.0
+        recent_score = has_recent * 0.3
+        
+        return round(snapshot_score + coverage_score + recent_score, 3)
+
+    def compute_absolute_rank_bonus(self, app_id: int) -> float:
+        """
+        Compute bonus for apps that are moving up from strong positions.
+        
+        A mover near top ranks (1-10) should generally beat a similarly
+        noisy deep-rank app.
+        
+        BONUS SCALE: 0-20 (capped in compute_trend_score to prevent overpowering)
+        """
+        history = self._get_ranking_history(app_id, days=7)
+        
+        if not history:
+            return 0.0
+
+        best_rank = min(h["rank"] for h in history)
+        current_rank = history[-1]["rank"]
+
+        # Base bonus for best rank achieved (not overpowering)
+        if best_rank <= 5:
+            base_bonus = 20.0
+        elif best_rank <= 10:
+            base_bonus = 15.0
+        elif best_rank <= 25:
+            base_bonus = 10.0
+        elif best_rank <= 50:
+            base_bonus = 5.0
+        else:
+            base_bonus = 0.0
+
+        improvement = history[0]["rank"] - current_rank
+        if improvement > 0:
+            return round(base_bonus * min(improvement / 15, 1.0), 2)
+        
+        return 0.0
+
+    def compute_bounded_review_momentum(self, app_id: int) -> float:
+        """
+        Compute bounded review growth momentum.
+        
+        Caps the effect so tiny apps with sudden review spikes don't
+        dominate the ranking.
+        """
+        app = self.db.query(App).filter(App.id == app_id).first()
+        if not app:
+            return 0.0
+
+        base_reviews = app.current_reviews or 0
+        
+        review_growth_7d = self.calculate_review_growth(app_id, days=7)
+        
+        if base_reviews < 100:
+            dampen_factor = 0.3
+        elif base_reviews < 1000:
+            dampen_factor = 0.6
+        elif base_reviews < 10000:
+            dampen_factor = 0.85
+        else:
+            dampen_factor = 1.0
+
+        bounded_score = review_growth_7d * dampen_factor
+        
+        return round(min(bounded_score, 20), 2)
+
+    def normalize_within_category(self, app_id: int, raw_score: float) -> float:
+        """
+        Normalize trend score within category to prevent weak-category outliers.
+        
+        Uses category percentile ranking.
+        """
+        app = self.db.query(App).filter(App.id == app_id).first()
+        if not app or not app.category_id:
+            return raw_score
+
+        category_apps = (
+            self.db.query(App)
+            .filter(
+                and_(
+                    App.category_id == app.category_id,
+                    App.current_rank.isnot(None)
+                )
+            )
+            .all()
+        )
+
+        if len(category_apps) < 5:
+            return raw_score
+
+        ranks = [a.current_rank for a in category_apps if a.current_rank]
+        if not ranks:
+            return raw_score
+
+        category_avg_rank = sum(ranks) / len(ranks)
+        app_rank = app.current_rank or 999
+        
+        percentile = 1 - (app_rank / max(category_avg_rank * 2, 1))
+        
+        normalized = raw_score * (0.7 + (0.3 * max(percentile, 0)))
+        
+        return round(normalized, 2)
+
+    def compute_trend_score(self, app_id: int, use_category_norm: bool = True) -> Dict:
+        """
+        Compute comprehensive trend score using multi-factor model.
+        
+        Formula:
+            trend_score = (
+                (momentum_weighted * 25) +
+                (consistency_score * 0.15) +
+                (absolute_rank_bonus * 0.25) +
+                (bounded_review_momentum * 0.15)
+            ) * confidence_factor
+            
+            Optionally normalized within category.
+        
+        Returns detailed breakdown for debugging.
+        
+        COMPONENT SCALES (normalized to 0-100 for safety):
+        - momentum_weighted: positions/day (typically 0-20) → scaled by 3 → 0-60
+        - consistency_score: 0-100 → weighted by 0.15 → 0-15
+        - absolute_rank_bonus: 0-30 → to 0- capped20
+        - review_momentum: 0-20 → weighted by 0.5 → 0-10
+        
+        Final score range: 0-100 (before confidence multiplier)
+        """
+        momentum = self.compute_momentum_score(app_id)
+        consistency = self.compute_consistency_score(app_id)
+        confidence = self.compute_confidence_score(app_id)
+        rank_bonus = min(self.compute_absolute_rank_bonus(app_id), 20.0)  # Cap at 20
+        review_momentum = self.compute_bounded_review_momentum(app_id)
+
+        # Normalize momentum to 0-60 range (max ~20 pos/day → 60)
+        momentum_normalized = min(momentum["momentum_weighted"] * 3, 60)
+        
+        # Normalize consistency to 0-15 range
+        consistency_normalized = consistency * 0.15
+        
+        # Rank bonus already 0-20
+        rank_bonus_normalized = rank_bonus
+        
+        # Normalize review momentum to 0-10 range
+        review_normalized = review_momentum * 0.5
+
+        raw_score = (
+            momentum_normalized +
+            consistency_normalized +
+            rank_bonus_normalized +
+            review_normalized
+        )
+
+        final_score = raw_score * confidence
+
+        if use_category_norm:
+            final_score = self.normalize_within_category(app_id, final_score)
+
+        return {
+            "app_id": app_id,
+            "momentum_3d": momentum["momentum_3d"],
+            "momentum_7d": momentum["momentum_7d"],
+            "momentum_14d": momentum["momentum_14d"],
+            "momentum_weighted": momentum["momentum_weighted"],
+            "consistency_score": consistency,
+            "confidence_factor": confidence,
+            "absolute_rank_bonus": rank_bonus,
+            "review_momentum": review_momentum,
+            "raw_score": round(raw_score, 2),
+            "final_score": round(final_score, 2),
+        }
+
+    def get_top_trending_apps_v2(self, limit: int = 10, category_id: int = None) -> List[Dict]:
+        """
+        New improved trending algorithm.
+        
+        Addresses:
+        - Multi-window momentum (3d, 7d, 14d)
+        - Confidence penalty for sparse data
+        - Consistency bonus for sustained movers
+        - Absolute rank bonus for strong positions
+        - Bounded review growth (tiny apps don't dominate)
+        - Category normalization
+        """
+        cutoff = datetime.utcnow() - timedelta(days=14)
+        
+        query = (
+            self.db.query(Ranking.app_id)
+            .filter(Ranking.recorded_at >= cutoff)
+            .group_by(Ranking.app_id)
+        )
+        
+        if category_id:
+            query = query.filter(Ranking.category_id == category_id)
+        
+        app_ids = [r[0] for r in query.all()]
+        
+        trending = []
+        for app_id in app_ids:
+            app = self.db.query(App).filter(App.id == app_id).first()
+            if not app:
+                continue
+
+            trend_data = self.compute_trend_score(app_id, use_category_norm=True)
+            
+            if trend_data["final_score"] <= 0:
+                continue
+
+            trending.append({
+                "id": app.id,
+                "app_id": app.app_id,
+                "name": app.name,
+                "developer": app.developer,
+                "icon_url": app.icon_url,
+                "current_rank": app.current_rank,
+                "current_rating": app.current_rating,
+                "current_reviews": app.current_reviews,
+                "trend_score": trend_data["final_score"],
+                "momentum_3d": trend_data["momentum_3d"],
+                "momentum_7d": trend_data["momentum_7d"],
+                "consistency_score": trend_data["consistency_score"],
+                "confidence_factor": trend_data["confidence_factor"],
+                "absolute_rank_bonus": trend_data["absolute_rank_bonus"],
+                "review_momentum": trend_data["review_momentum"],
+            })
+
+        trending.sort(key=lambda x: x["trend_score"], reverse=True)
+        return trending[:limit]
+
     def update_keyword_metrics(self) -> None:
         """
         Estimate keyword metrics from available app-keyword data.
