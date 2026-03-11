@@ -646,7 +646,7 @@ def get_opportunity_of_day(db: Session = Depends(get_db)):
         return {
             "app_id": app.id,
             "app_name": app.name,
-            "primary_keyword": app.name.split()[0].lower() if app.name else "app",
+            "primary_keyword": engine.select_primary_keyword(app.id)[0] if engine else (app.name.split()[0].lower() if app.name else "app"),
             "competition_score": 50.0,
             "trend_score": 0.0,
             "success_probability": 0.0,

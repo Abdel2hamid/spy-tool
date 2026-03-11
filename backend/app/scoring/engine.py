@@ -3,7 +3,7 @@ from typing import List, Dict, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 
-from app.models.models import App, Ranking, Review, Keyword, AppKeyword, Opportunity, Category
+from app.models.models import App, Ranking, Review, Keyword, AppKeyword, Opportunity, Category, AppKeywordIntelligence, AppDiscoveredKeyword
 from app.scoring.weights import SCORING_WEIGHTS
 
 # ---------------------------------------------------------------------------
@@ -504,6 +504,22 @@ class ScoringEngine:
     # ------------------------------------------------------------------
 
     def generate_opportunity_of_day(self) -> Optional[Dict]:
+        """
+        Generate the Opportunity of the Day by scoring all tracked apps.
+        
+        Previous naive implementation used `app.name.split()[0].lower()` to extract
+        the primary keyword, which is flawed because:
+        - First token is often a brand name (e.g., "Spotify", "Instagram")
+        - Adjectives like "Best", "Easy", "Smart" provide no ASO value
+        - Single tokens miss multi-word keyword opportunities
+        - No consideration of actual keyword performance data
+        
+        The new `select_primary_keyword()` method uses 4-tier selection:
+        1. AppKeywordIntelligence - highest traffic_score from extracted keywords
+        2. AppDiscoveredKeyword - highest opportunity_score from discovery
+        3. Title/Subtitle phrases - 2-3 word phrases from app metadata
+        4. Smart fallback - stopword-filtered phrase extraction
+        """
         apps = self.db.query(App).filter(App.current_rank.isnot(None)).all()
 
         if not apps:
@@ -522,7 +538,7 @@ class ScoringEngine:
             if dominated:
                 continue
 
-            primary_keyword = app.name.split()[0].lower() if app.name else "app"
+            primary_keyword, _ = self.select_primary_keyword(app.id)
             competition_score = self.calculate_keyword_competition(primary_keyword)
             ai_potential = self.calculate_ai_potential(app.id, app.name, app.description or "")
 
@@ -1138,3 +1154,116 @@ class ScoringEngine:
 
         opportunities.sort(key=lambda x: x["opportunity_score"], reverse=True)
         return opportunities[:20]
+
+    STOPWORDS = frozenset({
+        "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+        "of", "with", "by", "from", "up", "about", "into", "through", "during",
+        "before", "after", "above", "below", "between", "under", "again", "further",
+        "then", "once", "here", "there", "when", "where", "why", "how", "all", "each",
+        "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only",
+        "own", "same", "so", "than", "too", "very", "can", "will", "just", "should",
+        "now", "your", "you", "its", "this", "that", "these", "those", "i", "we",
+        "they", "he", "she", "it", "my", "our", "their", "his", "her", "what", "which",
+        "who", "whom", "is", "are", "was", "were", "be", "been", "being", "have", "has",
+        "had", "doing", "doing", "game", "app", "free", "pro", "lite", "hd", "ios",
+    })
+
+    WEAK_KEYWORDS = frozenset({
+        "best", "top", "new", "latest", "easy", "simple", "fast", "quick", "smart",
+        "awesome", "cool", "amazing", "great", "perfect", "fun", "good", "nice",
+        "beautiful", "lovely", "amazing", "fantastic", "wonderful", "excellent",
+        "premium", "ultimate", "super", "mega", "power", "world", "day", "today",
+    })
+
+    def _is_weak_keyword(self, keyword: str) -> bool:
+        """Check if keyword is weak (brand, stopword, or generic adjective)."""
+        kw_lower = keyword.lower().strip()
+        if not kw_lower or len(kw_lower) <= 1:
+            return True
+        if kw_lower in self.STOPWORDS:
+            return True
+        if kw_lower in self.WEAK_KEYWORDS:
+            return True
+        return False
+
+    def _extract_phrases(self, text: str, min_words: int = 2, max_words: int = 3) -> List[str]:
+        """Extract multi-word phrases from text (title/subtitle)."""
+        if not text:
+            return []
+        words = text.split()
+        phrases = []
+        for n in range(min_words, max_words + 1):
+            for i in range(len(words) - n + 1):
+                phrase = " ".join(words[i:i+n]).lower().strip()
+                if phrase:
+                    phrase_words = phrase.split()
+                    if any(self._is_weak_keyword(w) for w in phrase_words):
+                        continue
+                    phrases.append(phrase)
+        return phrases
+
+    def select_primary_keyword(self, app_id: int) -> Tuple[str, str]:
+        """
+        Select the best primary keyword for an app using 4-tier selection logic.
+        
+        Returns:
+            Tuple of (primary_keyword, selection_method)
+        """
+        app = self.db.query(App).filter(App.id == app_id).first()
+        if not app:
+            return "app", "fallback_empty"
+
+        app_text = f"{app.name or ''} {app.subtitle or ''}".strip()
+
+        # Tier 1: App Keyword Intelligence - select keyword with highest traffic_score
+        intelligence = (
+            self.db.query(AppKeywordIntelligence, Keyword)
+            .join(Keyword, Keyword.id == AppKeywordIntelligence.keyword_id)
+            .filter(AppKeywordIntelligence.app_id == app_id)
+            .order_by(AppKeywordIntelligence.traffic_score.desc())
+            .first()
+        )
+        if intelligence:
+            aki, kw = intelligence
+            if kw.term and not self._is_weak_keyword(kw.term):
+                return kw.term, "intelligence"
+
+        # Tier 2: Discovered Keywords - select best by opportunity_score
+        discovered = (
+            self.db.query(AppDiscoveredKeyword)
+            .filter(AppDiscoveredKeyword.app_id == app_id)
+            .filter(AppDiscoveredKeyword.opportunity_score > 0)
+            .order_by(AppDiscoveredKeyword.opportunity_score.desc())
+            .first()
+        )
+        if discovered and discovered.keyword:
+            if not self._is_weak_keyword(discovered.keyword):
+                return discovered.keyword, "discovered"
+
+        # Tier 3: Extract Title/Subtitle Phrases (2-3 words)
+        phrases = self._extract_phrases(app_text, min_words=2, max_words=3)
+        if phrases:
+            scored_phrases = []
+            for phrase in phrases:
+                kw_obj = self.db.query(Keyword).filter(Keyword.term == phrase).first()
+                if kw_obj and kw_obj.opportunity_score:
+                    scored_phrases.append((phrase, kw_obj.opportunity_score))
+                else:
+                    scored_phrases.append((phrase, 10.0))
+            scored_phrases.sort(key=lambda x: x[1], reverse=True)
+            if scored_phrases:
+                return scored_phrases[0][0], "title_phrase"
+
+        # Tier 4: Smart Fallback - extract best phrase using stopword filtering
+        words = app_text.split()
+        valid_words = [w for w in words if not self._is_weak_keyword(w)]
+        
+        if len(valid_words) >= 2:
+            for i in range(len(valid_words) - 1):
+                phrase = f"{valid_words[i]} {valid_words[i+1]}".lower()
+                return phrase, "fallback_phrase"
+        
+        if valid_words:
+            return valid_words[0].lower(), "fallback_single"
+
+        return "app", "fallback_empty"
