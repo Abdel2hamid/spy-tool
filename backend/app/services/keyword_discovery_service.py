@@ -233,8 +233,8 @@ class KeywordDiscoveryService:
                 q_score, _, _ = _qe.compute_quality_score(
                     term=kw,
                     keyword_source=row["source"],
-                    apps_count=row.get("search_volume", 0),  # approximate via sv
-                    search_volume=row.get("search_volume", 0),
+                    apps_count=row.get("apps_count", 0),  # Actual iTunes result count
+                    search_volume=row.get("search_volume", 0),  # Derived volume score
                     difficulty=row.get("difficulty", 0.0),
                     trend_score=row.get("trend_score", 0.0),
                     app_title=app.name or "",
@@ -462,6 +462,7 @@ class KeywordDiscoveryService:
             "source": self._classify_source(keyword, seeds),
             "source_keyword": self._find_source_keyword(keyword, seeds),
             "search_volume": search_volume,
+            "apps_count": result_count,  # Actual iTunes result count (for validation_score)
             "difficulty": difficulty,
             "traffic_score": traffic_score,
             "app_rank": app_rank,

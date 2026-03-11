@@ -225,7 +225,21 @@ class KeywordQualityEngine:
               + relevance_score   (0-5)    word overlap with app title/subtitle
 
         Returns (quality_score, validation_score, relevance_score).
+        
+        Note: apps_count should be the raw iTunes result count (number of apps 
+        returned for this keyword), NOT the derived search_volume score (0-100).
+        search_volume is a separate metric used for volume_score.
         """
+        # ── Defensive check: detect suspicious patterns ────────────────────────
+        # If apps_count looks like a derived score (0-100), it's likely a bug
+        if apps_count > 0 and search_volume > 0:
+            if abs(apps_count - search_volume) < 5 and apps_count <= 100:
+                logger.warning(
+                    f"[QualityScore] Suspicious: term={term!r}, apps_count={apps_count}, "
+                    f"search_volume={search_volume} — apps_count may incorrectly equal search_volume. "
+                    f"apps_count should be raw result count, not derived score."
+                )
+        
         norm = KeywordQualityEngine.normalize(term)
         words = norm.split()
 

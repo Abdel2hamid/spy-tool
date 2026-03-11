@@ -162,6 +162,7 @@ def _enrich_one(keyword: str, app_store_id: str) -> Dict:
 
     return {
         "search_volume": search_volume,
+        "apps_count": result_count,  # Actual iTunes result count (for validation_score)
         "difficulty": difficulty,
         "app_rank": app_rank,
         "traffic_score": traffic_score,
@@ -321,8 +322,8 @@ class CompetitorKeywordService:
                 q_score, _, _ = _qe.compute_quality_score(
                     term=phrase,
                     keyword_source="competitor",
-                    apps_count=enrich.get("search_volume", 0),
-                    search_volume=enrich.get("search_volume", 0),
+                    apps_count=enrich.get("apps_count", 0),  # Actual iTunes result count
+                    search_volume=enrich.get("search_volume", 0),  # Derived volume score
                     difficulty=enrich.get("difficulty", 0.0),
                     app_title=app.name or "",
                     app_subtitle=app.subtitle or "",
