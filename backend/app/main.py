@@ -165,6 +165,9 @@ _MIGRATIONS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_trending_score ON app_trending_scores (trend_score DESC)",
+    # Reviews intelligence pipeline — sentiment column on reviews
+    "ALTER TABLE reviews ADD COLUMN IF NOT EXISTS sentiment VARCHAR(20)",
+    "CREATE INDEX IF NOT EXISTS idx_review_sentiment ON reviews (app_id, sentiment)",
 ]
 
 

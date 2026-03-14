@@ -130,6 +130,7 @@ class Review(Base):
     developer_reply_text = Column(Text)
     developer_reply_date = Column(DateTime(timezone=True))
     helpful_count = Column(Integer, default=0)
+    sentiment = Column(String(20))  # positive / neutral / negative
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     app = relationship("App", back_populates="reviews")

@@ -15,6 +15,10 @@ Job schedule:
   full_metadata              6 h      6 h         Full metadata refresh for all tracked apps
   keyword_discovery          24 h      2 min      Keyword expansion engine (10k-100k keywords)
   keyword_cleanup_daily      24 h     45 min      Prune low-value / stale keywords from DB
+  review_scraper             6 h      90 min      Ingest up to 500 reviews for top 300 ranked apps
+  sentiment_analysis         1 h      35 min      Rule-based sentiment classification + app analytics
+  feature_gap                2 h      50 min      Feature gap analysis from negative reviews
+  analytics_update           2 h      55 min      Review growth & rating-change roll-up into app_analytics
 
 Discovery jobs have short first-run delays so coverage starts building
 immediately after deploy without waiting for the bootstrap endpoint.
@@ -591,6 +595,116 @@ async def job_keyword_cleanup_daily():
 # Job: every 24 h — keyword quality pruning (multi-rule DB cleanup)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Job: every 6 h — deep review ingestion (up to 500 reviews per app)
+# ---------------------------------------------------------------------------
+
+async def job_review_scraper():
+    """
+    Fetch up to 500 reviews for the top 300 ranked apps (iTunes RSS pagination).
+    New reviews are persisted; existing reviews (by review_id) are skipped.
+    """
+    job_id = "review_scraper"
+    t0 = _log_start(job_id)
+    try:
+        from app.services.review_scraper_service import ReviewScraperService
+        from app.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            svc = ReviewScraperService(db)
+            stats = await svc.scrape_reviews_for_top_apps(limit=300)
+            _log_done(
+                job_id, t0,
+                f"apps={stats['apps_processed']}, "
+                f"+reviews={stats['new_reviews']}, "
+                f"errors={stats['errors']}",
+            )
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+# ---------------------------------------------------------------------------
+# Job: every 1 h — rule-based sentiment classification
+# ---------------------------------------------------------------------------
+
+async def job_sentiment_analysis():
+    """
+    Classify all unclassified reviews (sentiment IS NULL) and roll up
+    per-app averages into app_analytics.
+    """
+    job_id = "sentiment_analysis"
+    t0 = _log_start(job_id)
+    try:
+        from app.services.review_sentiment_service import ReviewSentimentService
+        from app.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            svc = ReviewSentimentService(db)
+            classified = await asyncio.to_thread(svc.classify_pending_reviews)
+            updated = await asyncio.to_thread(svc.update_all_app_analytics)
+            _log_done(job_id, t0, f"classified={classified}, analytics_updated={updated}")
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+# ---------------------------------------------------------------------------
+# Job: every 2 h — feature gap analysis
+# ---------------------------------------------------------------------------
+
+async def job_feature_gap():
+    """
+    Run FeatureGapAnalyzer for all apps with ≥5 reviews and upsert results
+    into the feature_gaps table.
+    """
+    job_id = "feature_gap"
+    t0 = _log_start(job_id)
+    try:
+        from app.services.feature_gap_service import FeatureGapService
+        from app.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            svc = FeatureGapService(db)
+            processed = await asyncio.to_thread(svc.compute_for_all_apps)
+            _log_done(job_id, t0, f"{processed} apps processed")
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+# ---------------------------------------------------------------------------
+# Job: every 2 h — analytics update (growth + rating-change roll-up)
+# ---------------------------------------------------------------------------
+
+async def job_analytics_update():
+    """
+    Recompute review_growth_30d/90d and rating_change_30d/90d for all apps
+    that have sentiment-classified reviews and persist into app_analytics.
+    """
+    job_id = "analytics_update"
+    t0 = _log_start(job_id)
+    try:
+        from app.services.review_sentiment_service import ReviewSentimentService
+        from app.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            svc = ReviewSentimentService(db)
+            updated = await asyncio.to_thread(svc.update_all_app_analytics)
+            _log_done(job_id, t0, f"{updated} apps updated")
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
 async def job_keyword_quality_pruning():
     """
     Multi-rule quality pruning for the global keywords table:
@@ -851,6 +965,62 @@ def setup_scheduler() -> AsyncIOScheduler:
         ),
         id="keyword_quality_pruning",
         name="Every 24h: Keyword Quality Pruning (multi-rule quality gate)",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── every 6 h: deep review ingestion (500 reviews × top 300 apps) ───────
+    # First run: 90 min after startup (after hourly refresh has run once).
+    scheduler.add_job(
+        job_review_scraper,
+        trigger=IntervalTrigger(
+            hours=6,
+            start_date=now + timedelta(minutes=90),
+            timezone="UTC",
+        ),
+        id="review_scraper",
+        name="Every 6h: Deep Review Ingestion",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── every 1 h: rule-based sentiment classification ────────────────────
+    # First run: 35 min after startup (after initial reviews are present).
+    scheduler.add_job(
+        job_sentiment_analysis,
+        trigger=IntervalTrigger(
+            hours=1,
+            start_date=now + timedelta(minutes=35),
+            timezone="UTC",
+        ),
+        id="sentiment_analysis",
+        name="Every 1h: Sentiment Classification + App Analytics",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── every 2 h: feature gap analysis ──────────────────────────────────
+    # First run: 50 min after startup.
+    scheduler.add_job(
+        job_feature_gap,
+        trigger=IntervalTrigger(
+            hours=2,
+            start_date=now + timedelta(minutes=50),
+            timezone="UTC",
+        ),
+        id="feature_gap",
+        name="Every 2h: Feature Gap Analysis",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── every 2 h: analytics update (growth + rating-change roll-up) ──────
+    # First run: 55 min after startup (slightly after sentiment_analysis).
+    scheduler.add_job(
+        job_analytics_update,
+        trigger=IntervalTrigger(
+            hours=2,
+            start_date=now + timedelta(minutes=55),
+            timezone="UTC",
+        ),
+        id="analytics_update",
+        name="Every 2h: Review Growth & Rating-Change Roll-up",
         **_JOB_DEFAULTS,
     )
 
