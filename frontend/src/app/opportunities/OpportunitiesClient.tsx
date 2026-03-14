@@ -5,12 +5,12 @@ import { AppShell } from '@/components';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { OpportunityOfDayCard } from '@/components/OpportunityOfDayCard';
 import { SimpleChart } from '@/components/Charts';
-import { OpportunityOfDay, KeywordOpportunity, getOpportunityOfDay, getKeywordOpportunities } from '@/lib/api';
+import { OpportunityOfDayWrapper, KeywordOpportunity, getOpportunityOfDay, getKeywordOpportunities } from '@/lib/api';
 import { Search, BarChart3 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export default function OpportunitiesClient() {
-  const [opportunity, setOpportunity] = useState<OpportunityOfDay | null>(null);
+  const [opportunity, setOpportunity] = useState<OpportunityOfDayWrapper | null>(null);
   const [keywordOpportunities, setKeywordOpportunities] = useState<KeywordOpportunity[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -59,9 +59,13 @@ export default function OpportunitiesClient() {
           </p>
         </div>
 
-        {opportunity && (
+        {opportunity?.status === 'success' && opportunity.item ? (
           <div>
-            <OpportunityOfDayCard opportunity={opportunity} />
+            <OpportunityOfDayCard opportunity={opportunity.item} />
+          </div>
+        ) : opportunity && (
+          <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 p-6 text-center text-sm text-gray-500 dark:text-gray-400">
+            {opportunity.message ?? 'Not enough signals yet. Keep tracking apps to generate an opportunity.'}
           </div>
         )}
 
