@@ -5,6 +5,7 @@ Job schedule:
 
   Job ID                   Interval  First run   Purpose
   ───────────────────────  ────────  ──────────  ─────────────────────────────────────────
+  trending_compute           10 min   2 min       Precompute trending scores → app_trending_scores
   discovery_keywords         6 h      2 min       100+ keyword search → queue
   discovery_charts           2 h      5 min       Charts × all genres × 20 countries → queue
   discovery_developer        12 h     10 min      Developer expansion → queue
@@ -112,6 +113,30 @@ async def job_hourly_scoring():
         _log_done(job_id, t0)
     except Exception as exc:
         _log_fail(job_id, exc)
+
+
+# ---------------------------------------------------------------------------
+# Job: every 10 min — precompute trending scores
+# ---------------------------------------------------------------------------
+
+async def job_trending_compute():
+    """
+    Precompute and persist trending scores for all apps with recent ranking
+    history.  Keeps the /trending endpoint fast (read-only table scan).
+    """
+    job_id = "trending_compute"
+    t0 = _log_start(job_id)
+    from app.database import SessionLocal  # local import avoids circular
+    from app.services.trending_compute_service import compute_trending_scores
+
+    db = SessionLocal()
+    try:
+        count = await asyncio.to_thread(compute_trending_scores, db)
+        _log_done(job_id, t0, f"{count} apps scored")
+    except Exception as exc:
+        _log_fail(job_id, exc)
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -784,6 +809,20 @@ def setup_scheduler() -> AsyncIOScheduler:
         ),
         id="keyword_discovery_phase1_daily",
         name="Every 24h: Phase-1 Alphabet+Competitor+Gap Discovery",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── every 10 min: precompute trending scores ─────────────────────────────
+    # First run: 2 min after startup so the /trending endpoint serves data soon.
+    scheduler.add_job(
+        job_trending_compute,
+        trigger=IntervalTrigger(
+            minutes=10,
+            start_date=now + timedelta(minutes=2),
+            timezone="UTC",
+        ),
+        id="trending_compute",
+        name="Every 10min: Precompute Trending Scores",
         **_JOB_DEFAULTS,
     )
 

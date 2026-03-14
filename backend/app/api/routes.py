@@ -1,6 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_
+from sqlalchemy import exists, func, and_, or_
 from typing import List, Optional
 from datetime import datetime, timedelta
 import asyncio
@@ -554,6 +554,57 @@ def _check_ranking_history(db: Session, app_ids: List[int]) -> bool:
     return has_history
 
 
+def _read_precomputed_trending(
+    db: Session,
+    limit: int,
+    category_id: Optional[int],
+) -> list:
+    """
+    Read trending items from the precomputed app_trending_scores table.
+    Returns a list of dicts matching TrendingAppV2Response fields, or [] if
+    the table is empty / no scores exist yet.
+    """
+    query = (
+        db.query(models.AppTrendingScore, models.App)
+        .join(models.App, models.App.id == models.AppTrendingScore.app_id)
+        .filter(models.AppTrendingScore.trend_score > 0)
+    )
+    if category_id is not None:
+        # Filter to apps that have at least one ranking in the requested category
+        query = query.filter(
+            exists().where(
+                (models.Ranking.app_id == models.AppTrendingScore.app_id)
+                & (models.Ranking.category_id == category_id)
+            )
+        )
+    rows = (
+        query
+        .order_by(models.AppTrendingScore.trend_score.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": app.id,
+            "app_id": app.app_id,
+            "name": app.name,
+            "developer": app.developer,
+            "icon_url": app.icon_url,
+            "current_rank": app.current_rank,
+            "current_rating": app.current_rating,
+            "current_reviews": app.current_reviews,
+            "trend_score": score.trend_score,
+            "momentum_3d": score.momentum_3d,
+            "momentum_7d": score.momentum_7d,
+            "consistency_score": score.consistency_score,
+            "confidence_factor": score.confidence_factor,
+            "absolute_rank_bonus": score.absolute_rank_bonus,
+            "review_momentum": score.review_momentum,
+        }
+        for score, app in rows
+    ]
+
+
 @router.get("/trending", response_model=TrendingAppsResponse)
 def get_trending_apps(
     limit: int = Query(10, ge=1, le=50),
@@ -561,43 +612,41 @@ def get_trending_apps(
     db: Session = Depends(get_db)
 ):
     """
-    Get trending apps using the improved multi-factor algorithm (v2).
-    
-    Features:
+    Get trending apps from precomputed scores (refreshed every 10 minutes).
+
+    Scores are computed by the trending_compute scheduler job using a
+    multi-factor algorithm:
     - Multi-window momentum (3d, 7d, 14d)
     - Confidence penalty for sparse data
     - Consistency bonus for sustained movers
     - Absolute rank bonus for strong positions
     - Bounded review growth
     - Category normalization
-    
-    This replaces the legacy algorithm that was prone to false positives.
-    
+
     Returns:
         TrendingAppsResponse with status field indicating success/insufficient_data/empty
     """
-    engine = ScoringEngine(db)
-    trending = engine.get_top_trending_apps_v2(limit=limit, category_id=category_id)
-    
+    trending = _read_precomputed_trending(db, limit, category_id)
+
     if trending:
         return {
             "status": "success",
             "message": None,
             "required_signals": None,
-            "items": trending
+            "items": trending,
         }
-    
+
     app_count = db.query(func.count(models.App.id)).scalar() or 0
-    
+
     if app_count == 0:
         logger.info("trending endpoint: no apps in database")
         return {
             "status": "empty",
             "message": "No apps in database. Add apps to track trending.",
             "required_signals": ["apps"],
-            "items": []
+            "items": [],
         }
-    
+
     has_ranking_history = _check_ranking_history(db, [])
     if not has_ranking_history:
         logger.info("trending endpoint: apps exist but no ranking history")
@@ -605,14 +654,14 @@ def get_trending_apps(
             "status": "insufficient_data",
             "message": "Apps exist but no ranking history to compute trends yet.",
             "required_signals": ["ranking_history", "recent_snapshots"],
-            "items": []
+            "items": [],
         }
-    
+
     return {
         "status": "success",
-        "message": "No trending apps found with current signals.",
+        "message": "Trending scores are being computed — check back shortly.",
         "required_signals": None,
-        "items": []
+        "items": [],
     }
 
 
@@ -623,8 +672,8 @@ def get_trending_apps_v2(
     db: Session = Depends(get_db)
 ):
     """
-    Enhanced trending apps using multi-factor trend algorithm.
-    
+    Enhanced trending apps from precomputed scores (refreshed every 10 minutes).
+
     Features:
     - Multi-window momentum (3d, 7d, 14d)
     - Confidence penalty for sparse data
@@ -632,32 +681,31 @@ def get_trending_apps_v2(
     - Absolute rank bonus for strong positions
     - Bounded review growth (tiny apps don't dominate)
     - Category normalization
-    
+
     Returns:
         TrendingAppsResponse with status field indicating success/insufficient_data/empty
     """
-    engine = ScoringEngine(db)
-    trending = engine.get_top_trending_apps_v2(limit=limit, category_id=category_id)
-    
+    trending = _read_precomputed_trending(db, limit, category_id)
+
     if trending:
         return {
             "status": "success",
             "message": None,
             "required_signals": None,
-            "items": trending
+            "items": trending,
         }
-    
+
     app_count = db.query(func.count(models.App.id)).scalar() or 0
-    
+
     if app_count == 0:
         logger.info("trending/v2 endpoint: no apps in database")
         return {
             "status": "empty",
             "message": "No apps in database. Add apps to track trending.",
             "required_signals": ["apps"],
-            "items": []
+            "items": [],
         }
-    
+
     has_ranking_history = _check_ranking_history(db, [])
     if not has_ranking_history:
         logger.info("trending/v2 endpoint: apps exist but no ranking history")
@@ -665,14 +713,14 @@ def get_trending_apps_v2(
             "status": "insufficient_data",
             "message": "Apps exist but no ranking history to compute trends yet.",
             "required_signals": ["ranking_history", "recent_snapshots"],
-            "items": []
+            "items": [],
         }
-    
+
     return {
         "status": "success",
-        "message": "No trending apps found with current signals.",
+        "message": "Trending scores are being computed — check back shortly.",
         "required_signals": None,
-        "items": []
+        "items": [],
     }
 
 

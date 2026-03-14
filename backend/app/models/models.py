@@ -74,6 +74,7 @@ class App(Base):
     analytics = relationship("AppAnalytics", back_populates="app", cascade="all, delete-orphan")
     market_weakness = relationship("AppMarketWeakness", back_populates="app", cascade="all, delete-orphan")
     feature_gaps = relationship("FeatureGap", back_populates="app", cascade="all, delete-orphan")
+    trending_score = relationship("AppTrendingScore", back_populates="app", uselist=False, cascade="all, delete-orphan")
 
     __table_args__ = (
         # Composite index used by filtered list queries
@@ -569,4 +570,31 @@ class KeywordTrend(Base):
         Index("idx_ktrend_keyword_week", "keyword_id", "week_start", unique=True),
         Index("idx_ktrend_keyword", "keyword_id"),
         Index("idx_ktrend_week_start", "week_start"),
+    )
+
+
+class AppTrendingScore(Base):
+    """
+    Precomputed trending scores for all apps with recent ranking history.
+    Refreshed every 10 minutes by the trending_compute scheduler job so that
+    the /trending endpoint is a cheap read-only table scan instead of an
+    expensive on-the-fly computation.
+    """
+    __tablename__ = "app_trending_scores"
+
+    app_id = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), primary_key=True)
+    trend_score = Column(Float, nullable=False, default=0.0)
+    momentum_score = Column(Float, default=0.0)   # weighted momentum (3d/7d/14d)
+    momentum_3d = Column(Float, default=0.0)       # raw 3-day momentum
+    momentum_7d = Column(Float, default=0.0)       # raw 7-day momentum
+    consistency_score = Column(Float, default=0.0)
+    absolute_rank_bonus = Column(Float, default=0.0)
+    review_momentum = Column(Float, default=0.0)
+    confidence_factor = Column(Float, default=1.0)
+    computed_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    app = relationship("App", back_populates="trending_score")
+
+    __table_args__ = (
+        Index("idx_trending_score", "trend_score"),
     )

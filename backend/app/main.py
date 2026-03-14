@@ -149,6 +149,22 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_kw_quality_tier ON keywords (quality_tier)",
     "CREATE INDEX IF NOT EXISTS idx_kw_canonical ON keywords (canonical_term)",
     "CREATE INDEX IF NOT EXISTS idx_kw_last_seen ON keywords (last_seen_at)",
+    # Precomputed trending scores (refreshed every 10 min by scheduler)
+    """
+    CREATE TABLE IF NOT EXISTS app_trending_scores (
+        app_id INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+        trend_score FLOAT NOT NULL DEFAULT 0.0,
+        momentum_score FLOAT DEFAULT 0.0,
+        momentum_3d FLOAT DEFAULT 0.0,
+        momentum_7d FLOAT DEFAULT 0.0,
+        consistency_score FLOAT DEFAULT 0.0,
+        absolute_rank_bonus FLOAT DEFAULT 0.0,
+        review_momentum FLOAT DEFAULT 0.0,
+        confidence_factor FLOAT DEFAULT 1.0,
+        computed_at TIMESTAMPTZ DEFAULT NOW()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_trending_score ON app_trending_scores (trend_score DESC)",
 ]
 
 
