@@ -199,7 +199,8 @@
       "Bash(python -m pytest tests/test_scoring_config.py -q 2>&1 | tail -20)",
       "Bash(python3 -m pytest tests/ -q 2>&1 | tail -10)",
       "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m pytest tests/test_trending_response_shape.py -v 2>&1 | tail -35)",
-      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m pytest tests/ -q 2>&1 | tail -5)"
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m pytest tests/ -q 2>&1 | tail -5)",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m pytest tests/test_opportunity_of_day.py -v 2>&1 | tail -40)"
     ]
   }
 }

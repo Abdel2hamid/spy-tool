@@ -11,7 +11,7 @@ import {
   getKeywords,
   DashboardStats,
   TrendingApp,
-  OpportunityOfDay,
+  OpportunityOfDayWrapper,
   Keyword,
 } from '@/lib/api';
 import { AppWindow, Search, TrendingUp, Target, BarChart3, RefreshCw, ArrowRight, Lightbulb } from 'lucide-react';
@@ -24,7 +24,7 @@ export default function DashboardClient() {
     opportunities_count: 0,
   });
   const [trendingApps, setTrendingApps] = useState<TrendingApp[]>([]);
-  const [opportunity, setOpportunity] = useState<OpportunityOfDay | null>(null);
+  const [opportunity, setOpportunity] = useState<OpportunityOfDayWrapper | null>(null);
   const [keywords, setKeywords] = useState<Keyword[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -172,7 +172,13 @@ export default function DashboardClient() {
                 View all <ArrowRight className="h-3.5 w-3.5" />
               </Link>
             </div>
-            <OpportunityOfDayCard opportunity={opportunity} />
+            {opportunity.status === 'success' && opportunity.item ? (
+              <OpportunityOfDayCard opportunity={opportunity.item} />
+            ) : (
+              <div className="rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 p-6 text-center text-sm text-gray-500 dark:text-gray-400">
+                {opportunity.message ?? 'Not enough signals yet. Keep tracking apps to generate an opportunity.'}
+              </div>
+            )}
           </section>
         )}
 

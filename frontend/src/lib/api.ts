@@ -71,6 +71,13 @@ export interface OpportunityOfDay {
   recommendation: string;
 }
 
+export interface OpportunityOfDayWrapper {
+  status: 'success' | 'insufficient_data' | 'empty';
+  item: OpportunityOfDay | null;
+  message: string | null;
+  required_signals: string[] | null;
+}
+
 export interface KeywordOpportunity {
   keyword: string;
   search_volume: number;
@@ -481,8 +488,20 @@ export async function getTrendingApps(limit: number = 10): Promise<TrendingApp[]
   return response?.items ?? [];
 }
 
-export async function getOpportunityOfDay(): Promise<OpportunityOfDay> {
-  return fetchApi<OpportunityOfDay>('/opportunity-of-day');
+export async function getOpportunityOfDay(): Promise<OpportunityOfDayWrapper> {
+  const response = await fetchApi<OpportunityOfDayWrapper | OpportunityOfDay>('/opportunity-of-day');
+  // Backend returns { status, item, message, required_signals }.
+  // Guard against a legacy bare-object response (no status field).
+  if (response && 'status' in response) {
+    return response as OpportunityOfDayWrapper;
+  }
+  // Bare object fallback: treat it as a successful item
+  return {
+    status: 'success',
+    item: response as OpportunityOfDay,
+    message: null,
+    required_signals: null,
+  };
 }
 
 export async function getKeywordOpportunities(
