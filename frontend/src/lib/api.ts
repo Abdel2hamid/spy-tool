@@ -470,7 +470,15 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 }
 
 export async function getTrendingApps(limit: number = 10): Promise<TrendingApp[]> {
-  return fetchApi<TrendingApp[]>(`/trending?limit=${limit}`);
+  const response = await fetchApi<{ status: string; items: TrendingApp[] } | TrendingApp[]>(
+    `/trending?limit=${limit}`
+  );
+  // The endpoint returns a wrapped { status, items } object. Guard against both
+  // the new shape and any legacy path that might return a plain array.
+  if (Array.isArray(response)) {
+    return response;
+  }
+  return response?.items ?? [];
 }
 
 export async function getOpportunityOfDay(): Promise<OpportunityOfDay> {

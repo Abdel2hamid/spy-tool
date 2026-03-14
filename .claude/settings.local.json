@@ -197,7 +197,9 @@
       "Bash(python3 -m pytest tests/test_keyword_quality.py tests/test_keyword_hard_gate.py tests/test_opportunity_service.py -v 2>&1 | tail -25)",
       "Bash(python3 -m pytest tests/test_keyword_quality.py tests/test_keyword_hard_gate.py tests/test_confidence_scoring.py -v 2>&1 | tail -25)",
       "Bash(python -m pytest tests/test_scoring_config.py -q 2>&1 | tail -20)",
-      "Bash(python3 -m pytest tests/ -q 2>&1 | tail -10)"
+      "Bash(python3 -m pytest tests/ -q 2>&1 | tail -10)",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m pytest tests/test_trending_response_shape.py -v 2>&1 | tail -35)",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m pytest tests/ -q 2>&1 | tail -5)"
     ]
   }
 }
