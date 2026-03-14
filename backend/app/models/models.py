@@ -75,6 +75,7 @@ class App(Base):
     market_weakness = relationship("AppMarketWeakness", back_populates="app", cascade="all, delete-orphan")
     feature_gaps = relationship("FeatureGap", back_populates="app", cascade="all, delete-orphan")
     trending_score = relationship("AppTrendingScore", back_populates="app", uselist=False, cascade="all, delete-orphan")
+    blowing_up_score = relationship("AppBlowingUpScore", back_populates="app", uselist=False, cascade="all, delete-orphan")
 
     __table_args__ = (
         # Composite index used by filtered list queries
@@ -571,6 +572,44 @@ class KeywordTrend(Base):
         Index("idx_ktrend_keyword_week", "keyword_id", "week_start", unique=True),
         Index("idx_ktrend_keyword", "keyword_id"),
         Index("idx_ktrend_week_start", "week_start"),
+    )
+
+
+class AppBlowingUpScore(Base):
+    """
+    Precomputed 'blowing up' momentum scores for apps showing unusually fast
+    acceleration across rankings and reviews.  Refreshed every 15 minutes by
+    the blowing_up_compute scheduler job — keeps the /apps/blowing-up endpoint
+    a cheap read-only table scan.
+    """
+    __tablename__ = "app_blowing_up_scores"
+
+    app_id              = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), primary_key=True)
+    blowing_up_score    = Column(Float, nullable=False, default=0.0)  # 0-100 composite
+    # Component scores (each 0-100)
+    rank_velocity_score    = Column(Float, default=0.0)
+    rank_change_score      = Column(Float, default=0.0)
+    reviews_velocity_score = Column(Float, default=0.0)
+    chart_presence_score   = Column(Float, default=0.0)
+    cross_market_score     = Column(Float, default=0.0)
+    consistency_score      = Column(Float, default=0.0)
+    confidence_score       = Column(Float, default=0.0)  # 0-100
+    # Raw signals
+    rank_change      = Column(Integer, default=0)   # positive = improved toward #1
+    rank_velocity    = Column(Float, default=0.0)   # avg rank_velocity in window
+    reviews_velocity = Column(Float, default=0.0)   # new reviews per day
+    chart_appearances = Column(Integer, default=0)  # ranking snapshots in window
+    markets_count    = Column(Integer, default=0)   # distinct chart_types + categories
+    # Human-readable output
+    badges      = Column(JSON)   # ["Rapid Climb", "Fast Reviews", ...]
+    why_flagged = Column(JSON)   # ["Rank improved from #80 to #12", ...]
+    computed_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    app = relationship("App", back_populates="blowing_up_score")
+
+    __table_args__ = (
+        Index("idx_blowing_up_score", "blowing_up_score"),
+        Index("idx_blowing_up_confidence", "confidence_score"),
     )
 
 

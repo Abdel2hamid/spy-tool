@@ -974,3 +974,56 @@ class AppAutopsyResponse(BaseModel):
     competitor_feature_gaps: List[CompetitorGapItem]
     strengths: List[str]
     narrative: Optional[str]
+
+
+# ---------------------------------------------------------------------------
+# Apps Blowing Up
+# ---------------------------------------------------------------------------
+
+class AppBlowingUpItem(BaseModel):
+    """One entry in the 'blowing up' list — includes app fields + score breakdown."""
+    # App identity
+    id: int                          # internal DB id
+    app_id: str                      # App Store numeric string ID
+    name: str
+    developer: Optional[str] = None
+    icon_url: Optional[str] = None
+    primary_category: Optional[str] = None
+    current_rank: Optional[int] = None
+    current_rating: Optional[float] = None
+    current_reviews: Optional[int] = None
+    # Score + components
+    blowing_up_score: float
+    rank_velocity_score: float
+    rank_change_score: float
+    reviews_velocity_score: float
+    chart_presence_score: float
+    cross_market_score: float
+    consistency_score: float
+    confidence_score: float
+    # Raw signals
+    rank_change: int
+    rank_velocity: float
+    reviews_velocity: float
+    chart_appearances: int
+    markets_count: int
+    # Human-readable labels
+    badges: List[str]
+    why_flagged: List[str]
+    computed_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class BlowingUpResponse(BaseModel):
+    """Status-wrapped response for GET /apps/blowing-up."""
+    status: str                          # "success" | "insufficient_data" | "empty"
+    message: Optional[str] = None
+    required_signals: Optional[List[str]] = None
+    items: List[AppBlowingUpItem]
+    total: int
+    # Summary stats (populated on success)
+    exploding_count: Optional[int] = None
+    top_score: Optional[float] = None
+    avg_rank_velocity: Optional[float] = None

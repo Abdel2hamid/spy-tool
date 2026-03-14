@@ -62,6 +62,8 @@ from app.models.schemas import (
     OpportunityOfDayWrapperResponse,
     KeywordOpportunitiesWrapperResponse,
     FreshRisersResponse,
+    AppBlowingUpItem,
+    BlowingUpResponse,
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
@@ -372,6 +374,103 @@ def get_latest_apps(
     apps = query.offset(offset).limit(limit).all()
 
     return AppListResponse(apps=apps, total=total, skip=offset, limit=limit)
+
+
+@router.get("/apps/blowing-up", response_model=BlowingUpResponse)
+def get_blowing_up_apps(
+    limit: int = Query(50, ge=1, le=200),
+    skip: int = Query(0, ge=0),
+    sort_by: str = Query("blowing_up_score", description="blowing_up_score|rank_velocity|rank_change|reviews_velocity|confidence"),
+    sort_order: str = Query("desc", description="asc|desc"),
+    min_confidence: float = Query(0.3, ge=0.0, le=1.0, description="Minimum confidence (0–1)"),
+    min_reviews_velocity: float = Query(0.0, ge=0.0, description="Minimum reviews/day"),
+    category: Optional[str] = Query(None, description="Filter by primary_category (partial match)"),
+    chart_type: Optional[str] = Query(None, description="topfree|toppaid|topgrossing"),
+    timeframe: str = Query("7d", description="24h|3d|7d — window used for score computation"),
+    db: Session = Depends(get_db),
+):
+    """
+    Return apps showing unusually fast momentum across rankings and reviews.
+    Results are read from the precomputed app_blowing_up_scores table
+    (refreshed every 15 min) for sub-millisecond response times.
+    """
+    from app.services.blowing_up_service import BlowingUpService
+
+    svc = BlowingUpService(db)
+
+    # Check if the table has any data at all
+    from app.models.models import AppBlowingUpScore
+    total_computed = db.query(func.count(AppBlowingUpScore.app_id)).scalar() or 0
+
+    if total_computed == 0:
+        return BlowingUpResponse(
+            status="insufficient_data",
+            message="No blowing-up scores computed yet. The scoring job runs every 15 minutes.",
+            required_signals=["ranking_history", "rank_velocity"],
+            items=[],
+            total=0,
+        )
+
+    rows, total = svc.get_blowing_up_apps(
+        limit=limit,
+        skip=skip,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        min_confidence=min_confidence,
+        min_reviews_velocity=min_reviews_velocity,
+        category=category,
+        chart_type=chart_type,
+    )
+
+    if total == 0:
+        return BlowingUpResponse(
+            status="empty",
+            message="No apps match the current filters. Try relaxing confidence or velocity thresholds.",
+            items=[],
+            total=0,
+        )
+
+    items: list[AppBlowingUpItem] = []
+    for score, app in rows:
+        items.append(AppBlowingUpItem(
+            id=app.id,
+            app_id=app.app_id,
+            name=app.name,
+            developer=app.developer,
+            icon_url=app.icon_url,
+            primary_category=app.primary_category,
+            current_rank=app.current_rank,
+            current_rating=app.current_rating,
+            current_reviews=app.current_reviews,
+            blowing_up_score=score.blowing_up_score,
+            rank_velocity_score=score.rank_velocity_score,
+            rank_change_score=score.rank_change_score,
+            reviews_velocity_score=score.reviews_velocity_score,
+            chart_presence_score=score.chart_presence_score,
+            cross_market_score=score.cross_market_score,
+            consistency_score=score.consistency_score,
+            confidence_score=score.confidence_score,
+            rank_change=score.rank_change,
+            rank_velocity=score.rank_velocity,
+            reviews_velocity=score.reviews_velocity,
+            chart_appearances=score.chart_appearances,
+            markets_count=score.markets_count,
+            badges=score.badges or [],
+            why_flagged=score.why_flagged or [],
+            computed_at=score.computed_at,
+        ))
+
+    scores = [item.blowing_up_score for item in items]
+    velocities = [item.rank_velocity for item in items if item.rank_velocity > 0]
+
+    return BlowingUpResponse(
+        status="success",
+        items=items,
+        total=total,
+        exploding_count=total,
+        top_score=round(max(scores), 1) if scores else None,
+        avg_rank_velocity=round(sum(velocities) / len(velocities), 1) if velocities else None,
+    )
 
 
 @router.get("/apps/{app_id}", response_model=AppResponse)

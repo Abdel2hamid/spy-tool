@@ -1170,3 +1170,81 @@ export async function getAppAutopsy(appId: number, useLlm = true): Promise<AppAu
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
+
+// ---------------------------------------------------------------------------
+// Apps Blowing Up
+// ---------------------------------------------------------------------------
+
+export interface BlowingUpApp {
+  id: number;
+  app_id: string;
+  name: string;
+  developer: string | null;
+  icon_url: string | null;
+  primary_category: string | null;
+  current_rank: number | null;
+  current_rating: number | null;
+  current_reviews: number | null;
+  // Composite score
+  blowing_up_score: number;
+  // Component scores (0-100)
+  rank_velocity_score: number;
+  rank_change_score: number;
+  reviews_velocity_score: number;
+  chart_presence_score: number;
+  cross_market_score: number;
+  consistency_score: number;
+  confidence_score: number;
+  // Raw signals
+  rank_change: number;
+  rank_velocity: number;
+  reviews_velocity: number;
+  chart_appearances: number;
+  markets_count: number;
+  // Labels
+  badges: string[];
+  why_flagged: string[];
+  computed_at: string | null;
+}
+
+export interface BlowingUpResponse {
+  status: 'success' | 'insufficient_data' | 'empty';
+  message: string | null;
+  required_signals: string[] | null;
+  items: BlowingUpApp[];
+  total: number;
+  exploding_count: number | null;
+  top_score: number | null;
+  avg_rank_velocity: number | null;
+}
+
+export interface BlowingUpFilters {
+  limit?: number;
+  skip?: number;
+  sort_by?: string;
+  sort_order?: 'asc' | 'desc';
+  min_confidence?: number;
+  min_reviews_velocity?: number;
+  category?: string;
+  chart_type?: string;
+  timeframe?: '24h' | '3d' | '7d';
+}
+
+export async function getBlowingUpApps(filters: BlowingUpFilters = {}): Promise<BlowingUpResponse> {
+  const params = new URLSearchParams();
+  if (filters.limit     !== undefined) params.set('limit',     String(filters.limit));
+  if (filters.skip      !== undefined) params.set('skip',      String(filters.skip));
+  if (filters.sort_by)                 params.set('sort_by',   filters.sort_by);
+  if (filters.sort_order)              params.set('sort_order', filters.sort_order);
+  if (filters.min_confidence !== undefined) params.set('min_confidence', String(filters.min_confidence));
+  if (filters.min_reviews_velocity !== undefined) params.set('min_reviews_velocity', String(filters.min_reviews_velocity));
+  if (filters.category)                params.set('category',  filters.category);
+  if (filters.chart_type)              params.set('chart_type', filters.chart_type);
+  if (filters.timeframe)               params.set('timeframe', filters.timeframe);
+
+  const qs = params.toString();
+  const url = `${API_BASE}/apps/blowing-up${qs ? `?${qs}` : ''}`;
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}

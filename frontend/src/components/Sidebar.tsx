@@ -14,6 +14,7 @@ import {
   Radar,
   Zap,
   Compass,
+  Flame,
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -27,6 +28,7 @@ const navSections = [
       { href: '/apps', label: 'Apps', icon: AppWindow },
       { href: '/latest-apps', label: 'Latest Apps', icon: Zap },
       { href: '/trending', label: 'Trending', icon: TrendingUp },
+      { href: '/blowing-up', label: 'Blowing Up', icon: Flame },
     ],
   },
   {

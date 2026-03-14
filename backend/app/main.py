@@ -168,6 +168,30 @@ _MIGRATIONS = [
     # Reviews intelligence pipeline — sentiment column on reviews
     "ALTER TABLE reviews ADD COLUMN IF NOT EXISTS sentiment VARCHAR(20)",
     "CREATE INDEX IF NOT EXISTS idx_review_sentiment ON reviews (app_id, sentiment)",
+    # Apps Blowing Up — precomputed momentum score table
+    """
+    CREATE TABLE IF NOT EXISTS app_blowing_up_scores (
+        app_id               INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+        blowing_up_score     FLOAT NOT NULL DEFAULT 0.0,
+        rank_velocity_score  FLOAT DEFAULT 0.0,
+        rank_change_score    FLOAT DEFAULT 0.0,
+        reviews_velocity_score FLOAT DEFAULT 0.0,
+        chart_presence_score FLOAT DEFAULT 0.0,
+        cross_market_score   FLOAT DEFAULT 0.0,
+        consistency_score    FLOAT DEFAULT 0.0,
+        confidence_score     FLOAT DEFAULT 0.0,
+        rank_change          INTEGER DEFAULT 0,
+        rank_velocity        FLOAT DEFAULT 0.0,
+        reviews_velocity     FLOAT DEFAULT 0.0,
+        chart_appearances    INTEGER DEFAULT 0,
+        markets_count        INTEGER DEFAULT 0,
+        badges               JSONB,
+        why_flagged          JSONB,
+        computed_at          TIMESTAMPTZ DEFAULT NOW()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_blowing_up_score ON app_blowing_up_scores (blowing_up_score DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_blowing_up_confidence ON app_blowing_up_scores (confidence_score)",
 ]
 
 

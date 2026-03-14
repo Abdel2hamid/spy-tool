@@ -5,6 +5,7 @@ Job schedule:
 
   Job ID                   Interval  First run   Purpose
   ───────────────────────  ────────  ──────────  ─────────────────────────────────────────
+  blowing_up_compute         15 min   3 min       Precompute blowing-up scores → app_blowing_up_scores
   trending_compute           10 min   2 min       Precompute trending scores → app_trending_scores
   discovery_keywords         6 h      2 min       100+ keyword search → queue
   discovery_charts           2 h      5 min       Charts × all genres × 20 countries → queue
@@ -122,6 +123,29 @@ async def job_hourly_scoring():
 # ---------------------------------------------------------------------------
 # Job: every 10 min — precompute trending scores
 # ---------------------------------------------------------------------------
+
+async def job_blowing_up_compute():
+    """
+    Precompute and persist 'blowing up' momentum scores for all apps that
+    have at least 2 ranking snapshots in the last 7 days.
+    Keeps the /apps/blowing-up endpoint fast (read-only table scan).
+    """
+    job_id = "blowing_up_compute"
+    t0 = _log_start(job_id)
+    from app.database import SessionLocal
+    from app.services.blowing_up_service import BlowingUpService
+
+    db = SessionLocal()
+    try:
+        count = await asyncio.to_thread(
+            lambda: BlowingUpService(db).compute_for_all_apps(timeframe_days=7)
+        )
+        _log_done(job_id, t0, f"{count} apps scored")
+    except Exception as exc:
+        _log_fail(job_id, exc)
+    finally:
+        db.close()
+
 
 async def job_trending_compute():
     """
@@ -923,6 +947,20 @@ def setup_scheduler() -> AsyncIOScheduler:
         ),
         id="keyword_discovery_phase1_daily",
         name="Every 24h: Phase-1 Alphabet+Competitor+Gap Discovery",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── every 15 min: precompute blowing-up scores ────────────────────────────
+    # First run: 3 min after startup (staggered from trending_compute).
+    scheduler.add_job(
+        job_blowing_up_compute,
+        trigger=IntervalTrigger(
+            minutes=15,
+            start_date=now + timedelta(minutes=3),
+            timezone="UTC",
+        ),
+        id="blowing_up_compute",
+        name="Every 15min: Precompute Blowing-Up Scores",
         **_JOB_DEFAULTS,
     )
 
