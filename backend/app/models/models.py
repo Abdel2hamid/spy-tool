@@ -76,6 +76,10 @@ class App(Base):
     feature_gaps = relationship("FeatureGap", back_populates="app", cascade="all, delete-orphan")
     trending_score = relationship("AppTrendingScore", back_populates="app", uselist=False, cascade="all, delete-orphan")
     blowing_up_score = relationship("AppBlowingUpScore", back_populates="app", uselist=False, cascade="all, delete-orphan")
+    metric_snapshots = relationship("AppMetricSnapshot", back_populates="app", cascade="all, delete-orphan")
+    ad_creatives = relationship("AdCreative", back_populates="app", cascade="all, delete-orphan")
+    ad_campaigns = relationship("AdCampaign", back_populates="app", cascade="all, delete-orphan")
+    growth_events = relationship("GrowthEvent", back_populates="app", cascade="all, delete-orphan")
 
     __table_args__ = (
         # Composite index used by filtered list queries
@@ -610,6 +614,145 @@ class AppBlowingUpScore(Base):
     __table_args__ = (
         Index("idx_blowing_up_score", "blowing_up_score"),
         Index("idx_blowing_up_confidence", "confidence_score"),
+    )
+
+
+class AppMetricSnapshot(Base):
+    """
+    Time-series snapshot of computed app metrics (downloads + revenue estimates).
+    Written by MetricSnapshotService on every scoring cycle.
+
+    This is the shared backbone used by:
+    - app detail metrics tab
+    - campaign tracking (downloads delta)
+    - dashboard widgets
+    - trend/opportunity pages
+    """
+    __tablename__ = "app_metric_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    app_id = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
+    snapshot_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    # Downloads estimate
+    estimated_downloads_min = Column(Integer, default=0)
+    estimated_downloads_max = Column(Integer, default=0)
+    install_confidence      = Column(Float, default=0.0)
+
+    # Revenue estimate
+    estimated_revenue_monthly_min = Column(Float, default=0.0)
+    estimated_revenue_monthly_max = Column(Float, default=0.0)
+    revenue_confidence            = Column(Float, default=0.0)
+    monetization_model            = Column(String(50))   # paid_$x / free+iap / free_ads_only
+
+    # Campaign / ad signals (populated when ad intelligence runs)
+    has_ads_signal       = Column(Boolean, default=False)
+    campaign_confidence  = Column(Float, default=0.0)   # 0-1
+
+    # All signals used to build this snapshot (for audit / debug)
+    source_signals = Column(JSON)
+
+    app = relationship("App", back_populates="metric_snapshots")
+
+    __table_args__ = (
+        Index("idx_ams_app_id",     "app_id"),
+        Index("idx_ams_snapshot_at","snapshot_at"),
+        Index("idx_ams_app_time",   "app_id", "snapshot_at"),
+    )
+
+
+class AdCreative(Base):
+    """
+    Individual ad creatives fetched from ad networks (Apple Search Ads signals,
+    Meta Ads Library, etc.).  Deduplicated by (app_id, network, external_creative_id).
+    """
+    __tablename__ = "ad_creatives"
+
+    id                  = Column(Integer, primary_key=True, index=True)
+    app_id              = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
+    network             = Column(String(50), nullable=False)   # apple_search_ads / meta / google_uac
+    external_creative_id= Column(String(255))
+    format              = Column(String(50))   # banner / video / interstitial / native
+    creative_url        = Column(Text)
+    preview_url         = Column(Text)
+    title               = Column(Text)
+    body                = Column(Text)
+    cta                 = Column(String(100))
+    landing_url         = Column(Text)
+    first_seen_at       = Column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at        = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    is_active           = Column(Boolean, default=True)
+    raw_payload         = Column(JSON)
+
+    app = relationship("App", back_populates="ad_creatives")
+
+    __table_args__ = (
+        Index("idx_creative_app",    "app_id"),
+        Index("idx_creative_active", "app_id", "is_active"),
+        Index("idx_creative_network","network"),
+        Index("idx_creative_dedup",  "app_id", "network", "external_creative_id", unique=True),
+    )
+
+
+class AdCampaign(Base):
+    """
+    Aggregated campaign-level view of ad activity for an app.
+    One row per (app_id, network, campaign_key); updated on every ad intelligence run.
+    """
+    __tablename__ = "ad_campaigns"
+
+    id                     = Column(Integer, primary_key=True, index=True)
+    app_id                 = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
+    network                = Column(String(50), nullable=False)
+    campaign_key           = Column(String(255), nullable=False)   # stable identifier per network
+    first_seen_at          = Column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at           = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    active_creatives_count = Column(Integer, default=0)
+    countries              = Column(JSON)   # list of country codes where ads were detected
+    status                 = Column(String(20), default="unknown")  # active / inactive / paused
+    campaign_confidence    = Column(Float, default=0.0)   # 0-1
+
+    app = relationship("App", back_populates="ad_campaigns")
+
+    __table_args__ = (
+        Index("idx_campaign_app",    "app_id"),
+        Index("idx_campaign_status", "status"),
+        Index("idx_campaign_dedup",  "app_id", "network", "campaign_key", unique=True),
+    )
+
+
+class GrowthEvent(Base):
+    """
+    Growth signal / campaign event detected by CampaignTrackingService.
+    Pure derived intelligence — no scraping, only consumes existing data.
+
+    event_type values:
+      paid_push         — strong ad + rank + reviews evidence
+      organic_breakout  — rank/reviews surge with no ad evidence
+      mixed             — both ad activity AND organic signals present
+      momentum_surge    — unusual rank velocity without clear cause
+      campaign_cooling  — ad activity declining after a paid_push period
+      unknown_unusual   — something is happening but cause unclear
+    """
+    __tablename__ = "growth_events"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    app_id           = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
+    detected_at      = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    event_type       = Column(String(50), nullable=False)
+    confidence       = Column(Float, default=0.0)   # 0-1
+    explanation      = Column(Text)
+    signals          = Column(JSON)   # raw signal dict used in classification
+    started_at_estimate = Column(DateTime(timezone=True))
+    active_status    = Column(Boolean, default=True)
+
+    app = relationship("App", back_populates="growth_events")
+
+    __table_args__ = (
+        Index("idx_growth_app",       "app_id"),
+        Index("idx_growth_type",      "event_type"),
+        Index("idx_growth_detected",  "detected_at"),
+        Index("idx_growth_active",    "app_id", "active_status"),
     )
 
 

@@ -15,6 +15,8 @@ import {
   Zap,
   Compass,
   Flame,
+  Megaphone,
+  TrendingUp as CampaignIcon,
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -28,7 +30,14 @@ const navSections = [
       { href: '/apps', label: 'Apps', icon: AppWindow },
       { href: '/latest-apps', label: 'Latest Apps', icon: Zap },
       { href: '/trending', label: 'Trending', icon: TrendingUp },
+    ],
+  },
+  {
+    label: 'GROWTH INTELLIGENCE',
+    items: [
       { href: '/blowing-up', label: 'Blowing Up', icon: Flame },
+      { href: '/campaigns', label: 'Campaigns', icon: CampaignIcon },
+      { href: '/ads', label: 'Ad Intelligence', icon: Megaphone },
     ],
   },
   {

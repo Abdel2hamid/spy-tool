@@ -760,6 +760,60 @@ async def job_keyword_quality_pruning():
 
 
 # ---------------------------------------------------------------------------
+# Growth Intelligence Jobs
+# ---------------------------------------------------------------------------
+
+async def job_ad_intelligence():
+    """
+    Phase 3 of Growth Intelligence pipeline.
+    Selects candidate apps showing momentum signals and runs ad detection
+    (Apple Search Ads heuristic + Meta Ads Library if token available).
+    Only processes apps already flagged by blowing_up_compute or trending_compute.
+    """
+    job_id = "ad_intelligence"
+    t0 = _log_start(job_id)
+    from app.database import SessionLocal
+    from app.services.ad_intelligence_service import AdIntelligenceService
+    import os
+
+    db = SessionLocal()
+    try:
+        meta_token = os.environ.get("FACEBOOK_ACCESS_TOKEN")
+        result = await asyncio.to_thread(
+            lambda: AdIntelligenceService(db, meta_access_token=meta_token).run_for_candidates()
+        )
+        _log_done(job_id, t0, f"{result['candidates']} candidates, {result['creatives_upserted']} creatives")
+    except Exception as exc:
+        _log_fail(job_id, exc)
+    finally:
+        db.close()
+
+
+async def job_campaign_detection():
+    """
+    Phase 4 of Growth Intelligence pipeline.
+    Pure signal engine: classifies growth patterns from existing data.
+    Consumes rankings, reviews, metric snapshots, and ad campaign data.
+    No scraping — only reads existing tables.
+    """
+    job_id = "campaign_detection"
+    t0 = _log_start(job_id)
+    from app.database import SessionLocal
+    from app.services.campaign_tracking_service import CampaignTrackingService
+
+    db = SessionLocal()
+    try:
+        result = await asyncio.to_thread(
+            lambda: CampaignTrackingService(db).run_for_all()
+        )
+        _log_done(job_id, t0, f"{result['events_created']} events created")
+    except Exception as exc:
+        _log_fail(job_id, exc)
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
 # Scheduler setup
 # ---------------------------------------------------------------------------
 
@@ -1059,6 +1113,35 @@ def setup_scheduler() -> AsyncIOScheduler:
         ),
         id="analytics_update",
         name="Every 2h: Review Growth & Rating-Change Roll-up",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── GROWTH INTELLIGENCE PIPELINE ──────────────────────────────────────────
+    # Phase 3: Ad Intelligence — runs AFTER metric snapshots are fresh.
+    # First run: 70 min (after hourly_scoring at 65 min).
+    scheduler.add_job(
+        job_ad_intelligence,
+        trigger=IntervalTrigger(
+            hours=6,
+            start_date=now + timedelta(minutes=70),
+            timezone="UTC",
+        ),
+        id="ad_intelligence",
+        name="Every 6h: Ad Intelligence (candidate-based ad detection)",
+        **_JOB_DEFAULTS,
+    )
+
+    # Phase 4: Campaign detection — runs AFTER ad intelligence updates.
+    # First run: 80 min (after ad_intelligence).
+    scheduler.add_job(
+        job_campaign_detection,
+        trigger=IntervalTrigger(
+            hours=2,
+            start_date=now + timedelta(minutes=80),
+            timezone="UTC",
+        ),
+        id="campaign_detection",
+        name="Every 2h: Campaign / Growth Signal Detection",
         **_JOB_DEFAULTS,
     )
 

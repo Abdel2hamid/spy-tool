@@ -1248,3 +1248,196 @@ export async function getBlowingUpApps(filters: BlowingUpFilters = {}): Promise<
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
+
+// ===========================================================================
+// Growth Intelligence Types
+// ===========================================================================
+
+export interface MetricSnapshot {
+  id: number;
+  app_id: number;
+  snapshot_at: string;
+  estimated_downloads_min: number | null;
+  estimated_downloads_max: number | null;
+  install_confidence: number | null;
+  estimated_revenue_monthly_min: number | null;
+  estimated_revenue_monthly_max: number | null;
+  revenue_confidence: number | null;
+  monetization_model: string | null;
+  has_ads_signal: boolean;
+  campaign_confidence: number;
+}
+
+export interface MetricSnapshotHistory {
+  app_id: number;
+  snapshots: MetricSnapshot[];
+  latest: MetricSnapshot | null;
+  downloads_delta_7d: { delta_min: number; delta_max: number; change_pct: number } | null;
+}
+
+export interface AdCreative {
+  id: number;
+  app_id: number;
+  network: string;
+  external_creative_id: string | null;
+  format: string | null;
+  creative_url: string | null;
+  preview_url: string | null;
+  title: string | null;
+  body: string | null;
+  cta: string | null;
+  landing_url: string | null;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  is_active: boolean;
+}
+
+export interface AdCampaign {
+  id: number;
+  app_id: number;
+  network: string;
+  campaign_key: string;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  active_creatives_count: number;
+  countries: string[] | null;
+  status: string;
+  campaign_confidence: number;
+}
+
+export interface AppAdIntelligence {
+  app_id: number;
+  campaigns: AdCampaign[];
+  creatives: AdCreative[];
+  total_campaigns: number;
+  active_campaigns: number;
+  total_creatives: number;
+  active_creatives: number;
+  has_active_campaign: boolean;
+  networks: string[];
+}
+
+export interface AdIntelligenceListItem {
+  app_id: string;
+  app_db_id: number;
+  name: string;
+  icon_url: string | null;
+  primary_category: string | null;
+  current_rank: number | null;
+  networks: string[];
+  active_campaigns: number;
+  active_creatives: number;
+  max_confidence: number;
+  first_ad_seen: string | null;
+  last_ad_seen: string | null;
+}
+
+export interface AdIntelligenceListResponse {
+  status: string;
+  items: AdIntelligenceListItem[];
+  total: number;
+  active_count: number;
+}
+
+export interface GrowthEvent {
+  id: number;
+  app_id: number;
+  detected_at: string;
+  event_type: string;
+  confidence: number;
+  explanation: string | null;
+  signals: Record<string, unknown> | null;
+  started_at_estimate: string | null;
+  active_status: boolean;
+}
+
+export interface AppGrowthEvents {
+  app_id: number;
+  events: GrowthEvent[];
+  latest_event: GrowthEvent | null;
+  total: number;
+}
+
+export interface CampaignTrackingListItem {
+  app_id: string;
+  app_db_id: number;
+  name: string;
+  icon_url: string | null;
+  primary_category: string | null;
+  current_rank: number | null;
+  event_type: string;
+  confidence: number;
+  explanation: string | null;
+  detected_at: string;
+  started_at_estimate: string | null;
+  blowing_up_score: number | null;
+}
+
+export interface CampaignTrackingListResponse {
+  status: string;
+  items: CampaignTrackingListItem[];
+  total: number;
+  by_type: Record<string, number> | null;
+}
+
+// ===========================================================================
+// Growth Intelligence API functions
+// ===========================================================================
+
+export async function getAppMetrics(appId: number, days = 30): Promise<MetricSnapshotHistory> {
+  const res = await fetch(`${API_BASE}/apps/${appId}/metrics?days=${days}`);
+  if (!res.ok) throw new Error(`Failed to fetch metrics: ${res.status}`);
+  return res.json();
+}
+
+export async function getAppAdIntelligence(appId: number): Promise<AppAdIntelligence> {
+  const res = await fetch(`${API_BASE}/apps/${appId}/ads`);
+  if (!res.ok) throw new Error(`Failed to fetch ad intelligence: ${res.status}`);
+  return res.json();
+}
+
+export async function scanAppAds(appId: number): Promise<{ status: string; creatives_upserted: number; campaigns_upserted: number }> {
+  const res = await fetch(`${API_BASE}/apps/${appId}/ads/scan`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Ad scan failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getAdIntelligenceList(params: {
+  network?: string;
+  active_only?: boolean;
+  skip?: number;
+  limit?: number;
+}): Promise<AdIntelligenceListResponse> {
+  const p = new URLSearchParams();
+  if (params.network) p.set('network', params.network);
+  if (params.active_only !== undefined) p.set('active_only', String(params.active_only));
+  if (params.skip !== undefined) p.set('skip', String(params.skip));
+  if (params.limit !== undefined) p.set('limit', String(params.limit));
+  const res = await fetch(`${API_BASE}/ads?${p}`);
+  if (!res.ok) throw new Error(`Failed to fetch ad intelligence list: ${res.status}`);
+  return res.json();
+}
+
+export async function getAppGrowthEvents(appId: number, activeOnly = false): Promise<AppGrowthEvents> {
+  const res = await fetch(`${API_BASE}/apps/${appId}/growth-events?active_only=${activeOnly}`);
+  if (!res.ok) throw new Error(`Failed to fetch growth events: ${res.status}`);
+  return res.json();
+}
+
+export async function getCampaignTrackingList(params: {
+  event_type?: string;
+  active_only?: boolean;
+  min_confidence?: number;
+  skip?: number;
+  limit?: number;
+}): Promise<CampaignTrackingListResponse> {
+  const p = new URLSearchParams();
+  if (params.event_type) p.set('event_type', params.event_type);
+  if (params.active_only !== undefined) p.set('active_only', String(params.active_only));
+  if (params.min_confidence !== undefined) p.set('min_confidence', String(params.min_confidence));
+  if (params.skip !== undefined) p.set('skip', String(params.skip));
+  if (params.limit !== undefined) p.set('limit', String(params.limit));
+  const res = await fetch(`${API_BASE}/campaigns?${p}`);
+  if (!res.ok) throw new Error(`Failed to fetch campaigns: ${res.status}`);
+  return res.json();
+}

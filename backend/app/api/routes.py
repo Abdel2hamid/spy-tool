@@ -64,6 +64,17 @@ from app.models.schemas import (
     FreshRisersResponse,
     AppBlowingUpItem,
     BlowingUpResponse,
+    MetricSnapshotResponse,
+    MetricSnapshotHistoryResponse,
+    AdCreativeResponse,
+    AdCampaignResponse,
+    AppAdIntelligenceResponse,
+    AdIntelligenceListItem,
+    AdIntelligenceListResponse,
+    GrowthEventResponse,
+    AppGrowthEventsResponse,
+    CampaignTrackingListItem,
+    CampaignTrackingListResponse,
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
@@ -2782,3 +2793,296 @@ def _run_phase1_bg(app_id: int) -> None:
 async def _run_phase1_async(app_id: int) -> None:
     """asyncio.create_task-compatible wrapper — runs Phase-1 in thread pool."""
     await asyncio.to_thread(_run_phase1_bg, app_id)
+
+
+# ===========================================================================
+# Growth Intelligence: Metric Snapshots
+# ===========================================================================
+
+@router.get("/apps/{app_id}/metrics", response_model=MetricSnapshotHistoryResponse)
+def get_app_metrics(
+    app_id: int,
+    days: int = Query(default=30, ge=1, le=90),
+    db: Session = Depends(get_db),
+):
+    """
+    Latest metric snapshot + time-series history for an app.
+    Snapshot contains unified download + revenue estimates.
+    """
+    from app.services.metric_snapshot_service import MetricSnapshotService
+
+    app = db.query(models.App).filter(models.App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    svc = MetricSnapshotService(db)
+    latest = svc.latest_snapshot(app_id)
+    history = svc.snapshot_history(app_id, days=days)
+    delta = svc.downloads_delta(app_id, days=7)
+
+    return MetricSnapshotHistoryResponse(
+        app_id=app_id,
+        snapshots=history,
+        latest=latest,
+        downloads_delta_7d=delta,
+    )
+
+
+@router.post("/apps/{app_id}/metrics/compute")
+def compute_app_metrics(app_id: int, db: Session = Depends(get_db)):
+    """On-demand metric snapshot computation for a single app."""
+    from app.services.metric_snapshot_service import MetricSnapshotService
+
+    app = db.query(models.App).filter(models.App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    svc = MetricSnapshotService(db)
+    snap = svc.compute_for_app(app)
+    db.commit()
+    return {"status": "computed", "snapshot_at": snap.snapshot_at.isoformat()}
+
+
+# ===========================================================================
+# Growth Intelligence: Ad Intelligence
+# ===========================================================================
+
+@router.get("/apps/{app_id}/ads", response_model=AppAdIntelligenceResponse)
+def get_app_ad_intelligence(
+    app_id: int,
+    db: Session = Depends(get_db),
+):
+    """Full ad intelligence for a single app: campaigns + creatives."""
+    from app.services.ad_intelligence_service import AdIntelligenceService
+
+    app = db.query(models.App).filter(models.App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    svc = AdIntelligenceService(db)
+    campaigns = svc.get_campaigns(app_id)
+    creatives = svc.get_creatives(app_id)
+    active_camps = [c for c in campaigns if c.status == "active"]
+    active_crs = [c for c in creatives if c.is_active]
+    networks = list({c.network for c in campaigns})
+
+    return AppAdIntelligenceResponse(
+        app_id=app_id,
+        campaigns=campaigns,
+        creatives=creatives,
+        total_campaigns=len(campaigns),
+        active_campaigns=len(active_camps),
+        total_creatives=len(creatives),
+        active_creatives=len(active_crs),
+        has_active_campaign=len(active_camps) > 0,
+        networks=networks,
+    )
+
+
+@router.post("/apps/{app_id}/ads/scan")
+async def scan_app_ads(app_id: int, db: Session = Depends(get_db)):
+    """Trigger on-demand ad intelligence scan for a single app."""
+    import os
+    from app.services.ad_intelligence_service import AdIntelligenceService
+
+    app = db.query(models.App).filter(models.App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    meta_token = os.environ.get("FACEBOOK_ACCESS_TOKEN")
+    svc = AdIntelligenceService(db, meta_access_token=meta_token)
+    result = await asyncio.to_thread(lambda: svc.run_for_app(app_id))
+    return {"status": "scanned", **result}
+
+
+@router.get("/ads", response_model=AdIntelligenceListResponse)
+def get_ad_intelligence_list(
+    network: Optional[str] = Query(default=None),
+    active_only: bool = Query(default=True),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """
+    Global listing of apps with detected ad activity.
+    Filterable by network and active status.
+    """
+    q = (
+        db.query(models.AdCampaign, models.App)
+        .join(models.App, models.App.id == models.AdCampaign.app_id)
+    )
+    if active_only:
+        q = q.filter(models.AdCampaign.status == "active")
+    if network:
+        q = q.filter(models.AdCampaign.network == network)
+
+    total = q.distinct(models.AdCampaign.app_id).count()
+
+    # Group by app: one summary row per app
+    from sqlalchemy import func as sqlfunc
+    rows = (
+        db.query(
+            models.App,
+            sqlfunc.count(models.AdCampaign.id).label("campaign_count"),
+            sqlfunc.max(models.AdCampaign.campaign_confidence).label("max_confidence"),
+            sqlfunc.min(models.AdCampaign.first_seen_at).label("first_ad_seen"),
+            sqlfunc.max(models.AdCampaign.last_seen_at).label("last_ad_seen"),
+        )
+        .join(models.AdCampaign, models.AdCampaign.app_id == models.App.id)
+        .filter(models.AdCampaign.status == "active" if active_only else True)
+        .group_by(models.App.id)
+        .order_by(sqlfunc.max(models.AdCampaign.campaign_confidence).desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+    items = []
+    for app, camp_count, max_conf, first_seen, last_seen in rows:
+        networks_for_app = [
+            r[0] for r in db.query(models.AdCampaign.network)
+            .filter(models.AdCampaign.app_id == app.id)
+            .distinct()
+            .all()
+        ]
+        active_cr_count = db.query(models.AdCreative).filter(
+            models.AdCreative.app_id == app.id,
+            models.AdCreative.is_active == True,
+        ).count()
+
+        items.append(AdIntelligenceListItem(
+            app_id=app.app_id,
+            app_db_id=app.id,
+            name=app.name,
+            icon_url=app.icon_url,
+            primary_category=app.primary_category,
+            current_rank=app.current_rank,
+            networks=networks_for_app,
+            active_campaigns=camp_count,
+            active_creatives=active_cr_count,
+            max_confidence=round(max_conf or 0, 2),
+            first_ad_seen=first_seen,
+            last_ad_seen=last_seen,
+        ))
+
+    active_count = db.query(models.AdCampaign).filter(
+        models.AdCampaign.status == "active"
+    ).distinct(models.AdCampaign.app_id).count()
+
+    return AdIntelligenceListResponse(
+        status="success" if items else "empty",
+        items=items,
+        total=total,
+        active_count=active_count,
+    )
+
+
+# ===========================================================================
+# Growth Intelligence: Campaign Tracking
+# ===========================================================================
+
+@router.get("/apps/{app_id}/growth-events", response_model=AppGrowthEventsResponse)
+def get_app_growth_events(
+    app_id: int,
+    active_only: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    """Growth signals / campaign events detected for a single app."""
+    from app.services.campaign_tracking_service import CampaignTrackingService
+
+    app = db.query(models.App).filter(models.App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    svc = CampaignTrackingService(db)
+    events = svc.get_events(app_db_id=app_id, active_only=active_only, limit=100)
+    latest = events[0] if events else None
+
+    return AppGrowthEventsResponse(
+        app_id=app_id,
+        events=events,
+        latest_event=latest,
+        total=len(events),
+    )
+
+
+@router.post("/apps/{app_id}/growth-events/detect")
+async def detect_app_growth(app_id: int, db: Session = Depends(get_db)):
+    """On-demand campaign/growth signal detection for a single app."""
+    from app.services.campaign_tracking_service import CampaignTrackingService
+
+    app = db.query(models.App).filter(models.App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    svc = CampaignTrackingService(db)
+    events = await asyncio.to_thread(lambda: svc.run_for_app(app_id))
+    db.commit()
+    return {"status": "detected", "events_created": len(events)}
+
+
+@router.get("/campaigns", response_model=CampaignTrackingListResponse)
+def get_campaigns(
+    event_type: Optional[str] = Query(default=None),
+    active_only: bool = Query(default=True),
+    min_confidence: float = Query(default=0.3, ge=0, le=1),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """
+    Global campaign / growth signal listing.
+    Returns active growth events with app details and blowing-up score.
+    """
+    q = (
+        db.query(models.GrowthEvent, models.App)
+        .join(models.App, models.App.id == models.GrowthEvent.app_id)
+    )
+    if active_only:
+        q = q.filter(models.GrowthEvent.active_status == True)
+    if event_type:
+        q = q.filter(models.GrowthEvent.event_type == event_type)
+    q = q.filter(models.GrowthEvent.confidence >= min_confidence)
+
+    total = q.count()
+    rows = q.order_by(
+        models.GrowthEvent.confidence.desc(),
+        models.GrowthEvent.detected_at.desc(),
+    ).offset(skip).limit(limit).all()
+
+    # Count by type for summary
+    from sqlalchemy import func as sqlfunc
+    type_counts_rows = (
+        db.query(models.GrowthEvent.event_type, sqlfunc.count(models.GrowthEvent.id))
+        .filter(models.GrowthEvent.active_status == True)
+        .group_by(models.GrowthEvent.event_type)
+        .all()
+    )
+    by_type = {t: c for t, c in type_counts_rows}
+
+    items = []
+    for event, app in rows:
+        bu = db.query(models.AppBlowingUpScore).filter(
+            models.AppBlowingUpScore.app_id == app.id
+        ).first()
+        items.append(CampaignTrackingListItem(
+            app_id=app.app_id,
+            app_db_id=app.id,
+            name=app.name,
+            icon_url=app.icon_url,
+            primary_category=app.primary_category,
+            current_rank=app.current_rank,
+            event_type=event.event_type,
+            confidence=event.confidence,
+            explanation=event.explanation,
+            detected_at=event.detected_at,
+            started_at_estimate=event.started_at_estimate,
+            blowing_up_score=bu.blowing_up_score if bu else None,
+        ))
+
+    return CampaignTrackingListResponse(
+        status="success" if items else "empty",
+        items=items,
+        total=total,
+        by_type=by_type,
+    )

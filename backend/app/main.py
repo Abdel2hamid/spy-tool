@@ -192,6 +192,92 @@ _MIGRATIONS = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_blowing_up_score ON app_blowing_up_scores (blowing_up_score DESC)",
     "CREATE INDEX IF NOT EXISTS idx_blowing_up_confidence ON app_blowing_up_scores (confidence_score)",
+
+    # ── Growth Intelligence Layer ──────────────────────────────────────────────
+    # AppMetricSnapshot: time-series download + revenue snapshots (shared backbone)
+    """
+    CREATE TABLE IF NOT EXISTS app_metric_snapshots (
+        id                            SERIAL PRIMARY KEY,
+        app_id                        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+        snapshot_at                   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        estimated_downloads_min       INTEGER DEFAULT 0,
+        estimated_downloads_max       INTEGER DEFAULT 0,
+        install_confidence            FLOAT DEFAULT 0.0,
+        estimated_revenue_monthly_min FLOAT DEFAULT 0.0,
+        estimated_revenue_monthly_max FLOAT DEFAULT 0.0,
+        revenue_confidence            FLOAT DEFAULT 0.0,
+        monetization_model            VARCHAR(50),
+        has_ads_signal                BOOLEAN DEFAULT FALSE,
+        campaign_confidence           FLOAT DEFAULT 0.0,
+        source_signals                JSONB
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_ams_app_id      ON app_metric_snapshots (app_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ams_snapshot_at ON app_metric_snapshots (snapshot_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_ams_app_time    ON app_metric_snapshots (app_id, snapshot_at DESC)",
+
+    # AdCreative: individual ad creatives per app per network
+    """
+    CREATE TABLE IF NOT EXISTS ad_creatives (
+        id                   SERIAL PRIMARY KEY,
+        app_id               INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+        network              VARCHAR(50) NOT NULL,
+        external_creative_id VARCHAR(255),
+        format               VARCHAR(50),
+        creative_url         TEXT,
+        preview_url          TEXT,
+        title                TEXT,
+        body                 TEXT,
+        cta                  VARCHAR(100),
+        landing_url          TEXT,
+        first_seen_at        TIMESTAMPTZ DEFAULT NOW(),
+        last_seen_at         TIMESTAMPTZ DEFAULT NOW(),
+        is_active            BOOLEAN DEFAULT TRUE,
+        raw_payload          JSONB,
+        UNIQUE(app_id, network, external_creative_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_creative_app     ON ad_creatives (app_id)",
+    "CREATE INDEX IF NOT EXISTS idx_creative_active  ON ad_creatives (app_id, is_active)",
+    "CREATE INDEX IF NOT EXISTS idx_creative_network ON ad_creatives (network)",
+
+    # AdCampaign: campaign-level aggregation per app per network
+    """
+    CREATE TABLE IF NOT EXISTS ad_campaigns (
+        id                     SERIAL PRIMARY KEY,
+        app_id                 INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+        network                VARCHAR(50) NOT NULL,
+        campaign_key           VARCHAR(255) NOT NULL,
+        first_seen_at          TIMESTAMPTZ DEFAULT NOW(),
+        last_seen_at           TIMESTAMPTZ DEFAULT NOW(),
+        active_creatives_count INTEGER DEFAULT 0,
+        countries              JSONB,
+        status                 VARCHAR(20) DEFAULT 'unknown',
+        campaign_confidence    FLOAT DEFAULT 0.0,
+        UNIQUE(app_id, network, campaign_key)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_campaign_app    ON ad_campaigns (app_id)",
+    "CREATE INDEX IF NOT EXISTS idx_campaign_status ON ad_campaigns (status)",
+
+    # GrowthEvent: campaign / growth signals (pure derived intelligence)
+    """
+    CREATE TABLE IF NOT EXISTS growth_events (
+        id                   SERIAL PRIMARY KEY,
+        app_id               INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+        detected_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        event_type           VARCHAR(50) NOT NULL,
+        confidence           FLOAT DEFAULT 0.0,
+        explanation          TEXT,
+        signals              JSONB,
+        started_at_estimate  TIMESTAMPTZ,
+        active_status        BOOLEAN DEFAULT TRUE
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_growth_app      ON growth_events (app_id)",
+    "CREATE INDEX IF NOT EXISTS idx_growth_type     ON growth_events (event_type)",
+    "CREATE INDEX IF NOT EXISTS idx_growth_detected ON growth_events (detected_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_growth_active   ON growth_events (app_id, active_status)",
 ]
 
 

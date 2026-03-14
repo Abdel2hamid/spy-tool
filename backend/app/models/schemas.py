@@ -1027,3 +1027,164 @@ class BlowingUpResponse(BaseModel):
     exploding_count: Optional[int] = None
     top_score: Optional[float] = None
     avg_rank_velocity: Optional[float] = None
+
+
+# ===========================================================================
+# Growth Intelligence Schemas
+# ===========================================================================
+
+class MetricSnapshotResponse(BaseModel):
+    """Single metric snapshot (download + revenue estimate at a point in time)."""
+    id: int
+    app_id: int
+    snapshot_at: datetime
+    estimated_downloads_min: Optional[int] = None
+    estimated_downloads_max: Optional[int] = None
+    install_confidence: Optional[float] = None
+    estimated_revenue_monthly_min: Optional[float] = None
+    estimated_revenue_monthly_max: Optional[float] = None
+    revenue_confidence: Optional[float] = None
+    monetization_model: Optional[str] = None
+    has_ads_signal: bool = False
+    campaign_confidence: float = 0.0
+    source_signals: Optional[dict] = None
+
+    class Config:
+        from_attributes = True
+
+
+class MetricSnapshotHistoryResponse(BaseModel):
+    """Time-series of metric snapshots for a single app."""
+    app_id: int
+    snapshots: List[MetricSnapshotResponse]
+    latest: Optional[MetricSnapshotResponse] = None
+    downloads_delta_7d: Optional[dict] = None
+
+
+class AdCreativeResponse(BaseModel):
+    """Single ad creative detected for an app."""
+    id: int
+    app_id: int
+    network: str
+    external_creative_id: Optional[str] = None
+    format: Optional[str] = None
+    creative_url: Optional[str] = None
+    preview_url: Optional[str] = None
+    title: Optional[str] = None
+    body: Optional[str] = None
+    cta: Optional[str] = None
+    landing_url: Optional[str] = None
+    first_seen_at: Optional[datetime] = None
+    last_seen_at: Optional[datetime] = None
+    is_active: bool = True
+
+    class Config:
+        from_attributes = True
+
+
+class AdCampaignResponse(BaseModel):
+    """Campaign-level ad summary for an app."""
+    id: int
+    app_id: int
+    network: str
+    campaign_key: str
+    first_seen_at: Optional[datetime] = None
+    last_seen_at: Optional[datetime] = None
+    active_creatives_count: int = 0
+    countries: Optional[List[str]] = None
+    status: str = "unknown"
+    campaign_confidence: float = 0.0
+
+    class Config:
+        from_attributes = True
+
+
+class AppAdIntelligenceResponse(BaseModel):
+    """Full ad intelligence for a single app."""
+    app_id: int
+    campaigns: List[AdCampaignResponse]
+    creatives: List[AdCreativeResponse]
+    total_campaigns: int
+    active_campaigns: int
+    total_creatives: int
+    active_creatives: int
+    has_active_campaign: bool
+    networks: List[str]
+
+
+class AdIntelligenceListItem(BaseModel):
+    """Summary row for the global /ads listing."""
+    app_id: int
+    app_db_id: int
+    name: str
+    icon_url: Optional[str] = None
+    primary_category: Optional[str] = None
+    current_rank: Optional[int] = None
+    networks: List[str]
+    active_campaigns: int
+    active_creatives: int
+    max_confidence: float
+    first_ad_seen: Optional[datetime] = None
+    last_ad_seen: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AdIntelligenceListResponse(BaseModel):
+    """Paginated list of apps with active ad intelligence data."""
+    status: str
+    items: List[AdIntelligenceListItem]
+    total: int
+    active_count: int
+
+
+class GrowthEventResponse(BaseModel):
+    """Single growth/campaign signal event."""
+    id: int
+    app_id: int
+    detected_at: datetime
+    event_type: str
+    confidence: float
+    explanation: Optional[str] = None
+    signals: Optional[dict] = None
+    started_at_estimate: Optional[datetime] = None
+    active_status: bool = True
+
+    class Config:
+        from_attributes = True
+
+
+class AppGrowthEventsResponse(BaseModel):
+    """Growth events for a single app."""
+    app_id: int
+    events: List[GrowthEventResponse]
+    latest_event: Optional[GrowthEventResponse] = None
+    total: int
+
+
+class CampaignTrackingListItem(BaseModel):
+    """Summary row for the global /campaigns listing."""
+    app_id: int
+    app_db_id: int
+    name: str
+    icon_url: Optional[str] = None
+    primary_category: Optional[str] = None
+    current_rank: Optional[int] = None
+    event_type: str
+    confidence: float
+    explanation: Optional[str] = None
+    detected_at: datetime
+    started_at_estimate: Optional[datetime] = None
+    blowing_up_score: Optional[float] = None
+
+    class Config:
+        from_attributes = True
+
+
+class CampaignTrackingListResponse(BaseModel):
+    """Paginated campaign tracking events with summary stats."""
+    status: str
+    items: List[CampaignTrackingListItem]
+    total: int
+    by_type: Optional[dict] = None  # {"paid_push": 12, "organic_breakout": 5, ...}

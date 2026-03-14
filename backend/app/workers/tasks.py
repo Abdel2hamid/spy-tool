@@ -656,24 +656,17 @@ class ScoringWorker:
         except Exception as e:
             logger.error(f"Idea generation failed: {e}")
 
-        # Compute install + revenue estimates for all apps
-        logger.info("Computing install estimates")
+        # Compute metric snapshots (download + revenue estimates in one coordinated pass)
+        # MetricSnapshotService orchestrates InstallEstimator + RevenueEstimator,
+        # writes to app_metric_snapshots table, and back-fills App cached columns.
+        logger.info("Computing metric snapshots (downloads + revenue)")
         try:
-            from app.services.install_estimator import InstallEstimator
-            inst_est = InstallEstimator(self.db)
-            inst_count = inst_est.compute_all()
-            logger.info(f"Install estimates updated for {inst_count} apps")
+            from app.services.metric_snapshot_service import MetricSnapshotService
+            snap_svc = MetricSnapshotService(self.db)
+            snap_count = snap_svc.compute_all()
+            logger.info(f"Metric snapshots written for {snap_count} apps")
         except Exception as e:
-            logger.error(f"Install estimation failed: {e}")
-
-        logger.info("Computing revenue estimates")
-        try:
-            from app.services.revenue_estimator import RevenueEstimator
-            rev_est = RevenueEstimator(self.db)
-            rev_count = rev_est.compute_all()
-            logger.info(f"Revenue estimates updated for {rev_count} apps")
-        except Exception as e:
-            logger.error(f"Revenue estimation failed: {e}")
+            logger.error(f"Metric snapshot computation failed: {e}")
 
     def generate_daily_report(self):
         logger.info("Generating daily report")
