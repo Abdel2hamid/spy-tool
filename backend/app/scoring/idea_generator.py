@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.models.models import (
     AppIdea, App, FeatureGap, AppMarketWeakness, Keyword, AppKeyword, Ranking
 )
+from app.config.scoring_config import IDEA_GENERATOR_CONFIG as _IGCFG
 
 logger = logging.getLogger(__name__)
 
@@ -61,10 +62,10 @@ class IdeaGenerator:
                 func.sum(FeatureGap.mentions).label("total_mentions"),
             )
             .group_by(FeatureGap.feature_name)
-            .having(func.count(func.distinct(FeatureGap.app_id)) >= 2)
-            .having(func.sum(FeatureGap.mentions) >= 2)
+            .having(func.count(func.distinct(FeatureGap.app_id)) >= _IGCFG["feature_gap_min_apps"])
+            .having(func.sum(FeatureGap.mentions) >= _IGCFG["feature_gap_min_mentions"])
             .order_by(func.sum(FeatureGap.mentions).desc())
-            .limit(20)
+            .limit(_IGCFG["feature_gap_limit"])
             .all()
         )
 
@@ -74,7 +75,11 @@ class IdeaGenerator:
             app_count = row.app_count
             total_mentions = int(row.total_mentions or 0)
 
-            score = min(app_count * 10 + total_mentions * 2, 95)
+            score = min(
+                app_count      * _IGCFG["feature_gap_app_count_scale"] +
+                total_mentions * _IGCFG["feature_gap_mentions_scale"],
+                _IGCFG["feature_gap_score_cap"],
+            )
 
             # Get category from top related apps
             related_apps = (
@@ -123,12 +128,12 @@ class IdeaGenerator:
         rows = (
             self.db.query(AppMarketWeakness)
             .filter(
-                AppMarketWeakness.negative_ratio >= 0.30,
-                AppMarketWeakness.average_rating <= 3.5,
-                AppMarketWeakness.total_reviews >= 20,
+                AppMarketWeakness.negative_ratio >= _IGCFG["weak_market_min_negative_ratio"],
+                AppMarketWeakness.average_rating <= _IGCFG["weak_market_max_avg_rating"],
+                AppMarketWeakness.total_reviews >= _IGCFG["weak_market_min_reviews"],
             )
             .order_by(AppMarketWeakness.negative_ratio.desc())
-            .limit(30)
+            .limit(_IGCFG["weak_market_limit"])
             .all()
         )
 
@@ -157,7 +162,7 @@ class IdeaGenerator:
                 .join(App, App.id == AppKeyword.app_id)
                 .filter(
                     App.primary_category == category,
-                    Keyword.difficulty < 50,
+                    Keyword.difficulty < _IGCFG["keyword_difficulty_low"],
                 )
                 .order_by(Keyword.difficulty.asc())
                 .first()
@@ -167,8 +172,11 @@ class IdeaGenerator:
                 diff_val = kw_row.difficulty
 
             score = min(
-                int(row.negative_ratio * 60 + (5.0 - row.average_rating) * 10),
-                95,
+                int(
+                    row.negative_ratio * _IGCFG["weak_market_ratio_scale"] +
+                    (_IGCFG["weak_market_rating_base"] - row.average_rating) * _IGCFG["weak_market_rating_scale"]
+                ),
+                _IGCFG["weak_market_score_cap"],
             )
 
             reasoning = [
@@ -211,11 +219,11 @@ class IdeaGenerator:
         rows = (
             self.db.query(Keyword)
             .filter(
-                Keyword.difficulty < 60,
-                Keyword.search_volume >= 800,
+                Keyword.difficulty < _IGCFG["keyword_gap_max_difficulty"],
+                Keyword.search_volume >= _IGCFG["keyword_gap_min_volume"],
             )
             .order_by(Keyword.search_volume.desc())
-            .limit(20)
+            .limit(_IGCFG["keyword_gap_limit"])
             .all()
         )
 
@@ -252,8 +260,12 @@ class IdeaGenerator:
 
             trend = kw.trend or 0.0
             score = min(
-                int((100 - kw.difficulty) * 0.45 + (kw.search_volume / 1000) * 15 + trend * 0.4),
-                95,
+                int(
+                    (100 - kw.difficulty)      * _IGCFG["keyword_gap_difficulty_scale"] +
+                    (kw.search_volume / 1000)  * _IGCFG["keyword_gap_volume_scale"] +
+                    trend                      * _IGCFG["keyword_gap_trend_scale"]
+                ),
+                _IGCFG["keyword_gap_score_cap"],
             )
 
             reasoning = [

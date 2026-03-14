@@ -29,7 +29,12 @@ from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
+from app.config.scoring_config import OPPORTUNITY_CONFIG
+
 logger = logging.getLogger(__name__)
+
+_W = OPPORTUNITY_CONFIG["weights"]
+_RGS = OPPORTUNITY_CONFIG["rank_gap_scores"]
 
 
 # ---------------------------------------------------------------------------
@@ -39,12 +44,12 @@ logger = logging.getLogger(__name__)
 def rank_gap_score(app_rank: Optional[int]) -> float:
     """Return the rank-gap component (0-100) of the opportunity formula."""
     if app_rank is None:
-        return 100.0
+        return _RGS[None]
     if app_rank > 30:
-        return 80.0
+        return _RGS[30]
     if app_rank > 10:
-        return 50.0
-    return 10.0
+        return _RGS[10]
+    return _RGS[0]
 
 
 def compute_opportunity_score(
@@ -55,10 +60,10 @@ def compute_opportunity_score(
 ) -> float:
     """Canonical opportunity score formula — returns value in [0, 100]."""
     score = (
-        search_volume * 0.4
-        + (100.0 - min(difficulty, 100.0)) * 0.3
-        + trend_score * 0.2
-        + rank_gap_score(app_rank) * 0.1
+        search_volume * _W["search_volume"]
+        + (100.0 - min(difficulty, 100.0)) * _W["difficulty"]
+        + trend_score * _W["trend"]
+        + rank_gap_score(app_rank) * _W["rank_gap"]
     )
     return round(min(max(score, 0.0), 100.0), 1)
 

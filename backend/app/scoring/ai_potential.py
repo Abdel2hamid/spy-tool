@@ -26,6 +26,7 @@ Scoring weights
 """
 
 from typing import List, Dict, Any
+from app.config.scoring_config import AI_POTENTIAL_CONFIG
 
 # ---------------------------------------------------------------------------
 # Configurable constants — edit here to tune signal detection
@@ -188,16 +189,16 @@ AI_RELATED_KEYWORD_PHRASES: tuple = (
     "ai app",
 )
 
-# Score thresholds for opportunity type classification
-_THRESHOLD_NATIVE: float = 60.0
-_THRESHOLD_ENHANCED: float = 25.0
+# Score thresholds for opportunity type classification (from central config)
+_THRESHOLD_NATIVE: float   = AI_POTENTIAL_CONFIG["thresholds"]["native"]
+_THRESHOLD_ENHANCED: float = AI_POTENTIAL_CONFIG["thresholds"]["enhanced"]
 
-# Weights (must sum to 1.0)
-_W_TITLE:        float = 0.35
-_W_DESCRIPTION:  float = 0.25
-_W_FEATURE_GAP:  float = 0.20
-_W_CATEGORY:     float = 0.10
-_W_KEYWORD:      float = 0.10
+# Weights (from central config — must sum to 1.0)
+_W_TITLE:        float = AI_POTENTIAL_CONFIG["weights"]["title"]
+_W_DESCRIPTION:  float = AI_POTENTIAL_CONFIG["weights"]["description"]
+_W_FEATURE_GAP:  float = AI_POTENTIAL_CONFIG["weights"]["feature_gap"]
+_W_CATEGORY:     float = AI_POTENTIAL_CONFIG["weights"]["category"]
+_W_KEYWORD:      float = AI_POTENTIAL_CONFIG["weights"]["keyword"]
 
 # ---------------------------------------------------------------------------
 # Internal signal computers

@@ -21,10 +21,12 @@ import re
 import logging
 from typing import List, Optional, Tuple
 
+from app.config.scoring_config import KEYWORD_GATE_CONFIG as _CFG
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Stop words (common English + ASO noise)
+# Constants pulled from central config
 # ---------------------------------------------------------------------------
 _STOPWORDS = frozenset({
     "a", "an", "the", "and", "or", "but", "for", "to", "of", "in", "on",
@@ -33,57 +35,18 @@ _STOPWORDS = frozenset({
     "apple", "download", "get", "new", "all", "use", "you", "your",
 })
 
-# ---------------------------------------------------------------------------
-# Junk phrases — exact match → reject
-# ---------------------------------------------------------------------------
-_JUNK_PHRASES = frozenset({
-    "click here", "download now", "install now", "best app", "top app",
-    "number one", "#1 app", "great app", "awesome app", "amazing app",
-})
+_JUNK_PHRASES        = _CFG["junk_phrases"]
+_WEAK_SINGLE_WORDS   = _CFG["weak_single_words"]
+_SOURCE_WEIGHTS: dict = _CFG["source_weights"]
+_SOURCE_WEIGHT_DEFAULT = _CFG["source_weight_default"]
 
-# ---------------------------------------------------------------------------
-# Weak single-word keywords (generic, low value)
-# ---------------------------------------------------------------------------
-_WEAK_SINGLE_WORDS = frozenset({
-    "best", "easy", "free", "smart", "simple", "new", "cool", "top",
-    "pro", "lite", "hd", "app", "apps", "game", "run", "get", "use",
-})
+GLOBAL_CAP            = _CFG["global_cap"]
+TIER_C_STOP_THRESHOLD = _CFG["tier_c_stop_threshold"]
+TIER_C_PRUNE_TARGET   = _CFG["tier_c_prune_target"]
 
-# ---------------------------------------------------------------------------
-# Source score weights (0–15)
-# ---------------------------------------------------------------------------
-_SOURCE_WEIGHTS: dict = {
-    "title":             15,
-    "subtitle":          14,
-    "autocomplete":      12,
-    "seed":              12,
-    "competitor":        11,
-    "description":       10,
-    "category":           9,
-    "discovery_engine":   8,
-    "reviews":            8,
-    "alphabet":           6,
-}
-_SOURCE_WEIGHT_DEFAULT = 7
+SOURCE_QUOTAS  = _CFG["source_quotas"]
+TOTAL_APP_QUOTA = _CFG["total_app_quota"]
 
-# ---------------------------------------------------------------------------
-# Global capacity constants
-# ---------------------------------------------------------------------------
-GLOBAL_CAP            = 1_000_000
-TIER_C_STOP_THRESHOLD =   900_000   # stop new Tier C when count ≥ this
-TIER_C_PRUNE_TARGET   =   850_000   # prune Tier C until count < this
-
-# ---------------------------------------------------------------------------
-# Per-app source quotas
-# ---------------------------------------------------------------------------
-SOURCE_QUOTAS = {
-    "extracted":    25,
-    "autocomplete": 25,
-    "competitor":   20,
-    "category":     15,
-    "alphabet":     15,
-}
-TOTAL_APP_QUOTA = 100
 
 # Source group mapping: raw source string → group name
 _SOURCE_GROUP: dict = {
@@ -170,13 +133,13 @@ class KeywordQualityEngine:
         if len(words) == 1:
             return KeywordQualityEngine._check_single_word_gate(norm, words[0])
 
-        if len(words) > 4:
+        if len(words) > _CFG["max_multi_word_count"]:
             return False, "too_many_words"
 
         # Character length for multi-word
-        if len(norm) < 5:
+        if len(norm) < _CFG["min_multi_word_char_length"]:
             return False, "too_short"
-        if len(norm) > 45:
+        if len(norm) > _CFG["max_word_length"]:
             return False, "too_long"
 
         # Repeated tokens (e.g. "app app")
@@ -187,7 +150,7 @@ class KeywordQualityEngine:
         non_stop = [w for w in words if w not in _STOPWORDS]
         if len(non_stop) == 0:
             return False, "all_stopwords"
-        if len(non_stop) / len(words) < 0.4:
+        if len(non_stop) / len(words) < _CFG["min_non_stop_ratio"]:
             return False, "mostly_stopwords"
 
         # Punctuation heavy (after normalization)
@@ -210,12 +173,12 @@ class KeywordQualityEngine:
     def _check_single_word_gate(norm: str, word: str) -> Tuple[bool, str]:
         """
         Validate single-word keyword with stricter rules.
-        
+
         Single-word keywords are only accepted if:
         - Not a weak/stopword (checked first for important filtering)
         - Not numeric only
         - Not repeated characters
-        - Length >= 6 characters
+        - Length >= min_single_word_length characters
         """
         if word in _WEAK_SINGLE_WORDS:
             return False, "single_word_weak"
@@ -229,10 +192,10 @@ class KeywordQualityEngine:
         if len(set(word)) < len(word) / 2:
             return False, "single_word_repeated_chars"
 
-        if len(word) < 6:
+        if len(word) < _CFG["min_single_word_length"]:
             return False, "single_word_too_short"
 
-        if len(word) > 45:
+        if len(word) > _CFG["max_word_length"]:
             return False, "too_long"
 
         return True, ""
@@ -385,9 +348,9 @@ class KeywordQualityEngine:
         )
         
         # Apply penalty for single-word keywords
-        SINGLE_WORD_PENALTY = 0.85
+        single_word_penalty = _CFG["single_word_penalty"]
         if len(words) == 1:
-            total = total * SINGLE_WORD_PENALTY
+            total = total * single_word_penalty
         
         quality_score = round(min(total, 100.0), 1)
         return quality_score, round(validation_score, 1), round(relevance_score, 1)
@@ -404,11 +367,12 @@ class KeywordQualityEngine:
         C: quality_score >= 45  (accepted cautiously)
         None: quality_score < 45  (should be rejected)
         """
-        if quality_score >= 75:
+        _t = _CFG["tier_thresholds"]
+        if quality_score >= _t["A"]:
             return "A"
-        elif quality_score >= 60:
+        elif quality_score >= _t["B"]:
             return "B"
-        elif quality_score >= 45:
+        elif quality_score >= _t["C"]:
             return "C"
         return None
 

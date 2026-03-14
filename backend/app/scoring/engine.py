@@ -5,116 +5,34 @@ from sqlalchemy import func, and_
 
 from app.models.models import App, Ranking, Review, Keyword, AppKeyword, Opportunity, Category, AppKeywordIntelligence, AppDiscoveredKeyword, KeywordStatus
 from app.scoring.weights import SCORING_WEIGHTS
-
-# ---------------------------------------------------------------------------
-# Big-brand exclusion — developer names (normalised to lowercase substrings)
-# ---------------------------------------------------------------------------
-
-_BIG_BRAND_DEVELOPERS = frozenset({
-    "openai", "openai llc", "openai lc",
-    "google llc", "google inc", "google",
-    "meta platforms", "meta platforms inc", "meta",
-    "microsoft corporation", "microsoft",
-    "xai", "x.ai",
-    "anthropic", "anthropic plc", "anthropic llc",
-    "amazon.com services llc", "amazon", "amazon.com",
-    "apple", "apple inc", "apple distribution international",
-    "adobe", "adobe inc", "adobe systems",
-    "netflix", "netflix inc",
-    "spotify ab", "spotify",
-    "notion labs", "notion labs inc", "notion",
-    "canva pty ltd", "canva",
-    "bytedance", "tiktok ltd", "tiktok pte",
-    "x corp", "twitter", "twitter inc",
-    "snap inc", "snap",
-    "linkedin corporation", "linkedin",
-    "pinterest",
-    "samsung electronics",
-    "huawei device",
-    "shopify inc",
-    "salesforce inc", "salesforce.com",
-    "zoom video communications",
-    "slack technologies",
-    "dropbox inc",
-    "box inc",
-    "airbnb inc",
-    "uber technologies",
-    "lyft inc",
-    "doordash inc",
-    "instacart",
-    "duolingo",         # highly entrenched language app
-    "bumble inc",
-    "match group",      # Tinder, Hinge, OkCupid parent
-    "unity technologies",
-    "epic games",
-    "activision publishing",
-    "electronic arts",
-    "zynga",
-    "king",             # Candy Crush parent
-    "niantic",
-    "riot games",
-    "supercell",
-    "verizon media",
-    "yahoo",
-    "baidu",
-    "alibaba",
-    "tencent",
-    "naver corporation",
-    "kakao corporation",
-    "line corporation",
-    "rakuten",
-    "sony interactive entertainment",
-    "warner bros",
-    "disney",
-    "paramount",
-    "hbo",
-    "hulu",
-    "peacock",
-    "amazon prime video",
-    "twitch interactive",
-    "reddit inc",
-})
-
-# App name substrings that flag a big-brand product regardless of developer field
-_BIG_BRAND_APP_KEYWORDS = (
-    "chatgpt", "dall-e", "dall·e", "openai",
-    "gemini", "google one", "google docs", "google sheets", "google drive",
-    "youtube", "gmail", "chrome", "google maps", "google photos",
-    "instagram", "facebook", "whatsapp", "messenger", "threads",
-    "grok",
-    "microsoft copilot", "bing ", "bing chat", "microsoft 365",
-    "microsoft teams", "outlook", "onedrive", "xbox",
-    "claude ",            # Anthropic
-    "alexa ", "amazon prime", "amazon music", "amazon photos",
-    "adobe photoshop", "adobe acrobat", "adobe illustrator",
-    "adobe lightroom", "adobe premiere",
-    "netflix",
-    "notion ",
-    "canva ",
-    "tiktok",
-    "snapchat",
-    " twitter", "twitter for", "x for iphone",
-    "linkedin",
-    "pinterest",
-    "spotify",
-    "slack ",
-    "zoom ",
-    "dropbox",
-    "duolingo",
-    "shazam",            # Apple subsidiary
-    "garageband",        # Apple
-    "iwork", "pages for", "numbers for", "keynote for",
+from app.config.scoring_config import (
+    TRENDING_CONFIG,
+    OPPORTUNITY_CONFIG,
+    FRESH_RISERS_CONFIG,
+    SIGNAL_CONFIDENCE_CONFIG,
+    WINNABILITY_CONFIG,
+    SUCCESS_PROBABILITY_CONFIG,
+    IDEA_GENERATOR_CONFIG,
+    ENGINE_CONFIG,
 )
 
 # ---------------------------------------------------------------------------
-# Market dominance thresholds — entrenched incumbents regardless of brand
+# Module-level constants derived from central config (WINNABILITY_CONFIG)
 # ---------------------------------------------------------------------------
 
-_DOMINANCE_REVIEW_HARD = 500_000   # absolute behemoth
-_DOMINANCE_REVIEW_RATED = 100_000  # entrenched with high rating
-_DOMINANCE_RATED_FLOOR = 4.5       # "entrenched + beloved"
-_DOMINANCE_TOP_RANK = 3            # chart dominator rank threshold
-_DOMINANCE_TOP_REVIEWS = 50_000    # chart dominator review threshold
+_BIG_BRAND_DEVELOPERS    = WINNABILITY_CONFIG["big_brand_developers"]
+_BIG_BRAND_APP_KEYWORDS  = WINNABILITY_CONFIG["big_brand_app_keywords"]
+_BRAND_SUBSTR_MIN_LEN    = WINNABILITY_CONFIG["brand_substring_min_length"]
+
+_DOMINANCE_REVIEW_HARD   = WINNABILITY_CONFIG["dominance_review_hard"]
+_DOMINANCE_REVIEW_RATED  = WINNABILITY_CONFIG["dominance_review_rated"]
+_DOMINANCE_RATED_FLOOR   = WINNABILITY_CONFIG["dominance_rated_floor"]
+_DOMINANCE_TOP_RANK      = WINNABILITY_CONFIG["dominance_top_rank"]
+_DOMINANCE_TOP_REVIEWS   = WINNABILITY_CONFIG["dominance_top_reviews"]
+
+# Keyword phrase-extraction helpers (ENGINE_CONFIG)
+_STOPWORDS    = ENGINE_CONFIG["stopwords"]
+_WEAK_KEYWORDS = ENGINE_CONFIG["weak_keywords"]
 
 
 class ScoringEngine:
@@ -212,7 +130,10 @@ class ScoringEngine:
             .count()
         )
 
-        competition_boost = min(app_count * 2, 30)
+        competition_boost = min(
+            app_count * ENGINE_CONFIG["competition_per_app_boost"],
+            ENGINE_CONFIG["competition_max_boost"],
+        )
         return min(base_difficulty + competition_boost, 100)
 
     def calculate_category_growth(self, category_id: int, days: int = 30) -> float:
@@ -233,7 +154,7 @@ class ScoringEngine:
         if recent_count == 0:
             return 0.0
 
-        return min(recent_count * 5, 100)
+        return min(recent_count * ENGINE_CONFIG["category_growth_scale"], 100)
 
     def calculate_ai_potential(self, app_id: int, app_name: str, description: str = "") -> float:
         """Return a 0-100 AI potential score for an app (float, backward-compatible)."""
@@ -291,11 +212,15 @@ class ScoringEngine:
         ai_potential: float,
         category_growth: float
     ) -> float:
-        rank_factor = min(rank_velocity * 10, 30) if rank_velocity > 0 else 10
-        review_factor = min(review_growth * 0.5, 25)
-        competition_factor = (100 - competition_score) * 0.2
-        ai_factor = ai_potential * 0.15
-        category_factor = category_growth * 0.1
+        _spc = SUCCESS_PROBABILITY_CONFIG
+        rank_factor = (
+            min(rank_velocity * _spc["rank_velocity_scale"], _spc["rank_velocity_max"])
+            if rank_velocity > 0 else _spc["rank_velocity_default"]
+        )
+        review_factor     = min(review_growth   * _spc["review_growth_scale"],  _spc["review_growth_max"])
+        competition_factor = (100 - competition_score) * _spc["competition_scale"]
+        ai_factor          = ai_potential               * _spc["ai_potential_scale"]
+        category_factor    = category_growth            * _spc["category_growth_scale"]
 
         probability = rank_factor + review_factor + competition_factor + ai_factor + category_factor
         return min(max(probability, 0), 100)
@@ -324,9 +249,12 @@ class ScoringEngine:
             category_growth
         )
 
+        _spc = SUCCESS_PROBABILITY_CONFIG
         trend_score = min(
-            (rank_velocity * 20 + review_growth * 0.3 + category_growth * 0.4),
-            100
+            (rank_velocity * _spc["trend_rank_scale"]
+             + review_growth * _spc["trend_review_scale"]
+             + category_growth * _spc["trend_category_scale"]),
+            100,
         )
 
         return {
@@ -360,22 +288,23 @@ class ScoringEngine:
     ) -> str:
         recommendations = []
 
-        if success_prob > 70:
+        _spc = SUCCESS_PROBABILITY_CONFIG
+        if success_prob > _spc["high_potential_threshold"]:
             recommendations.append(f"High-potential app! {app_name} shows strong growth metrics.")
-        elif success_prob > 50:
+        elif success_prob > _spc["moderate_potential_threshold"]:
             recommendations.append(f"Moderate opportunity. {app_name} has decent metrics.")
         else:
             recommendations.append("Low immediate potential. Consider different keywords.")
 
-        if trend_score > 60:
+        if trend_score > _spc["trend_alert_threshold"]:
             recommendations.append("Strong upward trend - enter soon!")
 
-        if competition < 40:
+        if competition < _spc["competition_low_threshold"]:
             recommendations.append("Low competition - good keyword targeting opportunity.")
-        elif competition > 70:
+        elif competition > _spc["competition_high_threshold"]:
             recommendations.append("High competition - need strong differentiation.")
 
-        if ai_potential > 60:
+        if ai_potential > _spc["ai_opportunity_threshold"]:
             recommendations.append("Great candidate for AI feature integration.")
 
         return " ".join(recommendations[:3])
@@ -390,7 +319,7 @@ class ScoringEngine:
         if dev in _BIG_BRAND_DEVELOPERS:
             return True, f"Developer '{app.developer}' is a major company"
         for brand in _BIG_BRAND_DEVELOPERS:
-            if len(brand) > 5 and brand in dev:
+            if len(brand) > _BRAND_SUBSTR_MIN_LEN and brand in dev:
                 return True, f"Developer name contains brand token '{brand}'"
 
         name_lower = (app.name or "").lower()
@@ -434,26 +363,31 @@ class ScoringEngine:
         """
         from app.models.models import FeatureGap
 
+        _wc = WINNABILITY_CONFIG
         reviews = app.current_reviews or 0
         rating = app.current_rating or 3.0
         rank = app.current_rank or 999
 
-        # 1. Review scarcity
+        # 1. Review scarcity — fewer reviews = easier to enter
+        _rb = _wc["feasibility_review_bands"]
         if reviews < 500:
-            review_pts = 25.0
+            review_pts = _rb[500]
         elif reviews < 5_000:
-            review_pts = 20.0
+            review_pts = _rb[5_000]
         elif reviews < 20_000:
-            review_pts = 12.0
+            review_pts = _rb[20_000]
         elif reviews < 50_000:
-            review_pts = 6.0
+            review_pts = _rb[50_000]
         elif reviews < 100_000:
-            review_pts = 2.0
+            review_pts = _rb[100_000]
         else:
-            review_pts = 0.0
+            review_pts = _wc["feasibility_review_floor"]
 
         # 2. Low keyword competition
-        competition_pts = max(0.0, (100.0 - competition_score) / 4.0)
+        competition_pts = max(
+            0.0,
+            (100.0 - competition_score) / _wc["feasibility_competition_divisor"],
+        )
 
         # 3. Feature gap signals
         gap_count = (
@@ -461,29 +395,31 @@ class ScoringEngine:
             .filter(FeatureGap.app_id == app.id)
             .count()
         )
-        gap_pts = min(gap_count * 4.0, 20.0)
+        gap_pts = min(gap_count * _wc["feasibility_gap_scale"], _wc["feasibility_gap_max"])
 
         # 4. Rating weakness — lower rating means more room to win
+        _rat = _wc["feasibility_rating_bands"]
         if rating < 2.0:
-            rating_pts = 15.0
+            rating_pts = _rat[2.0]
         elif rating < 3.0:
-            rating_pts = 12.0
+            rating_pts = _rat[3.0]
         elif rating < 3.5:
-            rating_pts = 8.0
+            rating_pts = _rat[3.5]
         elif rating < 4.0:
-            rating_pts = 4.0
+            rating_pts = _rat[4.0]
         else:
-            rating_pts = 0.0
+            rating_pts = _wc["feasibility_rating_floor"]
 
         # 5. Rank accessibility — not locked out of charts
+        _rnk = _wc["feasibility_rank_bands"]
         if rank > 100:
-            rank_pts = 15.0
+            rank_pts = _wc["feasibility_rank_accessible"]
         elif rank > 50:
-            rank_pts = 10.0
+            rank_pts = _rnk[50]
         elif rank > 20:
-            rank_pts = 5.0
+            rank_pts = _rnk[20]
         else:
-            rank_pts = 0.0
+            rank_pts = _wc["feasibility_rank_floor"]
 
         total = min(review_pts + competition_pts + gap_pts + rating_pts + rank_pts, 100.0)
         details = {
@@ -505,21 +441,22 @@ class ScoringEngine:
     ) -> str:
         parts = []
 
-        if feasibility_score >= 65:
+        _wc = WINNABILITY_CONFIG
+        if feasibility_score >= _wc["winnability_high_threshold"]:
             parts.append(f"High winnability — realistic indie opportunity in the '{app_name}' niche.")
-        elif feasibility_score >= 45:
+        elif feasibility_score >= _wc["winnability_moderate_threshold"]:
             parts.append(f"Moderate winnability — competition is manageable around '{app_name}'.")
         else:
             parts.append(f"Tough space — '{app_name}' category is crowded but micro-niches exist.")
 
         gap_count = feasibility_details.get("gap_count", 0)
-        if gap_count >= 3:
+        if gap_count >= _wc["recommendation_gap_min_count"]:
             parts.append(f"{gap_count} feature gaps reported by users — clear differentiation path.")
-        if feasibility_details.get("rating_pts", 0) >= 8:
+        if feasibility_details.get("rating_pts", 0) >= _wc["recommendation_rating_pts_min"]:
             parts.append("Users are unhappy with existing options — quality gap to exploit.")
-        if feasibility_details.get("review_pts", 0) >= 20:
+        if feasibility_details.get("review_pts", 0) >= _wc["recommendation_review_pts_min"]:
             parts.append("Low review count — early-mover advantage still available.")
-        if feasibility_details.get("competition_pts", 0) >= 18:
+        if feasibility_details.get("competition_pts", 0) >= _wc["recommendation_competition_pts_min"]:
             parts.append("Low keyword competition — strong ASO opportunity.")
 
         return " ".join(parts[:3])
@@ -567,21 +504,23 @@ class ScoringEngine:
             competition_score = self.calculate_keyword_competition(primary_keyword)
             ai_potential = self.calculate_ai_potential(app.id, app.name, app.description or "")
 
-            # Attractiveness (45%) — market size + demand signals
+            # Attractiveness — market size + demand signals
+            _aw = WINNABILITY_CONFIG["attractiveness_weights"]
             rank_score = max(0.0, 100.0 - (app.current_rank * 2)) if app.current_rank else 0.0
             rating_score = (app.current_rating or 0.0) * 20.0
             attractiveness = min(
-                (rank_score * 0.45) +
-                (rating_score * 0.30) +
-                ((100.0 - competition_score) * 0.15) +
-                (ai_potential * 0.10),
+                rank_score        * _aw["rank_score"] +
+                rating_score      * _aw["rating_score"] +
+                (100.0 - competition_score) * _aw["competition_score"] +
+                ai_potential      * _aw["ai_potential"],
                 100.0,
             )
 
-            # Feasibility / Winnability (55%)
+            # Feasibility / Winnability
             feasibility, feasibility_details = self.calculate_feasibility_score(app, competition_score)
 
-            combined = attractiveness * 0.45 + feasibility * 0.55
+            _cw = WINNABILITY_CONFIG["combined_weights"]
+            combined = attractiveness * _cw["attractiveness"] + feasibility * _cw["feasibility"]
 
             category_name = "general"
             if app.category_id:
@@ -718,7 +657,12 @@ class ScoringEngine:
         mom_7d = calc_momentum(history_7d)
         mom_14d = calc_momentum(history_14d)
 
-        momentum_weighted = (mom_3d * 0.2) + (mom_7d * 0.35) + (mom_14d * 0.45)
+        _mw = TRENDING_CONFIG["momentum_weights"]
+        momentum_weighted = (
+            mom_3d  * _mw["3d"] +
+            mom_7d  * _mw["7d"] +
+            mom_14d * _mw["14d"]
+        )
 
         return {
             "momentum_3d": round(mom_3d, 3),
@@ -805,14 +749,15 @@ class ScoringEngine:
         current_rank = history[-1]["rank"]
 
         # Base bonus for best rank achieved (not overpowering)
+        _rbt = TRENDING_CONFIG["rank_bonus_thresholds"]
         if best_rank <= 5:
-            base_bonus = 20.0
+            base_bonus = _rbt[5]
         elif best_rank <= 10:
-            base_bonus = 15.0
+            base_bonus = _rbt[10]
         elif best_rank <= 25:
-            base_bonus = 10.0
+            base_bonus = _rbt[25]
         elif best_rank <= 50:
-            base_bonus = 5.0
+            base_bonus = _rbt[50]
         else:
             base_bonus = 0.0
 
@@ -837,18 +782,18 @@ class ScoringEngine:
         
         review_growth_7d = self.calculate_review_growth(app_id, days=7)
         
+        _df = TRENDING_CONFIG["review_dampen_factors"]
         if base_reviews < 100:
-            dampen_factor = 0.3
-        elif base_reviews < 1000:
-            dampen_factor = 0.6
-        elif base_reviews < 10000:
-            dampen_factor = 0.85
+            dampen_factor = _df[100]
+        elif base_reviews < 1_000:
+            dampen_factor = _df[1_000]
+        elif base_reviews < 10_000:
+            dampen_factor = _df[10_000]
         else:
             dampen_factor = 1.0
 
         bounded_score = review_growth_7d * dampen_factor
-        
-        return round(min(bounded_score, 20), 2)
+        return round(min(bounded_score, TRENDING_CONFIG["review_momentum_cap"]), 2)
 
     def normalize_within_category(self, app_id: int, raw_score: float) -> float:
         """
@@ -917,17 +862,18 @@ class ScoringEngine:
         rank_bonus = min(self.compute_absolute_rank_bonus(app_id), 20.0)  # Cap at 20
         review_momentum = self.compute_bounded_review_momentum(app_id)
 
-        # Normalize momentum to 0-60 range (max ~20 pos/day → 60)
-        momentum_normalized = min(momentum["momentum_weighted"] * 3, 60)
-        
+        _tsw = TRENDING_CONFIG["trend_score_weights"]
+
+        # Normalize momentum to 0-60 range (max ~20 pos/day × scale → ~60)
+        momentum_normalized = min(
+            momentum["momentum_weighted"] * _tsw["momentum_normalized_scale"], 60
+        )
         # Normalize consistency to 0-15 range
-        consistency_normalized = consistency * 0.15
-        
+        consistency_normalized = consistency * _tsw["consistency_weight"]
         # Rank bonus already 0-20
-        rank_bonus_normalized = rank_bonus
-        
-        # Normalize review momentum to 0-10 range
-        review_normalized = review_momentum * 0.5
+        rank_bonus_normalized = rank_bonus * _tsw["rank_bonus_weight"]
+        # Normalize review momentum contribution
+        review_normalized = review_momentum * _tsw["review_momentum_weight"]
 
         raw_score = (
             momentum_normalized +
@@ -1020,16 +966,15 @@ class ScoringEngine:
         so all keywords are saved with 0 values by default.  This method derives
         reasonable estimates so dashboard charts and opportunity scores are useful:
 
-          search_volume ≈ app_count × 850   (more ranked apps → higher search volume)
-          difficulty    ≈ min(app_count, 60) (caps at 60 so keywords remain visible
-                                              in the default max_difficulty=60 view)
+          search_volume ≈ app_count × search_volume_per_app   (more ranked apps → higher search volume)
+          difficulty    ≈ min(app_count, difficulty_cap)      (caps so keywords remain visible
+                                                               in the default max_difficulty=60 view)
           trend         ≈ category-based estimate (AI/chat keywords score higher)
         """
-        TREND_MAP = {
-            "ai": 8.5, "gpt": 8.0, "chat": 7.5, "game": 6.5, "gaming": 6.5,
-            "fitness": 5.5, "health": 5.5, "productivity": 5.0, "social": 5.0,
-            "finance": 4.5, "education": 4.5, "music": 4.0, "travel": 3.5,
-        }
+        _tmap = TRENDING_CONFIG["trend_velocity_map"]
+        _tdef = TRENDING_CONFIG["trend_velocity_default"]
+        _svpa = TRENDING_CONFIG["search_volume_per_app"]
+        _dcap = TRENDING_CONFIG["difficulty_cap"]
         keywords = self.db.query(Keyword).all()
         for kw in keywords:
             if not kw.term:
@@ -1039,9 +984,9 @@ class ScoringEngine:
                 .filter(AppKeyword.keyword_id == kw.id)
                 .count()
             )
-            kw.search_volume = app_count * 850
-            kw.difficulty = min(float(app_count), 60.0)
-            kw.trend = TREND_MAP.get(kw.term.lower(), 3.0)
+            kw.search_volume = app_count * _svpa
+            kw.difficulty = min(float(app_count), _dcap)
+            kw.trend = _tmap.get(kw.term.lower(), _tdef)
         self.db.commit()
 
     def compute_market_weakness(self, app_id: int) -> List[Dict]:
@@ -1058,7 +1003,8 @@ class ScoringEngine:
         """
         from app.models.models import AppMarketWeakness
 
-        MIN_REVIEWS = 20
+        # Countries with fewer reviews than this are excluded from weak-market analysis.
+        MIN_REVIEWS = ENGINE_CONFIG["market_weakness_min_reviews"]
 
         reviews = (
             self.db.query(Review)
@@ -1156,8 +1102,8 @@ class ScoringEngine:
         - Some metrics missing = proportionally less
         """
         metrics_present = 0
-        total_metrics = 5
-        
+        total_metrics = SIGNAL_CONFIDENCE_CONFIG["total_metrics"]
+
         if keyword.search_volume and keyword.search_volume > 0:
             metrics_present += 1
         if keyword.difficulty and keyword.difficulty > 0:
@@ -1168,7 +1114,7 @@ class ScoringEngine:
             metrics_present += 1
         if keyword.last_enriched is not None:
             metrics_present += 1
-        
+
         return metrics_present / total_metrics
 
     def _calculate_freshness_factor(self, keyword: Keyword) -> float:
@@ -1183,42 +1129,41 @@ class ScoringEngine:
         """
         if not keyword.last_enriched:
             if not keyword.last_updated:
-                return 0.4
+                return SIGNAL_CONFIDENCE_CONFIG["freshness_stale"]
             age = datetime.utcnow() - keyword.last_updated
         else:
             age = datetime.utcnow() - keyword.last_enriched
         
         days_old = age.days
-        
+        _bands = SIGNAL_CONFIDENCE_CONFIG["freshness_bands_days"]
+
         if days_old < 7:
-            return 1.0
+            return _bands[7]
         elif days_old < 30:
-            return 0.85
+            return _bands[30]
         elif days_old < 90:
-            return 0.65
+            return _bands[90]
         else:
-            return 0.4
+            return SIGNAL_CONFIDENCE_CONFIG["freshness_stale"]
 
     def _calculate_source_reliability_factor(self, keyword: Keyword) -> float:
         """
         Calculate source reliability factor based on data source.
-        
-        Returns:
-        - Observed/real data = 1.0
-        - Unknown source = 0.5
         """
+        _rs = SIGNAL_CONFIDENCE_CONFIG["reliability_by_status"]
+        _rt = SIGNAL_CONFIDENCE_CONFIG["reliability_by_tier"]
+        _rd = SIGNAL_CONFIDENCE_CONFIG["reliability_default"]
         if keyword.status == KeywordStatus.ENRICHED.value:
-            return 1.0
+            return _rs["enriched"]
         elif keyword.status == KeywordStatus.RAW.value:
-            return 0.5
+            return _rs["raw"]
         elif keyword.quality_tier == 'A':
-            return 1.0
+            return _rt["A"]
         elif keyword.quality_tier == 'B':
-            return 0.8
+            return _rt["B"]
         elif keyword.quality_tier == 'C':
-            return 0.6
-        
-        return 0.5
+            return _rt["C"]
+        return _rd
 
     def get_keyword_opportunities(
         self,
@@ -1250,11 +1195,12 @@ class ScoringEngine:
             difficulty = kw.difficulty or 0
             trend = kw.trend or 0
 
+            _lw = OPPORTUNITY_CONFIG["legacy_weights"]
             base_opportunity_score = (
-                (100 - difficulty) * 0.3 +
-                trend * 0.4 +
-                (search_volume / 1000) * 0.2 +
-                (1 / (app_count + 1)) * 10
+                (100 - difficulty) * _lw["difficulty"]
+                + trend            * _lw["trend"]
+                + (search_volume / 1000) * _lw["search_volume_scale"]
+                + (1 / (app_count + 1)) * _lw["competition_factor"]
             )
 
             confidence = self.calculate_keyword_signal_confidence(kw)
@@ -1317,11 +1263,12 @@ class ScoringEngine:
             scores = self._calculate_fresh_riser_scores(app, eligibility, cutoff_7_days)
             
             if mode == "hidden_gems":
+                _hw = FRESH_RISERS_CONFIG["hidden_gems_weights"]
                 final_score = (
-                    scores["momentum_score"] * 0.40 +
-                    scores["niche_viability_score"] * 0.30 +
-                    scores["rank_quality_score"] * 0.20 +
-                    scores["review_traction_score"] * 0.10
+                    scores["momentum_score"]        * _hw["momentum"] +
+                    scores["niche_viability_score"]  * _hw["niche_viability"] +
+                    scores["rank_quality_score"]     * _hw["rank_quality"] +
+                    scores["review_traction_score"]  * _hw["review_traction"]
                 )
             elif mode == "newest":
                 final_score = scores["freshness_score"]
@@ -1365,7 +1312,7 @@ class ScoringEngine:
             if created_at:
                 age = now - created_at
                 age_days = age.days
-                if age_days <= 14:
+                if age_days <= FRESH_RISERS_CONFIG["eligibility"]["fallback_age_days"]:
                     release_date = created_at
                 else:
                     return {"eligible": False, "reason": "no_valid_release_date"}
@@ -1374,27 +1321,27 @@ class ScoringEngine:
         else:
             age = now - release_date
             age_days = age.days
-        
-        if age_days > 7:
+
+        if age_days > FRESH_RISERS_CONFIG["eligibility"]["max_age_days"]:
             return {"eligible": False, "reason": "too_old"}
-        
+
         reviews_count = app.current_reviews or 0
-        if reviews_count < 5:
+        if reviews_count < FRESH_RISERS_CONFIG["eligibility"]["min_reviews"]:
             return {"eligible": False, "reason": "insufficient_reviews"}
-        
+
         ranking_count = (
             self.db.query(Ranking)
             .filter(Ranking.app_id == app.id)
             .filter(Ranking.recorded_at >= cutoff_7_days)
             .count()
         )
-        
-        if ranking_count < 3:
+
+        if ranking_count < FRESH_RISERS_CONFIG["eligibility"]["min_ranking_snapshots"]:
             return {"eligible": False, "reason": "insufficient_ranking_history"}
-        
-        if app.current_rank and app.current_rank > 500:
+
+        if app.current_rank and app.current_rank > FRESH_RISERS_CONFIG["eligibility"]["max_rank"]:
             return {"eligible": False, "reason": "rank_too_low"}
-        
+
         return {
             "eligible": True,
             "age_days": age_days,
@@ -1424,13 +1371,13 @@ class ScoringEngine:
         niche_viability_score = self._calculate_niche_viability_score(app.category_id)
         
         fresh_riser_score = (
-            freshness_score * 0.25 +
-            review_traction_score * 0.25 +
-            rank_quality_score * 0.20 +
-            momentum_score * 0.20 +
-            niche_viability_score * 0.10
+            freshness_score        * FRESH_RISERS_CONFIG["score_weights"]["freshness"] +
+            review_traction_score  * FRESH_RISERS_CONFIG["score_weights"]["review_traction"] +
+            rank_quality_score     * FRESH_RISERS_CONFIG["score_weights"]["rank_quality"] +
+            momentum_score         * FRESH_RISERS_CONFIG["score_weights"]["momentum"] +
+            niche_viability_score  * FRESH_RISERS_CONFIG["score_weights"]["niche_viability"]
         )
-        
+
         return {
             "fresh_riser_score": fresh_riser_score,
             "freshness_score": freshness_score,
@@ -1442,45 +1389,49 @@ class ScoringEngine:
 
     def _calculate_freshness_score(self, age_days: int) -> float:
         """Calculate freshness score based on app age."""
+        _bands = FRESH_RISERS_CONFIG["freshness_bands"]
+        _floor = 0.0
         if age_days <= 2:
-            return 100.0
+            return _bands[2]
         elif age_days <= 4:
-            return 80.0
+            return _bands[4]
         elif age_days <= 7:
-            return 60.0
+            return _bands[7]
         else:
-            return 0.0
+            return _floor
 
     def _calculate_review_traction_score(self, reviews_count: int, age_days: int) -> float:
         """Calculate review traction score based on velocity."""
         if age_days < 1:
             age_days = 1
         velocity = reviews_count / age_days
-        
+        _bands = FRESH_RISERS_CONFIG["review_velocity_bands"]
+        _floor = FRESH_RISERS_CONFIG["review_velocity_floor"]
         if velocity >= 5:
-            return 100.0
+            return _bands[5]
         elif velocity >= 2:
-            return 70.0
+            return _bands[2]
         elif velocity >= 1:
-            return 40.0
+            return _bands[1]
         else:
-            return 10.0
+            return _floor
 
     def _calculate_rank_quality_score(self, current_rank: Optional[int]) -> float:
         """Calculate rank quality score based on best rank."""
         if not current_rank:
-            return 10.0
-        
+            return FRESH_RISERS_CONFIG["rank_quality_no_rank"]
+        _bands = FRESH_RISERS_CONFIG["rank_quality_bands"]
+        _floor = FRESH_RISERS_CONFIG["rank_quality_floor"]
         if current_rank <= 10:
-            return 100.0
+            return _bands[10]
         elif current_rank <= 50:
-            return 80.0
+            return _bands[50]
         elif current_rank <= 100:
-            return 60.0
+            return _bands[100]
         elif current_rank <= 300:
-            return 30.0
+            return _bands[300]
         else:
-            return 10.0
+            return _floor
 
     def _calculate_momentum_score(
         self,
@@ -1501,77 +1452,69 @@ class ScoringEngine:
         )
         
         if not oldest_rank:
-            return 10.0
-        
+            return FRESH_RISERS_CONFIG["momentum_no_history"]
+
         rank_7_days_ago = oldest_rank.rank if oldest_rank.rank else current_rank
         momentum = rank_7_days_ago - current_rank
-        
+        _bands = FRESH_RISERS_CONFIG["momentum_bands"]
+        _floor = FRESH_RISERS_CONFIG["momentum_floor"]
         if momentum >= 100:
-            return 100.0
+            return _bands[100]
         elif momentum >= 50:
-            return 70.0
+            return _bands[50]
         elif momentum >= 20:
-            return 40.0
+            return _bands[20]
         else:
-            return 10.0
+            return _floor
 
     def _calculate_niche_viability_score(self, category_id: Optional[int]) -> float:
         """Calculate niche viability based on category competition."""
         if not category_id:
-            return 50.0
-        
+            return FRESH_RISERS_CONFIG["niche_no_category"]
+
         avg_reviews = (
             self.db.query(func.avg(App.current_reviews))
             .filter(App.category_id == category_id)
             .filter(App.current_reviews.isnot(None))
             .scalar()
         )
-        
+
         if not avg_reviews:
-            return 50.0
-        
-        if avg_reviews < 1000:
-            return 90.0
-        elif avg_reviews < 5000:
-            return 70.0
-        elif avg_reviews < 20000:
-            return 50.0
+            return FRESH_RISERS_CONFIG["niche_default"]
+
+        _bands = FRESH_RISERS_CONFIG["niche_avg_reviews_bands"]
+        _floor = FRESH_RISERS_CONFIG["niche_floor"]
+        if avg_reviews < 1_000:
+            return _bands[1_000]
+        elif avg_reviews < 5_000:
+            return _bands[5_000]
+        elif avg_reviews < 20_000:
+            return _bands[20_000]
         else:
-            return 30.0
-
-    STOPWORDS = frozenset({
-        "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
-        "of", "with", "by", "from", "up", "about", "into", "through", "during",
-        "before", "after", "above", "below", "between", "under", "again", "further",
-        "then", "once", "here", "there", "when", "where", "why", "how", "all", "each",
-        "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only",
-        "own", "same", "so", "than", "too", "very", "can", "will", "just", "should",
-        "now", "your", "you", "its", "this", "that", "these", "those", "i", "we",
-        "they", "he", "she", "it", "my", "our", "their", "his", "her", "what", "which",
-        "who", "whom", "is", "are", "was", "were", "be", "been", "being", "have", "has",
-        "had", "doing", "doing", "game", "app", "free", "pro", "lite", "hd", "ios",
-    })
-
-    WEAK_KEYWORDS = frozenset({
-        "best", "top", "new", "latest", "easy", "simple", "fast", "quick", "smart",
-        "awesome", "cool", "amazing", "great", "perfect", "fun", "good", "nice",
-        "beautiful", "lovely", "amazing", "fantastic", "wonderful", "excellent",
-        "premium", "ultimate", "super", "mega", "power", "world", "day", "today",
-    })
+            return _floor
 
     def _is_weak_keyword(self, keyword: str) -> bool:
-        """Check if keyword is weak (brand, stopword, or generic adjective)."""
+        """Check if keyword is weak (stopword or generic adjective)."""
         kw_lower = keyword.lower().strip()
         if not kw_lower or len(kw_lower) <= 1:
             return True
-        if kw_lower in self.STOPWORDS:
+        if kw_lower in _STOPWORDS:
             return True
-        if kw_lower in self.WEAK_KEYWORDS:
+        if kw_lower in _WEAK_KEYWORDS:
             return True
         return False
 
-    def _extract_phrases(self, text: str, min_words: int = 2, max_words: int = 3) -> List[str]:
+    def _extract_phrases(
+        self,
+        text: str,
+        min_words: int = None,
+        max_words: int = None,
+    ) -> List[str]:
         """Extract multi-word phrases from text (title/subtitle)."""
+        if min_words is None:
+            min_words = ENGINE_CONFIG["phrase_min_words"]
+        if max_words is None:
+            max_words = ENGINE_CONFIG["phrase_max_words"]
         if not text:
             return []
         words = text.split()
