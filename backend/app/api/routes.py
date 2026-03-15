@@ -484,6 +484,21 @@ def get_blowing_up_apps(
     )
 
 
+@router.post("/apps/blowing-up/compute")
+def trigger_blowing_up_compute(
+    timeframe_days: int = Query(14, ge=1, le=30, description="Lookback window in days"),
+    db: Session = Depends(get_db),
+):
+    """
+    Admin: synchronously run blowing-up score computation for all eligible apps.
+    Use a wider timeframe_days (default 14) on first run to maximise candidate coverage.
+    """
+    from app.services.blowing_up_service import BlowingUpService
+    svc = BlowingUpService(db)
+    scored = svc.compute_for_all_apps(timeframe_days=timeframe_days)
+    return {"status": "ok", "scored": scored, "timeframe_days": timeframe_days}
+
+
 @router.get("/apps/{app_id}", response_model=AppResponse)
 def get_app(app_id: int, db: Session = Depends(get_db)):
     app = db.query(models.App).filter(models.App.id == app_id).first()

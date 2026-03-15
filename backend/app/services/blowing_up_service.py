@@ -121,8 +121,15 @@ def _consistency(rankings_asc: list) -> float:
 def _confidence(snapshot_count: int) -> float:
     """
     Data quality factor 0–1.
-    < 2 snapshots → excluded upstream.
-    2–4 → penalised (× 0.5 scaling), 10+ → 1.0.
+    < 2 snapshots → excluded upstream (candidate query guarantees ≥2).
+    2–4  → penalised (× 0.6 scaling)  → range 0.12–0.24
+    5–9  → scaling without penalty     → range 0.50–0.90
+    10+  → 1.0
+
+    NOTE: There is intentionally no hard floor here — the multiplier already
+    downscores low-data apps naturally.  Removing the old `< 0.2` gate means
+    apps with 2–3 snapshots are scored (with low blowing_up_score ≈ 5–15)
+    rather than silently dropped.
     """
     if snapshot_count < 2:
         return 0.0
@@ -276,10 +283,10 @@ class BlowingUpService:
         # Consistency
         consistency_score = _consistency(rankings)
 
-        # Confidence
+        # Confidence — no hard gate; confidence acts as a natural score multiplier.
+        # Apps with 2–3 snapshots will have low blowing_up_score (e.g. 5–15) which
+        # correctly reflects limited data rather than being silently excluded.
         confidence_factor = _confidence(len(rankings))
-        if confidence_factor < 0.2:
-            return None  # too sparse
 
         # Component scores
         rvs  = _norm_rank_velocity(avg_velocity)
@@ -331,12 +338,15 @@ class BlowingUpService:
     def compute_for_all_apps(self, timeframe_days: int = 7) -> int:
         """
         Compute and persist blowing_up_score for all eligible apps.
-        Returns the number of apps scored.
+        Returns the number of apps scored (inserted/updated).
+
+        Commit strategy: per-app commit so that one bad row never rolls back
+        the entire batch.
         """
         now    = datetime.utcnow()
         cutoff = now - timedelta(days=timeframe_days)
 
-        # Only consider apps with ≥ 2 ranking snapshots in the window
+        # Candidate selection: apps with ≥ 2 ranking snapshots in the window
         app_ids = [
             row[0]
             for row in (
@@ -348,11 +358,21 @@ class BlowingUpService:
             )
         ]
 
+        candidates = len(app_ids)
+        logger.info(
+            f"[BlowingUp] starting compute: {candidates} candidate apps "
+            f"(timeframe={timeframe_days}d, cutoff={cutoff.date()})"
+        )
+
         scored = 0
+        skipped_no_data = 0
+        failed = 0
+
         for app_id in app_ids:
             try:
                 result = self.compute_for_app(app_id, timeframe_days)
                 if result is None:
+                    skipped_no_data += 1
                     continue
 
                 stmt = (
@@ -379,35 +399,39 @@ class BlowingUpService:
                     .on_conflict_do_update(
                         index_elements=["app_id"],
                         set_={
-                            "blowing_up_score":      result["blowing_up_score"],
-                            "rank_velocity_score":   result["rank_velocity_score"],
-                            "rank_change_score":     result["rank_change_score"],
+                            "blowing_up_score":       result["blowing_up_score"],
+                            "rank_velocity_score":    result["rank_velocity_score"],
+                            "rank_change_score":      result["rank_change_score"],
                             "reviews_velocity_score": result["reviews_velocity_score"],
-                            "chart_presence_score":  result["chart_presence_score"],
-                            "cross_market_score":    result["cross_market_score"],
-                            "consistency_score":     result["consistency_score"],
-                            "confidence_score":      result["confidence_score"],
-                            "rank_change":           result["rank_change"],
-                            "rank_velocity":         result["rank_velocity"],
-                            "reviews_velocity":      result["reviews_velocity"],
-                            "chart_appearances":     result["chart_appearances"],
-                            "markets_count":         result["markets_count"],
-                            "badges":                result["badges"],
-                            "why_flagged":           result["why_flagged"],
-                            "computed_at":           now,
+                            "chart_presence_score":   result["chart_presence_score"],
+                            "cross_market_score":     result["cross_market_score"],
+                            "consistency_score":      result["consistency_score"],
+                            "confidence_score":       result["confidence_score"],
+                            "rank_change":            result["rank_change"],
+                            "rank_velocity":          result["rank_velocity"],
+                            "reviews_velocity":       result["reviews_velocity"],
+                            "chart_appearances":      result["chart_appearances"],
+                            "markets_count":          result["markets_count"],
+                            "badges":                 result["badges"],
+                            "why_flagged":            result["why_flagged"],
+                            "computed_at":            now,
                         },
                     )
                 )
                 self.db.execute(stmt)
+                # Commit per-app: prevents one bad row from rolling back the batch
+                self.db.commit()
                 scored += 1
 
             except Exception as exc:
-                logger.warning(f"[BlowingUp] app {app_id} failed: {exc}")
+                logger.warning(f"[BlowingUp] app_id={app_id} failed: {exc}")
                 self.db.rollback()
+                failed += 1
 
-        if scored > 0:
-            self.db.commit()
-        logger.info(f"[BlowingUp] scored {scored}/{len(app_ids)} apps")
+        logger.info(
+            f"[BlowingUp] done: candidates={candidates} scored={scored} "
+            f"skipped={skipped_no_data} failed={failed}"
+        )
         return scored
 
     # ------------------------------------------------------------------
