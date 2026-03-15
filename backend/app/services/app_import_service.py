@@ -319,16 +319,23 @@ def _get_or_create_app(db: Session, item: Dict, update_existing: bool = True) ->
                 existing.release_date = release_date
         return existing, False
 
+    # iTunes returns genres as a list of strings e.g. ["Productivity", "Business"].
+    # Use the last element (if more than one) as the secondary category.
+    genres = item.get("genres") or []
+    secondary_category: Optional[str] = None
+    if isinstance(genres, list) and len(genres) > 1 and isinstance(genres[-1], str):
+        secondary_category = genres[-1]
+
     new_app = App(
         app_id=track_id,
         name=name,
         subtitle=item.get("subtitle", ""),
         description=item.get("description", ""),
         developer=developer,
-        developer_id=item.get("artistId", ""),
+        developer_id=str(item.get("artistId", "") or ""),
         icon_url=icon_url,
         primary_category=primary_category,
-        secondary_category=item.get("genres", [{}])[-1].get("name") if item.get("genres") else None,
+        secondary_category=secondary_category,
         price=price,
         currency=item.get("currency", "USD"),
         is_free=is_free,
@@ -387,12 +394,14 @@ class AppImportService:
 
     def search_apps(self, query: str, limit: int = 20) -> Dict:
         """
-        Advanced search for apps with multi-stage ranking.
-        
-        1. Query normalization
-        2. Database search with weighted scoring
-        3. Fallback to iTunes API if needed
-        4. Deduplication and final ranking
+        Search for apps: local DB first, then App Store.
+
+        IMPORTANT: This endpoint never writes to the database.
+        It returns raw results from local DB and iTunes API so the
+        caller can decide which apps to actually import (via lookup_app).
+
+        Local results  → source='database'
+        iTunes results → source='app_store'  (id=0, not yet imported)
         """
         if not query or len(query.strip()) < 1:
             return {
@@ -403,80 +412,85 @@ class AppImportService:
             }
 
         original_query = query.strip()
-        normalized = _normalize_query(original_query)
-        
-        logger.info(f"[Search] query='{original_query}', normalized='{normalized}'")
+        logger.info(f"[Search] query='{original_query}'")
 
+        # 1. Search local DB
         db_results = _search_local_db_advanced(self.db, original_query, limit=limit)
         db_count = len(db_results)
-        
         logger.info(f"[Search] db_results={db_count}")
 
+        # 2. If enough local results, skip App Store
         if db_count >= _MIN_LOCAL_RESULTS:
-            final_results = db_results[:limit]
-            logger.info(f"[Search] final_results={len(final_results)} (local only)")
+            logger.info(f"[Search] returning {db_count} local results (skipping App Store)")
             return {
                 "query": original_query,
-                "results": final_results,
-                "total": len(final_results),
-                "from_cache": len([r for r in final_results if r['source'] == 'database']),
+                "results": db_results[:limit],
+                "total": len(db_results[:limit]),
+                "from_cache": db_count,
             }
 
-        itunes_results = _search_itunes(original_query, limit=limit)
-        logger.info(f"[Search] apple_results={len(itunes_results)}")
+        # 3. Search iTunes (read-only — no DB writes)
+        remaining = max(limit - db_count, 5)
+        itunes_results = _search_itunes(original_query, limit=remaining * 2)
+        logger.info(f"[Search] itunes_results={len(itunes_results)}")
 
-        existing_ids: Set[str] = {r['app_id'] for r in db_results}
-        existing_ids.add('')
-        existing_ids.add('0')
+        existing_app_ids: Set[str] = {r['app_id'] for r in db_results}
 
-        apple_imported = 0
+        store_results: List[Dict] = []
         for item in itunes_results:
             track_id = str(item.get("trackId", ""))
-            if not track_id or track_id in existing_ids:
+            if not track_id or track_id in existing_app_ids:
                 continue
 
-            app, is_new = _get_or_create_app(self.db, item, update_existing=False)
-            if app:
-                db_results.append({
-                    'id': app.id,
-                    'app_id': app.app_id,
-                    'name': app.name,
-                    'developer': app.developer,
-                    'icon_url': app.icon_url,
-                    'current_rating': app.current_rating,
-                    'current_reviews': app.current_reviews,
-                    'primary_category': app.primary_category,
-                    'price': app.price,
-                    'is_free': app.is_free,
-                    'url': app.url,
-                    'is_new': is_new,
-                    'source': 'app_store',
-                    'match_score': 0,
-                    'match_type': 'api',
-                })
-                existing_ids.add(track_id)
-                apple_imported += 1
-                time.sleep(_REQUEST_DELAY)
+            name = item.get("trackName", "")
+            if not name:
+                continue
 
-            if len(db_results) >= limit:
+            icon_url = item.get("artworkUrl100", "") or item.get("artworkUrl512", "")
+            if icon_url:
+                icon_url = icon_url.replace("100x100", "512x512").replace("200x200", "512x512")
+
+            price = item.get("price", 0)
+            if isinstance(price, str):
+                try:
+                    price = float(price)
+                except Exception:
+                    price = 0
+            is_free = price == 0 or bool(item.get("isFree", False))
+
+            store_results.append({
+                'id': 0,           # Not in DB yet — must call lookup_app to import
+                'app_id': track_id,
+                'name': name,
+                'developer': item.get("artistName", "") or "",
+                'icon_url': icon_url or None,
+                'current_rating': item.get("averageUserRating") or None,
+                'current_reviews': item.get("userRatingCount") or None,
+                'primary_category': item.get("primaryGenreName") or None,
+                'price': price,
+                'is_free': is_free,
+                'url': item.get("trackViewUrl") or None,
+                'is_new': False,
+                'source': 'app_store',
+                'match_score': 0.0,
+                'match_type': 'api',
+            })
+            existing_app_ids.add(track_id)
+
+            if len(store_results) >= remaining:
                 break
 
-        logger.info(f"[Search] apple_imported={apple_imported}")
-
-        final_results = db_results[:limit]
-        
-        final_results.sort(key=lambda x: (
-            -x.get('match_score', 0),
-            -(x.get('current_reviews') or 0),
-            -(x.get('current_rating') or 0)
-        ))
-
-        logger.info(f"[Search] final_results={len(final_results)}")
+        # 4. Combine: local DB results first, then App Store results
+        final_results = db_results + store_results
+        logger.info(
+            f"[Search] final_results={len(final_results)} "
+            f"(db={db_count}, store={len(store_results)})"
+        )
 
         return {
             "query": original_query,
-            "results": final_results,
-            "total": len(final_results),
+            "results": final_results[:limit],
+            "total": len(final_results[:limit]),
             "from_cache": db_count,
         }
 
