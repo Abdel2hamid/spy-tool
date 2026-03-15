@@ -1,9 +1,11 @@
 'use client';
 
-import { useState } from 'react';
-import { Menu, Search, Bell, X } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import Link from 'next/link';
+import { Menu, Search, Bell, X, Loader2, Plus, ArrowRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { ThemeToggle } from './ThemeToggle';
+import { searchAppsImport, lookupApp, AppImportSearchItem } from '@/lib/api';
 
 interface HeaderProps {
   onMenuClick: () => void;
@@ -12,15 +14,65 @@ interface HeaderProps {
 export function Header({ onMenuClick }: HeaderProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [focused, setFocused] = useState(false);
+  const [results, setResults] = useState<AppImportSearchItem[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [importing, setImporting] = useState<string | null>(null);
+  const [showDropdown, setShowDropdown] = useState(false);
   const router = useRouter();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (searchQuery.trim()) {
-      router.push(`/apps?search=${encodeURIComponent(searchQuery.trim())}`);
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // Debounced search
+  useEffect(() => {
+    clearTimeout(debounceRef.current);
+    if (searchQuery.trim().length < 2) {
+      setResults([]);
+      setShowDropdown(false);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      setSearching(true);
+      setShowDropdown(true);
+      try {
+        const res = await searchAppsImport(searchQuery.trim(), 8);
+        setResults(res.results);
+      } catch {
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 350);
+    return () => clearTimeout(debounceRef.current);
+  }, [searchQuery]);
+
+  const handleImport = async (app: AppImportSearchItem) => {
+    setImporting(app.app_id);
+    try {
+      const detail = await lookupApp(app.app_id);
+      setShowDropdown(false);
       setSearchQuery('');
+      router.push(`/apps/${detail.id}?imported=1`);
+    } catch {
+      // ignore
+    } finally {
+      setImporting(null);
     }
   };
+
+  const localResults = results.filter(r => r.source !== 'app_store');
+  const storeResults = results.filter(r => r.source === 'app_store');
+  const hasResults = localResults.length > 0 || storeResults.length > 0;
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 border-b border-gray-200 bg-white/90 px-4 backdrop-blur-md dark:border-gray-800 dark:bg-gray-950/90 lg:px-6">
@@ -34,11 +86,11 @@ export function Header({ onMenuClick }: HeaderProps) {
           <Menu className="h-5 w-5" />
         </button>
 
-        {/* Search bar */}
-        <form onSubmit={handleSearch} className="hidden sm:block">
+        {/* Smart search with dropdown */}
+        <div ref={containerRef} className="relative hidden sm:block">
           <div
             className={`flex items-center gap-2 rounded-lg border px-3 py-2 transition-all duration-200 ${
-              focused
+              focused || showDropdown
                 ? 'border-indigo-300 bg-white shadow-sm shadow-indigo-100 dark:border-indigo-700 dark:bg-gray-900 dark:shadow-indigo-900/20'
                 : 'border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900'
             }`}
@@ -46,31 +98,136 @@ export function Header({ onMenuClick }: HeaderProps) {
             <Search className="h-4 w-4 flex-shrink-0 text-gray-400" />
             <input
               type="text"
-              placeholder="Search apps, keywords…"
+              placeholder="Search or import apps…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              onFocus={() => setFocused(true)}
+              onFocus={() => {
+                setFocused(true);
+                if (results.length > 0) setShowDropdown(true);
+              }}
               onBlur={() => setFocused(false)}
               className="w-56 bg-transparent text-sm text-gray-900 placeholder-gray-400 focus:outline-none dark:text-white dark:placeholder-gray-500 lg:w-72"
             />
-            {searchQuery && (
+            {searching ? (
+              <Loader2 className="h-3.5 w-3.5 flex-shrink-0 animate-spin text-gray-400" />
+            ) : searchQuery ? (
               <button
                 type="button"
-                onClick={() => setSearchQuery('')}
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                onClick={() => { setSearchQuery(''); setShowDropdown(false); }}
+                className="flex-shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
-            )}
+            ) : null}
           </div>
-        </form>
+
+          {/* Results dropdown */}
+          {showDropdown && (
+            <div className="absolute left-0 right-0 top-full z-50 mt-1.5 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+              {searching && !hasResults ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-5 w-5 animate-spin text-indigo-400" />
+                </div>
+              ) : !hasResults ? (
+                <div className="px-4 py-5 text-center text-sm text-gray-500 dark:text-gray-400">
+                  No apps found for &ldquo;{searchQuery}&rdquo;
+                </div>
+              ) : (
+                <div className="max-h-96 overflow-y-auto">
+                  {/* Local / DB results */}
+                  {localResults.length > 0 && (
+                    <div>
+                      <p className="px-3 pb-1 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                        In your database
+                      </p>
+                      {localResults.map(app => (
+                        <Link
+                          key={app.id}
+                          href={`/apps/${app.id}`}
+                          onClick={() => { setShowDropdown(false); setSearchQuery(''); }}
+                          className="flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800"
+                        >
+                          {app.icon_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={app.icon_url} alt={app.name} className="h-8 w-8 flex-shrink-0 rounded-lg object-cover" />
+                          ) : (
+                            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-400 to-purple-500">
+                              <span className="text-xs font-bold text-white">{app.name[0]?.toUpperCase()}</span>
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{app.name}</p>
+                            <p className="truncate text-xs text-gray-500 dark:text-gray-400">{app.developer}</p>
+                          </div>
+                          <ArrowRight className="h-3.5 w-3.5 flex-shrink-0 text-gray-300 dark:text-gray-600" />
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* App Store results */}
+                  {storeResults.length > 0 && (
+                    <div>
+                      {localResults.length > 0 && (
+                        <div className="border-t border-gray-100 dark:border-gray-800" />
+                      )}
+                      <p className="px-3 pb-1 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                        From App Store
+                      </p>
+                      {storeResults.map(app => (
+                        <div
+                          key={app.app_id}
+                          className="flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800"
+                        >
+                          {app.icon_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={app.icon_url} alt={app.name} className="h-8 w-8 flex-shrink-0 rounded-lg object-cover" />
+                          ) : (
+                            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-400 to-cyan-500">
+                              <span className="text-xs font-bold text-white">{app.name[0]?.toUpperCase()}</span>
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{app.name}</p>
+                            <p className="truncate text-xs text-gray-500 dark:text-gray-400">{app.developer}</p>
+                          </div>
+                          <button
+                            onClick={() => handleImport(app)}
+                            disabled={importing === app.app_id}
+                            className="flex flex-shrink-0 items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-indigo-700 disabled:opacity-60"
+                          >
+                            {importing === app.app_id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Plus className="h-3 w-3" />
+                            )}
+                            Import
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Footer hint */}
+                  <div className="border-t border-gray-100 px-3 py-2 dark:border-gray-800">
+                    <Link
+                      href={`/apps?search=${encodeURIComponent(searchQuery)}`}
+                      onClick={() => { setShowDropdown(false); setSearchQuery(''); }}
+                      className="text-xs text-indigo-500 hover:text-indigo-700 dark:text-indigo-400"
+                    >
+                      Search &ldquo;{searchQuery}&rdquo; in all apps →
+                    </Link>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Right: actions */}
       <div className="flex items-center gap-1.5">
         <ThemeToggle />
-
-        {/* Notification bell */}
         <button
           className="relative rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
           aria-label="Notifications"

@@ -3,14 +3,14 @@
 export const dynamic = 'force-dynamic';
 
 import { useState, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components';
 import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, getAppDetail, getAppVersions, getAppReviews, getAppAnalytics, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, RankHistory } from '@/lib/api';
 import {
   ArrowLeft, Star, Download, Calendar, Globe, MessageSquare,
   TrendingUp, BarChart3, AlertTriangle, ThumbsUp, Code, ExternalLink,
   ChevronRight, Filter, Lightbulb, RefreshCw, Search, Target,
-  Zap, DollarSign, Users, FlaskConical
+  Zap, DollarSign, Users, FlaskConical, Sparkles, X as XIcon
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -2497,14 +2497,16 @@ function AppAutopsyTab({ appId }: { appId: number }) {
 export default function AppDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const appId = parseInt(params.id as string);
-  
+
   const [app, setApp] = useState<AppDetail | null>(null);
   const [versions, setVersions] = useState<AppVersion[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [analytics, setAnalytics] = useState<AppAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabType>('overview');
+  const [showSyncBanner, setShowSyncBanner] = useState(searchParams.get('imported') === '1');
 
   useEffect(() => {
     async function fetchData() {
@@ -2609,6 +2611,27 @@ export default function AppDetailPage() {
           <ArrowLeft className="h-4 w-4" />
           Back to Apps
         </button>
+
+        {/* Import sync banner */}
+        {showSyncBanner && (
+          <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 dark:border-emerald-800/50 dark:bg-emerald-950/30">
+            <Sparkles className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-500" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-emerald-800 dark:text-emerald-300">
+                App imported successfully!
+              </p>
+              <p className="mt-0.5 text-xs text-emerald-600 dark:text-emerald-400">
+                Background enrichment is running — rankings, reviews, and metrics will populate within the next few minutes.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowSyncBanner(false)}
+              className="flex-shrink-0 rounded-lg p-1 text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors"
+            >
+              <XIcon className="h-4 w-4" />
+            </button>
+          </div>
+        )}
 
         <AppHeader app={app} />
 

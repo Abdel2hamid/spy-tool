@@ -244,7 +244,12 @@
       "Bash(python3 -m pytest tests/test_growth_intelligence.py -v 2>&1 | tail -60)",
       "Bash(python3 -m pytest tests/test_growth_intelligence.py -v 2>&1 | tail -20)",
       "Bash(python3 -m pytest tests/ -q 2>&1 | tail -8)",
-      "Bash(/Users/abdelhamid/appstore-spy-tool/frontend/node_modules/.bin/tsc --noEmit 2>&1 | grep -v \"^.next/\")"
+      "Bash(/Users/abdelhamid/appstore-spy-tool/frontend/node_modules/.bin/tsc --noEmit 2>&1 | grep -v \"^.next/\")",
+      "Bash(find /Users/abdelhamid/appstore-spy-tool/frontend/src/app -type f -name \"page.tsx\" | xargs -I {} bash -c 'echo \"=== {} ===\" && head -5 {}')",
+      "Bash(grep -n \"export default\\\\|function App\\\\|return \\(\\\\|useParams\\\\|useRouter\\\\|useSearchParams\" /Users/abdelhamid/appstore-spy-tool/frontend/src/app/apps/[id]/page.tsx | head -30)",
+      "Bash(grep -n \"export default\\\\|function AppDetailPage\\\\|const AppDetailPage\" /Users/abdelhamid/appstore-spy-tool/frontend/src/app/apps/[id]/page.tsx)",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/frontend && npx tsc --noEmit 2>&1 | grep -v \"\\\\.next/\" | head -40)",
+      "Bash(npx tsc --noEmit 2>&1 | head -20)"
     ]
   }
 }

@@ -13,7 +13,6 @@ import {
   Lightbulb,
   Radar,
   Zap,
-  Compass,
   Flame,
   Megaphone,
   TrendingUp as CampaignIcon,
@@ -26,7 +25,6 @@ const navSections = [
     label: 'MAIN',
     items: [
       { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-      { href: '/discover', label: 'Discover', icon: Compass },
       { href: '/apps', label: 'Apps', icon: AppWindow },
       { href: '/latest-apps', label: 'Latest Apps', icon: Zap },
       { href: '/trending', label: 'Trending', icon: TrendingUp },

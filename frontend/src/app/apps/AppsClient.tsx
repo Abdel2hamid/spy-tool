@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components';
-import { App, Category, AppFilters, getFilteredApps } from '@/lib/api';
+import { App, Category, AppFilters, getFilteredApps, searchAppsImport, lookupApp, AppImportSearchItem } from '@/lib/api';
 import {
   Search, AppWindow, Star, SlidersHorizontal, X,
-  RotateCcw, ChevronUp, ChevronDown, Loader2,
+  RotateCcw, ChevronUp, ChevronDown, Loader2, Plus, Globe,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -176,10 +177,26 @@ function DrawerSection({ title, children }: { title: string; children: React.Rea
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Extract App Store numeric ID from URLs like https://apps.apple.com/.../id1234567890 */
+function parseAppStoreInput(input: string): string | null {
+  const trimmed = input.trim();
+  // URL pattern: id followed by 6+ digits
+  const urlMatch = trimmed.match(/[?/]id(\d{6,})/);
+  if (urlMatch) return urlMatch[1];
+  // Pure numeric ID (at least 6 digits)
+  if (/^\d{6,}$/.test(trimmed)) return trimmed;
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
 export default function AppsClient() {
+  const router = useRouter();
   const [apps, setApps] = useState<App[]>([]);
   const [total, setTotal] = useState(0);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -191,6 +208,12 @@ export default function AppsClient() {
   const [draftFilters, setDraftFilters] = useState<AppFilters>(DEFAULT_FILTERS);
   const [searchInput, setSearchInput] = useState('');
   const searchTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  // App Store search state
+  const [storeResults, setStoreResults] = useState<AppImportSearchItem[]>([]);
+  const [storeSearching, setStoreSearching] = useState(false);
+  const [importing, setImporting] = useState<string | null>(null);
+  const storeSearchTimer = useRef<ReturnType<typeof setTimeout>>();
 
   // Load categories once
   useEffect(() => {
@@ -219,13 +242,56 @@ export default function AppsClient() {
     fetchApps(appliedFilters);
   }, [appliedFilters, fetchApps]);
 
-  // Debounce search bar
+  // Debounce search bar — also triggers App Store search
   const handleSearchChange = (value: string) => {
     setSearchInput(value);
     clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => {
       setAppliedFilters(prev => ({ ...prev, search: value, skip: 0 }));
     }, 400);
+
+    // App Store parallel search
+    clearTimeout(storeSearchTimer.current);
+    if (value.trim().length < 2) {
+      setStoreResults([]);
+      return;
+    }
+
+    // If input looks like an App Store URL or numeric ID, skip text search
+    const directId = parseAppStoreInput(value);
+    if (directId) {
+      setStoreSearching(true);
+      lookupApp(directId)
+        .then(detail => {
+          router.push(`/apps/${detail.id}?imported=1`);
+        })
+        .catch(() => setStoreSearching(false))
+        .finally(() => setStoreSearching(false));
+      return;
+    }
+
+    storeSearchTimer.current = setTimeout(async () => {
+      setStoreSearching(true);
+      try {
+        const res = await searchAppsImport(value.trim(), 6);
+        // Only keep results not already in DB
+        setStoreResults(res.results.filter(r => r.source === 'app_store'));
+      } catch {
+        setStoreResults([]);
+      } finally {
+        setStoreSearching(false);
+      }
+    }, 600);
+  };
+
+  const handleImport = async (app: AppImportSearchItem) => {
+    setImporting(app.app_id);
+    try {
+      const detail = await lookupApp(app.app_id);
+      router.push(`/apps/${detail.id}?imported=1`);
+    } catch {
+      setImporting(null);
+    }
   };
 
   const openDrawer = () => {
@@ -441,6 +507,59 @@ export default function AppsClient() {
               >
                 Clear filters
               </button>
+            )}
+          </div>
+        )}
+
+        {/* ── App Store results ─────────────────────────────────────── */}
+        {(storeSearching || storeResults.length > 0) && searchInput.trim().length >= 2 && (
+          <div className="rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+            <div className="flex items-center gap-2 border-b border-gray-100 px-4 py-3 dark:border-gray-800">
+              <Globe className="h-4 w-4 text-emerald-500" />
+              <h2 className="text-sm font-semibold text-gray-900 dark:text-white">From App Store</h2>
+              <span className="text-xs text-gray-400 dark:text-gray-500">— not yet tracked</span>
+              {storeSearching && <Loader2 className="ml-auto h-3.5 w-3.5 animate-spin text-gray-400" />}
+            </div>
+            {storeResults.length > 0 && (
+              <div className="divide-y divide-gray-100 dark:divide-gray-800">
+                {storeResults.map(item => (
+                  <div key={item.app_id} className="flex items-center gap-4 px-4 py-3">
+                    {item.icon_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={item.icon_url} alt={item.name} className="h-10 w-10 flex-shrink-0 rounded-xl object-cover" />
+                    ) : (
+                      <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-cyan-500">
+                        <span className="text-sm font-bold text-white">{item.name[0]?.toUpperCase()}</span>
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-gray-900 dark:text-white">{item.name}</p>
+                      <p className="truncate text-xs text-gray-500 dark:text-gray-400">
+                        {item.developer}
+                        {item.primary_category && <span className="ml-2 text-gray-400">· {item.primary_category}</span>}
+                      </p>
+                    </div>
+                    {item.current_rating != null && item.current_rating > 0 && (
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                        <span className="text-xs text-gray-600 dark:text-gray-300">{item.current_rating.toFixed(1)}</span>
+                      </div>
+                    )}
+                    <button
+                      onClick={() => handleImport(item)}
+                      disabled={importing === item.app_id}
+                      className="flex flex-shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-indigo-700 disabled:opacity-60"
+                    >
+                      {importing === item.app_id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Plus className="h-3.5 w-3.5" />
+                      )}
+                      Import & Track
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         )}
