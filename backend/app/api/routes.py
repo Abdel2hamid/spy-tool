@@ -499,6 +499,84 @@ def trigger_blowing_up_compute(
     return {"status": "ok", "scored": scored, "timeframe_days": timeframe_days}
 
 
+@router.get("/apps/blowing-up/debug")
+def debug_blowing_up(
+    timeframe_days: int = Query(14, ge=1, le=90),
+    db: Session = Depends(get_db),
+):
+    """Diagnose why blowing-up table may be empty."""
+    from datetime import datetime, timedelta
+    from sqlalchemy import func
+    from app.models.models import Ranking, AppBlowingUpScore
+
+    now = datetime.utcnow()
+    cutoff = now - timedelta(days=timeframe_days)
+
+    total_rankings = db.query(func.count(Ranking.id)).scalar() or 0
+    rankings_in_window = (
+        db.query(func.count(Ranking.id))
+        .filter(Ranking.recorded_at >= cutoff, Ranking.rank.isnot(None))
+        .scalar()
+    ) or 0
+
+    # Apps with ≥2 snapshots (candidates for scoring)
+    candidates_2plus = (
+        db.query(Ranking.app_id)
+        .filter(Ranking.recorded_at >= cutoff, Ranking.rank.isnot(None))
+        .group_by(Ranking.app_id)
+        .having(func.count(Ranking.id) >= 2)
+        .count()
+    )
+
+    # Apps with ≥5 snapshots (confidence ≥ 50% — passes 30% filter)
+    candidates_5plus = (
+        db.query(Ranking.app_id)
+        .filter(Ranking.recorded_at >= cutoff, Ranking.rank.isnot(None))
+        .group_by(Ranking.app_id)
+        .having(func.count(Ranking.id) >= 5)
+        .count()
+    )
+
+    scores_total = db.query(func.count(AppBlowingUpScore.app_id)).scalar() or 0
+    scores_above_30pct = (
+        db.query(func.count(AppBlowingUpScore.app_id))
+        .filter(AppBlowingUpScore.confidence_score >= 30)
+        .scalar()
+    ) or 0
+
+    # Snapshot distribution for top apps
+    snapshot_dist = db.execute(
+        "SELECT cnt, COUNT(*) as apps FROM ("
+        "  SELECT app_id, COUNT(*) as cnt FROM rankings"
+        f" WHERE recorded_at >= '{cutoff.isoformat()}' AND rank IS NOT NULL"
+        "  GROUP BY app_id"
+        ") t GROUP BY cnt ORDER BY cnt"
+    ).fetchall()
+
+    return {
+        "timeframe_days": timeframe_days,
+        "cutoff": cutoff.isoformat(),
+        "total_ranking_rows_ever": total_rankings,
+        "ranking_rows_in_window": rankings_in_window,
+        "apps_with_2plus_snapshots": candidates_2plus,
+        "apps_with_5plus_snapshots": candidates_5plus,
+        "blowing_up_scores_total": scores_total,
+        "blowing_up_scores_above_30pct_confidence": scores_above_30pct,
+        "snapshot_count_distribution": [{"snapshots": r[0], "apps": r[1]} for r in snapshot_dist],
+        "diagnosis": (
+            "No ranking data at all — top charts scraping has not run yet"
+            if total_rankings == 0
+            else "Ranking data exists but no candidates in window — try timeframe_days=30"
+            if rankings_in_window == 0
+            else "Candidates exist but compute hasn't run — call POST /apps/blowing-up/compute"
+            if scores_total == 0
+            else "Scores exist but confidence filter (30%) removes all — lower min_confidence"
+            if scores_above_30pct == 0
+            else "OK — data exists and passes confidence filter"
+        ),
+    }
+
+
 @router.get("/apps/{app_id}", response_model=AppResponse)
 def get_app(app_id: int, db: Session = Depends(get_db)):
     app = db.query(models.App).filter(models.App.id == app_id).first()
