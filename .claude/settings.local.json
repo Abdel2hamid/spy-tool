@@ -263,7 +263,12 @@
       "Bash(python -m pytest tests/ -x -q --tb=short 2>&1 | tail -30)",
       "Bash(python3 -m pytest tests/ -x -q --tb=short 2>&1 | tail -40)",
       "Bash(curl -s http://localhost:8000/api/v1/apps/blowing-up?limit=1 2>&1 | head -5)",
-      "Bash(curl -s \"http://localhost:8000/api/v1/apps/blowing-up\" -o /dev/null -w \"%{http_code}\" 2>&1)"
+      "Bash(curl -s \"http://localhost:8000/api/v1/apps/blowing-up\" -o /dev/null -w \"%{http_code}\" 2>&1)",
+      "Bash(python3 -m pytest backend/tests/ -x -q --tb=short 2>&1 | tail -10)",
+      "Bash(git add backend/app/api/routes.py && git commit -m \"$\\(cat <<'EOF'\nAdd blowing-up debug and compute endpoints\n\n- POST /apps/blowing-up/compute — manual backfill trigger \\(timeframe_days=14 default\\)\n- GET /apps/blowing-up/debug — diagnoses empty table \\(ranking counts, candidate counts, confidence distribution, auto-diagnosis string\\)\n\nCo-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push)",
+      "Bash(python3 -m pytest backend/tests/ -x -q --tb=short 2>&1 | tail -5)",
+      "Bash(git add backend/app/api/routes.py && git commit -m \"$\\(cat <<'EOF'\nFix blowing-up debug/compute endpoints \\(500 errors\\)\n\n- debug: replace raw SQL + broken .count\\(\\) with proper SQLAlchemy subqueries\n- compute: wrap in try/except to surface actual error instead of opaque 500\n\nCo-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>\nEOF\n\\)\" && git push)"
     ]
   }
 }
