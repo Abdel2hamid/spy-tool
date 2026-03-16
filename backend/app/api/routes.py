@@ -393,30 +393,57 @@ def get_blowing_up_apps(
     skip: int = Query(0, ge=0),
     sort_by: str = Query("blowing_up_score", description="blowing_up_score|rank_velocity|rank_change|reviews_velocity|confidence"),
     sort_order: str = Query("desc", description="asc|desc"),
-    min_confidence: float = Query(0.3, ge=0.0, le=1.0, description="Minimum confidence (0–1)"),
+    min_confidence: float = Query(0.0, ge=0.0, le=1.0, description="Minimum confidence (0–1)"),
     min_reviews_velocity: float = Query(0.0, ge=0.0, description="Minimum reviews/day"),
     category: Optional[str] = Query(None, description="Filter by primary_category (partial match)"),
     chart_type: Optional[str] = Query(None, description="topfree|toppaid|topgrossing"),
     timeframe: str = Query("7d", description="24h|3d|7d — window used for score computation"),
+    autocompute: bool = Query(False, description="Run scoring synchronously before returning"),
     db: Session = Depends(get_db),
 ):
     """
     Return apps showing unusually fast momentum across rankings and reviews.
     Results are read from the precomputed app_blowing_up_scores table
     (refreshed every 15 min) for sub-millisecond response times.
+    Pass ?autocompute=true to trigger a fresh compute run before returning.
     """
     from app.services.blowing_up_service import BlowingUpService
+    from app.models.models import AppBlowingUpScore, Ranking
 
     svc = BlowingUpService(db)
 
+    # Optional synchronous backfill (used on first deploy / manual refresh)
+    if autocompute:
+        try:
+            svc.compute_for_all_apps(timeframe_days=30)
+        except Exception:
+            pass
+
     # Check if the table has any data at all
-    from app.models.models import AppBlowingUpScore
     total_computed = db.query(func.count(AppBlowingUpScore.app_id)).scalar() or 0
 
     if total_computed == 0:
+        # Gather diagnostic counts to explain WHY it's empty
+        total_rankings = db.query(func.count(Ranking.id)).scalar() or 0
+        from datetime import timedelta as _td
+        cutoff_7d = datetime.utcnow() - _td(days=7)
+        rankings_7d = (
+            db.query(func.count(Ranking.id))
+            .filter(Ranking.recorded_at >= cutoff_7d, Ranking.rank.isnot(None))
+            .scalar()
+        ) or 0
+        if total_rankings == 0:
+            msg = "No ranking data in database yet — top-charts scraping has not run."
+        elif rankings_7d == 0:
+            msg = f"Ranking data exists ({total_rankings} rows) but none in the last 7 days — scraper may be stale."
+        else:
+            msg = (
+                f"Ranking data exists ({rankings_7d} rows in last 7d) but no candidates "
+                "have ≥2 snapshots — charts may have only run once. Will populate on next scheduler run."
+            )
         return BlowingUpResponse(
             status="insufficient_data",
-            message="No blowing-up scores computed yet. The scoring job runs every 15 minutes.",
+            message=msg,
             required_signals=["ranking_history", "rank_velocity"],
             items=[],
             total=0,
@@ -482,98 +509,6 @@ def get_blowing_up_apps(
         top_score=round(max(scores), 1) if scores else None,
         avg_rank_velocity=round(sum(velocities) / len(velocities), 1) if velocities else None,
     )
-
-
-@router.post("/apps/blowing-up/compute")
-def trigger_blowing_up_compute(
-    timeframe_days: int = Query(14, ge=1, le=30, description="Lookback window in days"),
-    db: Session = Depends(get_db),
-):
-    """
-    Admin: synchronously run blowing-up score computation for all eligible apps.
-    Use a wider timeframe_days (default 14) on first run to maximise candidate coverage.
-    """
-    import traceback
-    try:
-        from app.services.blowing_up_service import BlowingUpService
-        svc = BlowingUpService(db)
-        scored = svc.compute_for_all_apps(timeframe_days=timeframe_days)
-        return {"status": "ok", "scored": scored, "timeframe_days": timeframe_days}
-    except Exception as exc:
-        return {"status": "error", "error": str(exc), "trace": traceback.format_exc()}
-
-
-@router.get("/apps/blowing-up/debug")
-def debug_blowing_up(
-    timeframe_days: int = Query(14, ge=1, le=90),
-    db: Session = Depends(get_db),
-):
-    """Diagnose why blowing-up table may be empty."""
-    from datetime import datetime, timedelta
-    from sqlalchemy import func, text
-    from app.models.models import Ranking, AppBlowingUpScore
-
-    now = datetime.utcnow()
-    cutoff = now - timedelta(days=timeframe_days)
-
-    total_rankings = db.query(func.count(Ranking.id)).scalar() or 0
-    rankings_in_window = (
-        db.query(func.count(Ranking.id))
-        .filter(Ranking.recorded_at >= cutoff, Ranking.rank.isnot(None))
-        .scalar()
-    ) or 0
-
-    # Subquery: per-app snapshot counts in window
-    snap_sub = (
-        db.query(Ranking.app_id, func.count(Ranking.id).label("cnt"))
-        .filter(Ranking.recorded_at >= cutoff, Ranking.rank.isnot(None))
-        .group_by(Ranking.app_id)
-        .subquery()
-    )
-
-    candidates_2plus = db.query(func.count()).select_from(snap_sub).filter(snap_sub.c.cnt >= 2).scalar() or 0
-    candidates_5plus = db.query(func.count()).select_from(snap_sub).filter(snap_sub.c.cnt >= 5).scalar() or 0
-
-    # Snapshot distribution (bucket by count, capped at 20+)
-    dist_rows = (
-        db.query(snap_sub.c.cnt, func.count().label("apps"))
-        .group_by(snap_sub.c.cnt)
-        .order_by(snap_sub.c.cnt)
-        .all()
-    )
-
-    scores_total = db.query(func.count(AppBlowingUpScore.app_id)).scalar() or 0
-    scores_above_30pct = (
-        db.query(func.count(AppBlowingUpScore.app_id))
-        .filter(AppBlowingUpScore.confidence_score >= 30)
-        .scalar()
-    ) or 0
-
-    if total_rankings == 0:
-        diagnosis = "No ranking data at all — top charts scraping has not run yet"
-    elif rankings_in_window == 0:
-        diagnosis = f"Ranking data exists but none in last {timeframe_days}d window — try timeframe_days=60"
-    elif candidates_2plus == 0:
-        diagnosis = "No apps have ≥2 snapshots in window — charts may only have run once"
-    elif scores_total == 0:
-        diagnosis = "Candidates exist but compute hasn't run — call POST /apps/blowing-up/compute"
-    elif scores_above_30pct == 0:
-        diagnosis = "Scores exist but confidence_score < 30 for all — apps need ≥5 snapshots; lower min_confidence filter"
-    else:
-        diagnosis = "OK — data exists and passes confidence filter"
-
-    return {
-        "timeframe_days": timeframe_days,
-        "cutoff": cutoff.isoformat(),
-        "total_ranking_rows_ever": total_rankings,
-        "ranking_rows_in_window": rankings_in_window,
-        "apps_with_2plus_snapshots": candidates_2plus,
-        "apps_with_5plus_snapshots": candidates_5plus,
-        "blowing_up_scores_total": scores_total,
-        "blowing_up_scores_above_30pct_confidence": scores_above_30pct,
-        "snapshot_count_distribution": [{"snapshots": r[0], "apps": r[1]} for r in dist_rows],
-        "diagnosis": diagnosis,
-    }
 
 
 @router.get("/apps/{app_id}", response_model=AppResponse)
