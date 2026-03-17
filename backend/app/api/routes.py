@@ -379,6 +379,7 @@ def get_latest_apps_legacy(
 
 @router.get("/apps/latest", response_model=AppListResponse)
 def get_latest_apps(
+    mode: str = Query("new_releases", description="new_releases | released_today"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     category: Optional[str] = Query(None),
@@ -387,16 +388,31 @@ def get_latest_apps(
     db: Session = Depends(get_db),
 ):
     """
-    New Releases: apps with release_date in the last 30 days.
-    Strictly uses release_date only — created_at and updated_at are never consulted.
-    Apps without a release_date are excluded.
-    """
-    cutoff = datetime.utcnow() - timedelta(days=30)
+    Release-based app discovery. Only release_date is consulted — created_at and
+    updated_at are never used.  Apps with NULL release_date are always excluded.
 
-    query = db.query(models.App).filter(
-        models.App.release_date.isnot(None),
-        models.App.release_date >= cutoff,
-    )
+    mode=new_releases  — release_date within the last 30 days
+    mode=released_today — release_date is today (UTC date)
+    """
+    now = datetime.utcnow()
+
+    if mode == "released_today":
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end   = today_start + timedelta(days=1)
+        date_filter = (
+            models.App.release_date.isnot(None),
+            models.App.release_date >= today_start,
+            models.App.release_date < today_end,
+        )
+    else:
+        # new_releases (default)
+        cutoff = now - timedelta(days=30)
+        date_filter = (
+            models.App.release_date.isnot(None),
+            models.App.release_date >= cutoff,
+        )
+
+    query = db.query(models.App).filter(*date_filter)
 
     if category:
         query = query.filter(

@@ -11,7 +11,7 @@ import {
   getLatestApps,
   getFreshRisers,
 } from '@/lib/api';
-import { Star, Zap, Rocket, ChevronDown, ChevronUp, Loader2, TrendingUp } from 'lucide-react';
+import { Star, Zap, Rocket, CalendarCheck, ChevronDown, ChevronUp, Loader2, TrendingUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const SORT_OPTIONS = [
@@ -23,7 +23,7 @@ const SORT_OPTIONS = [
 
 const PAGE_SIZE = 48;
 
-type Tab = 'new_releases' | 'fresh_risers';
+type Tab = 'new_releases' | 'fresh_risers' | 'released_today';
 
 // ---------------------------------------------------------------------------
 // Skeleton
@@ -212,9 +212,10 @@ export default function LatestAppsClient() {
   // ------------------------------------------------------------------
 
   const fetchApps = useCallback(
-    async (cat: string, sb: string, so: 'asc' | 'desc', off: number, append = false) => {
+    async (tab: Tab, cat: string, sb: string, so: 'asc' | 'desc', off: number, append = false) => {
       try {
-        const data = await getLatestApps({ limit: PAGE_SIZE, offset: off, category: cat, sort_by: sb, sort_order: so });
+        const mode = tab === 'released_today' ? 'released_today' : 'new_releases';
+        const data = await getLatestApps({ mode, limit: PAGE_SIZE, offset: off, category: cat, sort_by: sb, sort_order: so });
         if (append) {
           setApps(prev => [...prev, ...data.apps]);
         } else {
@@ -229,20 +230,23 @@ export default function LatestAppsClient() {
     []
   );
 
+  // Re-fetch when tab (new_releases ↔ released_today), filters, or sort changes.
+  // Fresh Risers has its own separate effect.
   useEffect(() => {
+    if (activeTab === 'fresh_risers') return;
     setLoadingNR(true);
     setOffset(0);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
-      await fetchApps(category, sortBy, sortOrder, 0, false);
+      await fetchApps(activeTab, category, sortBy, sortOrder, 0, false);
       setLoadingNR(false);
     }, 400);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [category, sortBy, sortOrder, fetchApps]);
+  }, [activeTab, category, sortBy, sortOrder, fetchApps]);
 
   const handleLoadMore = async () => {
     setLoadingMore(true);
-    await fetchApps(category, sortBy, sortOrder, offset, true);
+    await fetchApps(activeTab, category, sortBy, sortOrder, offset, true);
     setLoadingMore(false);
   };
 
@@ -283,7 +287,7 @@ export default function LatestAppsClient() {
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Latest Apps</h1>
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            Discover newly released apps and those already gaining traction
+            Discover newly released apps, today's launches, and new apps already gaining traction.
           </p>
         </div>
 
@@ -313,15 +317,32 @@ export default function LatestAppsClient() {
             <Rocket className="h-4 w-4" />
             Fresh Risers
           </button>
+          <button
+            onClick={() => setActiveTab('released_today')}
+            className={cn(
+              'flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+              activeTab === 'released_today'
+                ? 'bg-white text-violet-700 shadow-sm dark:bg-gray-700 dark:text-violet-300'
+                : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+            )}
+          >
+            <CalendarCheck className="h-4 w-4" />
+            Released Today
+          </button>
         </div>
 
-        {/* ── NEW RELEASES TAB ── */}
-        {activeTab === 'new_releases' && (
+        {/* ── NEW RELEASES + RELEASED TODAY TABS ── */}
+        {(activeTab === 'new_releases' || activeTab === 'released_today') && (
           <>
             {/* Filters */}
             <div className="flex flex-wrap items-center gap-3">
               {!loadingNR && (
-                <span className="rounded-full bg-indigo-50 px-3 py-1 text-sm font-medium text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
+                <span className={cn(
+                  'rounded-full px-3 py-1 text-sm font-medium',
+                  activeTab === 'released_today'
+                    ? 'bg-violet-50 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300'
+                    : 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300',
+                )}>
                   {total.toLocaleString()} apps
                 </span>
               )}
@@ -358,7 +379,11 @@ export default function LatestAppsClient() {
             ) : apps.length === 0 ? (
               <div className="rounded-xl border border-gray-100 bg-white p-12 text-center dark:border-gray-800 dark:bg-gray-900">
                 <Zap className="mx-auto mb-3 h-10 w-10 text-gray-300 dark:text-gray-600" />
-                <p className="text-gray-500 dark:text-gray-400">No apps released in the last 30 days.</p>
+                <p className="text-gray-500 dark:text-gray-400">
+                  {activeTab === 'released_today'
+                    ? 'No apps with a release_date of today found.'
+                    : 'No apps released in the last 30 days.'}
+                </p>
                 {category && (
                   <button
                     onClick={() => setCategory('')}

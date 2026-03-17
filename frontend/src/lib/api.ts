@@ -434,6 +434,7 @@ export async function getFilteredApps(filters: AppFilters = {}): Promise<AppList
 // ---------------------------------------------------------------------------
 
 export interface LatestAppsParams {
+  mode?: 'new_releases' | 'released_today';
   limit?: number;
   offset?: number;
   category?: string;
@@ -443,6 +444,7 @@ export interface LatestAppsParams {
 
 export async function getLatestApps(params: LatestAppsParams = {}): Promise<AppListResponse> {
   const p = new URLSearchParams();
+  if (params.mode)       p.set('mode',       params.mode);
   if (params.limit)      p.set('limit',      String(params.limit));
   if (params.offset)     p.set('offset',     String(params.offset));
   if (params.category)   p.set('category',   params.category);
