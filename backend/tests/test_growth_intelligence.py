@@ -125,8 +125,19 @@ class TestMetricSnapshotService:
     def _make_service(self):
         from app.services.metric_snapshot_service import MetricSnapshotService
         db = _make_db()
-        with patch("app.services.metric_snapshot_service.InstallEstimator") as mock_ie, \
+        with patch("app.services.metric_snapshot_service.DownloadEstimator") as mock_de, \
+             patch("app.services.metric_snapshot_service.InstallEstimator") as mock_ie, \
              patch("app.services.metric_snapshot_service.RevenueEstimator") as mock_re:
+            mock_de.return_value._compute.return_value = {
+                "downloads_range_low": 10_000,
+                "downloads_range_high": 30_000,
+                "estimation_confidence": 0.75,
+                "confidence_label": "high",
+                "estimation_notes": "test",
+                "factor_breakdown": {},
+                "estimated_downloads_daily": 500,
+                "estimated_downloads_monthly": 15_000,
+            }
             mock_ie.return_value._compute.return_value = {
                 "estimated_installs_min": 10_000,
                 "estimated_installs_max": 30_000,
@@ -136,11 +147,15 @@ class TestMetricSnapshotService:
             mock_re.return_value._compute_from_installs.return_value = {
                 "estimated_revenue_monthly_min": 500.0,
                 "estimated_revenue_monthly_max": 1_500.0,
+                "revenue_range_low": 500.0,
+                "revenue_range_high": 1_500.0,
                 "model": "free+iap_arpu_$2.50",
                 "arpu": 2.50,
                 "category": "Productivity",
+                "monetization_model_hint": "subscription",
             }
             svc = MetricSnapshotService(db)
+            svc._download_est = mock_de.return_value
             svc._install_est = mock_ie.return_value
             svc._revenue_est = mock_re.return_value
             return svc, db
@@ -173,19 +188,26 @@ class TestMetricSnapshotService:
 
     def test_revenue_confidence_does_not_exceed_install_confidence(self):
         svc, db = self._make_service()
-        # Set install_confidence high
-        svc._install_est._compute.return_value = {
-            "estimated_installs_min": 10_000,
-            "estimated_installs_max": 30_000,
-            "install_confidence": 0.85,
-            "methodology": "test",
+        # Set install_confidence high via DownloadEstimator mock
+        svc._download_est._compute.return_value = {
+            "downloads_range_low": 10_000,
+            "downloads_range_high": 30_000,
+            "estimation_confidence": 0.85,
+            "confidence_label": "high",
+            "estimation_notes": "test",
+            "factor_breakdown": {},
+            "estimated_downloads_daily": 500,
+            "estimated_downloads_monthly": 15_000,
         }
         svc._revenue_est._compute_from_installs.return_value = {
             "estimated_revenue_monthly_min": 500.0,
             "estimated_revenue_monthly_max": 1_500.0,
+            "revenue_range_low": 500.0,
+            "revenue_range_high": 1_500.0,
             "model": "free_ads_only",
             "arpu": 0.5,
             "category": "Games",
+            "monetization_model_hint": "ad-driven",
         }
         app = _make_app()
         snap = svc.compute_for_app(app)

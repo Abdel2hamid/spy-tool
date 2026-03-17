@@ -46,6 +46,7 @@ from app.models.schemas import (
     KeywordSearchResponse,
     InstallEstimateResponse,
     RevenueEstimateResponse,
+    DownloadEstimateResponse,
     KeywordHistoryResponse,
     NicheRadarResponse,
     ReviewIntelligenceResponse,
@@ -2625,6 +2626,31 @@ def get_revenue_estimate(app_id: int, db: Session = Depends(get_db)):
     est = RevenueEstimator(db)
     result = est.estimate(app_id)
     return {**result, "app_id": app_id}
+
+
+@router.get("/apps/{app_id}/download-estimate", response_model=DownloadEstimateResponse)
+def get_download_estimate(app_id: int, db: Session = Depends(get_db)):
+    """Rich 4-layer ensemble download + revenue estimate."""
+    app = db.query(models.App).filter(models.App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    from app.services.download_estimator import DownloadEstimator
+    from app.services.revenue_estimator import RevenueEstimator
+
+    dl_est = DownloadEstimator(db)
+    result = dl_est.estimate(app_id)
+
+    rev_est = RevenueEstimator(db)
+    rev_result = rev_est._compute_from_installs(
+        app, result["downloads_range_low"], result["downloads_range_high"]
+    )
+    result["estimated_revenue_monthly"] = rev_result["estimated_revenue_monthly_min"]
+    result["revenue_range_low"] = rev_result["revenue_range_low"]
+    result["revenue_range_high"] = rev_result["revenue_range_high"]
+    result["monetization_model_hint"] = rev_result.get("monetization_model_hint", "unknown")
+    result["app_id"] = app_id
+    return result
 
 
 # ---------------------------------------------------------------------------

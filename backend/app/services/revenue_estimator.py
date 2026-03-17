@@ -12,8 +12,10 @@ Model:
   Mix (free with paid upgrades):
     weighted blend
 
-ARPU (Average Revenue Per User / month) varies by category and monetisation type.
-Values are calibrated against publicly reported developer revenue data.
+ARPU and conversion rates are now sourced from category_arpu_profiles.py
+for per-category richness. The old flat _CATEGORY_ARPU dict is kept for
+backward compatibility with any direct callers, but the _compute_from_installs
+path uses the profile system.
 """
 
 import logging
@@ -22,14 +24,14 @@ from typing import Dict, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.models.models import App
+from app.config.category_arpu_profiles import get_arpu_profile
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Calibration constants
+# Backward-compat constants (kept for external callers that import these directly)
 # ---------------------------------------------------------------------------
 
-# Monthly ARPU (revenue per active user) by category for subscription/IAP apps.
 _CATEGORY_ARPU: Dict[str, float] = {
     "productivity": 2.50,
     "business": 3.00,
@@ -62,26 +64,14 @@ _CATEGORY_ARPU: Dict[str, float] = {
     "developer tools": 3.50,
 }
 _DEFAULT_ARPU = 2.00
-
-# Fraction of monthly installs that are "active" (using the app regularly)
-# and thus generate recurring revenue from subscriptions/IAP.
-_ACTIVE_FRACTION = 0.15  # 15% of install base is active and paying in a given month
-
-# For free apps with IAP: fraction of actives that make a purchase
-_IAP_CONVERSION = 0.03  # 3%
-
-# For paid one-time purchase apps: effective price after Apple's 30% cut
+_ACTIVE_FRACTION = 0.15
+_IAP_CONVERSION = 0.03
 _APPLE_CUT = 0.30
 
 
 def _get_arpu(category: Optional[str]) -> float:
-    if not category:
-        return _DEFAULT_ARPU
-    cat_lower = category.lower().strip()
-    for key, arpu in _CATEGORY_ARPU.items():
-        if key in cat_lower or cat_lower in key:
-            return arpu
-    return _DEFAULT_ARPU
+    profile = get_arpu_profile(category)
+    return profile["arpu_medium"]
 
 
 class RevenueEstimator:
@@ -140,7 +130,14 @@ class RevenueEstimator:
 
     def _compute_from_installs(self, app: App, installs_min: int, installs_max: int) -> Dict:
         category = app.primary_category or ""
-        arpu = _get_arpu(category)
+
+        # Use rich ARPU profile for per-category conversion rates
+        profile = get_arpu_profile(category)
+        arpu = profile["arpu_medium"]
+        active_fraction = profile["active_fraction"]
+        iap_conversion = profile["iap_conversion_rate"]
+        monetization_hint = profile["monetization_hint"]
+
         price = app.price or 0.0
         is_free = app.is_free if app.is_free is not None else (price == 0)
         has_iap = bool(app.in_app_purchases)
@@ -151,34 +148,25 @@ class RevenueEstimator:
             rev_min = installs_min * net_price
             rev_max = installs_max * net_price
             model = f"paid_${price:.2f}"
+            monetization_hint = "paid"
         elif has_iap:
             # Free + IAP/subscription: revenue from active paying users
-            # Active base = installs × active_fraction
-            # Paying users = active_base × iap_conversion
+            # Active base = installs × active_fraction (per-category)
+            # Paying users = active_base × iap_conversion (per-category)
             # Revenue = paying_users × arpu
-            paying_min = installs_min * _ACTIVE_FRACTION * _IAP_CONVERSION
-            paying_max = installs_max * _ACTIVE_FRACTION * _IAP_CONVERSION
-            # Also estimate subscription revenue separately at 3× IAP ARPU
+            paying_min = installs_min * active_fraction * iap_conversion
+            paying_max = installs_max * active_fraction * iap_conversion
             rev_min = paying_min * arpu
             rev_max = paying_max * arpu * 1.5  # wider range for subscription variance
             model = f"free+iap_arpu_${arpu:.2f}"
         else:
-            # Truly free, no visible IAP - assume some % still generates revenue via ads
+            # Truly free, no visible IAP — ad revenue estimate
             ad_rev_per_1k_mau = 0.50  # $0.50 CPM
-            mau_min = installs_min * _ACTIVE_FRACTION
-            mau_max = installs_max * _ACTIVE_FRACTION
-            rev_min = (mau_min / 1000) * ad_rev_per_1k_mau * 30  # per day → monthly
+            mau_min = installs_min * active_fraction
+            mau_max = installs_max * active_fraction
+            rev_min = (mau_min / 1000) * ad_rev_per_1k_mau * 30
             rev_max = (mau_max / 1000) * ad_rev_per_1k_mau * 30
             model = "free_ads_only"
-
-        # Apply category premium/discount
-        cat_lower = category.lower()
-        if any(k in cat_lower for k in ["productivity", "business", "finance"]):
-            rev_min *= 1.15
-            rev_max *= 1.15
-        elif any(k in cat_lower for k in ["games", "entertainment"]):
-            rev_min *= 0.9
-            rev_max *= 0.9
 
         rev_min = max(rev_min, 0)
         rev_max = max(rev_max, 0)
@@ -186,9 +174,12 @@ class RevenueEstimator:
         return {
             "estimated_revenue_monthly_min": round(rev_min, 2),
             "estimated_revenue_monthly_max": round(rev_max, 2),
+            "revenue_range_low": round(rev_min, 2),
+            "revenue_range_high": round(rev_max, 2),
             "model": model,
             "arpu": arpu,
             "category": category,
+            "monetization_model_hint": monetization_hint,
         }
 
     @staticmethod
@@ -196,7 +187,10 @@ class RevenueEstimator:
         return {
             "estimated_revenue_monthly_min": 0.0,
             "estimated_revenue_monthly_max": 0.0,
+            "revenue_range_low": 0.0,
+            "revenue_range_high": 0.0,
             "model": "no data",
             "arpu": 0.0,
             "category": "",
+            "monetization_model_hint": "unknown",
         }

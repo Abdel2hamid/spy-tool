@@ -29,7 +29,8 @@ from typing import Dict, Optional
 from sqlalchemy.orm import Session
 
 from app.models.models import App, AppMetricSnapshot
-from app.services.install_estimator import InstallEstimator
+from app.services.download_estimator import DownloadEstimator
+from app.services.install_estimator import InstallEstimator  # kept for backward compat
 from app.services.revenue_estimator import RevenueEstimator
 
 logger = logging.getLogger(__name__)
@@ -52,7 +53,8 @@ class MetricSnapshotService:
 
     def __init__(self, db: Session):
         self.db = db
-        self._install_est = InstallEstimator(db)
+        self._download_est = DownloadEstimator(db)
+        self._install_est = InstallEstimator(db)   # kept for backward compat
         self._revenue_est = RevenueEstimator(db)
 
     # ------------------------------------------------------------------
@@ -61,14 +63,15 @@ class MetricSnapshotService:
 
     def compute_for_app(self, app: App) -> AppMetricSnapshot:
         """Compute a new metric snapshot for a single App ORM object."""
-        install_result = self._install_est._compute(app)
+        # Use richer 4-layer DownloadEstimator
+        dl_result = self._download_est._compute(app)
         revenue_result = self._revenue_est._compute_from_installs(
             app,
-            install_result["estimated_installs_min"],
-            install_result["estimated_installs_max"],
+            dl_result["downloads_range_low"],
+            dl_result["downloads_range_high"],
         )
 
-        install_confidence = install_result["install_confidence"]
+        install_confidence = dl_result["estimation_confidence"]
 
         # Revenue confidence: never exceeds install confidence
         rev_confidence = install_confidence * 0.9
@@ -78,8 +81,8 @@ class MetricSnapshotService:
         snap = AppMetricSnapshot(
             app_id=app.id,
             snapshot_at=datetime.now(timezone.utc),
-            estimated_downloads_min=install_result["estimated_installs_min"],
-            estimated_downloads_max=install_result["estimated_installs_max"],
+            estimated_downloads_min=dl_result["downloads_range_low"],
+            estimated_downloads_max=dl_result["downloads_range_high"],
             install_confidence=install_confidence,
             estimated_revenue_monthly_min=revenue_result["estimated_revenue_monthly_min"],
             estimated_revenue_monthly_max=revenue_result["estimated_revenue_monthly_max"],
@@ -91,14 +94,15 @@ class MetricSnapshotService:
                 "review_count": app.current_reviews,
                 "current_rank": app.current_rank,
                 "category": app.primary_category,
-                "methodology": install_result["methodology"],
+                "methodology": dl_result.get("estimation_notes", ""),
+                "confidence_label": dl_result.get("confidence_label", ""),
             },
         )
         self.db.add(snap)
 
         # Back-fill cached columns on App for backward compat
-        app.estimated_installs_min = install_result["estimated_installs_min"]
-        app.estimated_installs_max = install_result["estimated_installs_max"]
+        app.estimated_installs_min = dl_result["downloads_range_low"]
+        app.estimated_installs_max = dl_result["downloads_range_high"]
         app.install_confidence = install_confidence
         app.estimated_revenue_monthly_min = revenue_result["estimated_revenue_monthly_min"]
         app.estimated_revenue_monthly_max = revenue_result["estimated_revenue_monthly_max"]

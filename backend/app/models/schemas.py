@@ -792,6 +792,31 @@ class RevenueEstimateResponse(BaseModel):
     category: str
 
 
+class FactorBreakdown(BaseModel):
+    rank_baseline: Optional[int] = None
+    review_velocity_estimate: Optional[int] = None
+    visibility_estimate: Optional[int] = None
+    momentum_adjustment_pct: Optional[float] = None
+    weights_used: Optional[Dict] = None
+    confidence_factors: Optional[Dict] = None
+
+
+class DownloadEstimateResponse(BaseModel):
+    app_id: int
+    estimated_downloads_daily: int
+    estimated_downloads_monthly: int
+    downloads_range_low: int
+    downloads_range_high: int
+    estimated_revenue_monthly: Optional[float] = None
+    revenue_range_low: Optional[float] = None
+    revenue_range_high: Optional[float] = None
+    estimation_confidence: float
+    confidence_label: str
+    monetization_model_hint: Optional[str] = None
+    factor_breakdown: FactorBreakdown
+    estimation_notes: str
+
+
 # ---------------------------------------------------------------------------
 # Keyword Extraction Intelligence (metadata-based)
 # ---------------------------------------------------------------------------
