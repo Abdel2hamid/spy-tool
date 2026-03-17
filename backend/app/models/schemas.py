@@ -1188,3 +1188,16 @@ class CampaignTrackingListResponse(BaseModel):
     items: List[CampaignTrackingListItem]
     total: int
     by_type: Optional[dict] = None  # {"paid_push": 12, "organic_breakout": 5, ...}
+
+
+class DashboardKeywordHighlight(BaseModel):
+    """Lightweight keyword row for the dashboard Keyword Intelligence section."""
+    term: str
+    search_volume: int
+    trend_score: float
+    opportunity_score: float
+
+
+class DashboardKeywordHighlightsResponse(BaseModel):
+    keywords: List[DashboardKeywordHighlight]
+    total: int

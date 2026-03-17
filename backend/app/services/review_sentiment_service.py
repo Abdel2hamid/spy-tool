@@ -214,21 +214,42 @@ class ReviewSentimentService:
 
     def update_all_app_analytics(self) -> int:
         """
-        Run update_app_analytics for every app that has classified reviews.
+        Run update_app_analytics only for apps that have received new reviews
+        since their last AppAnalytics computation (or have no analytics row yet).
         Returns the number of apps updated.
         """
-        app_ids = [
+        # Latest review timestamp per app (classified reviews only)
+        latest_review_sq = (
+            self.db.query(
+                Review.app_id.label("app_id"),
+                func.max(Review.created_at).label("latest_review_at"),
+            )
+            .filter(Review.sentiment.isnot(None))
+            .group_by(Review.app_id)
+            .subquery()
+        )
+
+        # Only include apps where latest review is newer than last analytics computation
+        # or where analytics row doesn't exist yet.
+        from sqlalchemy import outerjoin
+        stale_app_ids = [
             row[0]
             for row in (
-                self.db.query(Review.app_id)
-                .filter(Review.sentiment.isnot(None))
-                .group_by(Review.app_id)
+                self.db.query(latest_review_sq.c.app_id)
+                .outerjoin(
+                    AppAnalytics,
+                    AppAnalytics.app_id == latest_review_sq.c.app_id,
+                )
+                .filter(
+                    (AppAnalytics.computed_at.is_(None))
+                    | (latest_review_sq.c.latest_review_at > AppAnalytics.computed_at)
+                )
                 .all()
             )
         ]
 
         updated = 0
-        for app_id in app_ids:
+        for app_id in stale_app_ids:
             try:
                 result = self.update_app_analytics(app_id)
                 if result:
@@ -237,5 +258,5 @@ class ReviewSentimentService:
                 logger.warning(f"[Sentiment] analytics update failed for app {app_id}: {exc}")
                 self.db.rollback()
 
-        logger.info(f"[Sentiment] updated analytics for {updated} apps")
+        logger.info(f"[Sentiment] updated analytics for {updated}/{len(stale_app_ids)} stale apps")
         return updated

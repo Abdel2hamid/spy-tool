@@ -5,6 +5,7 @@ Job schedule:
 
   Job ID                   Interval  First run   Purpose
   ───────────────────────  ────────  ──────────  ─────────────────────────────────────────
+  opportunity_compute        1 h      5 min       Precompute opportunity of the day → daily_reports
   blowing_up_compute         15 min   3 min       Precompute blowing-up scores → app_blowing_up_scores
   trending_compute           10 min   2 min       Precompute trending scores → app_trending_scores
   discovery_keywords         6 h      2 min       100+ keyword search → queue
@@ -123,6 +124,43 @@ async def job_hourly_scoring():
 # ---------------------------------------------------------------------------
 # Job: every 10 min — precompute trending scores
 # ---------------------------------------------------------------------------
+
+async def job_opportunity_compute():
+    """
+    Precompute today's Opportunity of the Day and persist it into DailyReport.
+    Runs every 1 h (first run +5 min) so the /opportunity-of-day endpoint is
+    always a fast read — no on-demand engine call needed.
+    """
+    job_id = "opportunity_compute"
+    t0 = _log_start(job_id)
+    from app.database import SessionLocal
+    from app.scoring.engine import ScoringEngine
+    from app.models.models import DailyReport
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    db = SessionLocal()
+    try:
+        engine = ScoringEngine(db)
+        opportunity = await asyncio.to_thread(engine.generate_opportunity_of_day)
+        if opportunity:
+            today = datetime.utcnow().date()
+            stmt = pg_insert(DailyReport).values(
+                date=today,
+                opportunity_of_day=opportunity,
+            ).on_conflict_do_update(
+                index_elements=["date"],
+                set_={"opportunity_of_day": opportunity},
+            )
+            db.execute(stmt)
+            db.commit()
+            _log_done(job_id, t0, f"opportunity computed for {today}")
+        else:
+            _log_done(job_id, t0, "no qualifying opportunity (insufficient data)")
+    except Exception as exc:
+        _log_fail(job_id, exc)
+    finally:
+        db.close()
+
 
 async def job_blowing_up_compute():
     """
@@ -1001,6 +1039,20 @@ def setup_scheduler() -> AsyncIOScheduler:
         ),
         id="keyword_discovery_phase1_daily",
         name="Every 24h: Phase-1 Alphabet+Competitor+Gap Discovery",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── every 1 h: precompute opportunity of the day ──────────────────────────
+    # First run: 5 min after startup so the dashboard shows data soon after deploy.
+    scheduler.add_job(
+        job_opportunity_compute,
+        trigger=IntervalTrigger(
+            hours=1,
+            start_date=now + timedelta(minutes=5),
+            timezone="UTC",
+        ),
+        id="opportunity_compute",
+        name="Every 1h: Precompute Opportunity of the Day",
         **_JOB_DEFAULTS,
     )
 

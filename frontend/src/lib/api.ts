@@ -553,6 +553,26 @@ export async function getKeywordOpportunities(
   );
 }
 
+// ---------------------------------------------------------------------------
+// Dashboard keyword highlights — enriched keywords only, ordered by opportunity
+// ---------------------------------------------------------------------------
+
+export interface DashboardKeywordHighlight {
+  term: string;
+  search_volume: number;
+  trend_score: number;
+  opportunity_score: number;
+}
+
+export async function getDashboardKeywordHighlights(
+  limit: number = 10
+): Promise<DashboardKeywordHighlight[]> {
+  const res = await fetchApi<{ keywords: DashboardKeywordHighlight[]; total: number }>(
+    `/dashboard/keyword-highlights?limit=${limit}`
+  );
+  return res?.keywords ?? [];
+}
+
 export async function getRankHistory(
   appId: number,
   days: number = 30
