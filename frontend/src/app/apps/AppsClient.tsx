@@ -10,6 +10,7 @@ import {
   RotateCcw, ChevronUp, ChevronDown, Loader2, Plus, Globe,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { fmtNum, fmtRev, confidenceLabel, CONFIDENCE_BADGE } from '@/lib/estimate-format';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -31,21 +32,6 @@ const SORT_OPTIONS = [
   { value: 'install_confidence', label: 'Confidence' },
 ];
 
-function fmtNum(n: number | null | undefined): string {
-  if (n == null || isNaN(n)) return '—';
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-function fmtRev(n: number | null | undefined): string {
-  if (n == null || isNaN(n)) return '—';
-  return `$${fmtNum(n)}`;
-}
-const CONFIDENCE_COLORS: Record<string, string> = {
-  high: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400',
-  medium: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400',
-  low: 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
-};
 
 const DEFAULT_FILTERS: AppFilters = {
   search: '',
@@ -497,7 +483,7 @@ export default function AppsClient() {
                       )}
                     </div>
                     {(app.estimated_installs_min != null || app.estimated_revenue_monthly_min != null) && (
-                      <div className="mt-2 flex items-center justify-between border-t border-gray-100 pt-2 dark:border-gray-800">
+                      <div data-testid="estimate-row" className="mt-2 flex items-center justify-between border-t border-gray-100 pt-2 dark:border-gray-800">
                         <div className="flex items-center gap-3">
                           {app.estimated_installs_min != null && (
                             <div className="text-center">
@@ -516,10 +502,11 @@ export default function AppsClient() {
                             </div>
                           )}
                         </div>
-                        {app.install_confidence != null && (() => {
-                          const conf = app.install_confidence >= 0.65 ? 'high' : app.install_confidence >= 0.40 ? 'medium' : 'low';
+                        {(() => {
+                          const conf = confidenceLabel(app.install_confidence);
+                          if (!conf) return null;
                           return (
-                            <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium', CONFIDENCE_COLORS[conf])}>
+                            <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium', CONFIDENCE_BADGE[conf])}>
                               {conf}
                             </span>
                           );

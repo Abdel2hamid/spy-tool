@@ -5,7 +5,8 @@ export const dynamic = 'force-dynamic';
 import { useState, useEffect } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components';
-import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, getAppDetail, getAppVersions, getAppReviews, getAppAnalytics, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, RankHistory } from '@/lib/api';
+import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, DownloadEstimate, getAppDetail, getAppVersions, getAppReviews, getAppAnalytics, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, getDownloadEstimate, RankHistory } from '@/lib/api';
+import { fmtNum, fmtRev, fmtRange, fmtRevRange, confidenceLabel, CONFIDENCE_BADGE } from '@/lib/estimate-format';
 import {
   ArrowLeft, Star, Download, Calendar, Globe, MessageSquare,
   TrendingUp, BarChart3, AlertTriangle, ThumbsUp, Code, ExternalLink,
@@ -189,7 +190,178 @@ function AppHeader({ app }: { app: AppDetail }) {
   );
 }
 
-function OverviewTab({ app }: { app: AppDetail }) {
+// ---------------------------------------------------------------------------
+// MarketEstimatesCard — fetches /download-estimate and shows full rich data.
+// Falls back to cached App columns while loading or on error.
+// ---------------------------------------------------------------------------
+
+function MarketEstimatesCard({ appId, app }: { appId: number; app: AppDetail }) {
+  const [est, setEst] = useState<DownloadEstimate | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    setFailed(false);
+    getDownloadEstimate(appId)
+      .then(setEst)
+      .catch(() => setFailed(true))
+      .finally(() => setLoading(false));
+  }, [appId]);
+
+  // Derive values — prefer rich endpoint data, fall back to cached App columns
+  const monthlyDl  = est?.estimated_downloads_monthly ?? app.estimated_installs_min;
+  const dailyDl    = est?.estimated_downloads_daily ?? null;
+  const dlLow      = est?.downloads_range_low ?? app.estimated_installs_min;
+  const dlHigh     = est?.downloads_range_high ?? app.estimated_installs_max;
+  const revMonthly = est?.estimated_revenue_monthly ?? app.estimated_revenue_monthly_min;
+  const revLow     = est?.revenue_range_low ?? app.estimated_revenue_monthly_min;
+  const revHigh    = est?.revenue_range_high ?? app.estimated_revenue_monthly_max;
+  const confScore  = est?.estimation_confidence ?? app.install_confidence;
+  const confLabel  = est?.confidence_label ?? confidenceLabel(confScore);
+  const monoHint   = est?.monetization_model_hint ?? null;
+  const notes      = est?.estimation_notes ?? null;
+
+  // Nothing to show at all
+  const hasAnyData = monthlyDl != null || revMonthly != null;
+  if (!loading && !hasAnyData) return null;
+
+  const badgeClass = confLabel ? CONFIDENCE_BADGE[confLabel] : '';
+
+  return (
+    <div
+      data-testid="market-estimates-card"
+      className="rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-white p-5 shadow-sm dark:border-indigo-800 dark:from-indigo-950/30 dark:to-gray-900"
+    >
+      {/* Header */}
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-indigo-800 dark:text-indigo-300">
+          <Zap className="h-4 w-4" />
+          Market Estimates
+          {loading && <span className="ml-1 text-xs font-normal text-indigo-400">updating…</span>}
+        </h3>
+        {confLabel && (
+          <span
+            data-testid="confidence-badge"
+            className={cn('rounded-full px-2.5 py-0.5 text-xs font-medium capitalize', badgeClass)}
+          >
+            {confLabel} confidence
+          </span>
+        )}
+      </div>
+
+      {/* Loading skeleton */}
+      {loading && !hasAnyData ? (
+        <div className="animate-pulse space-y-3">
+          <div className="grid grid-cols-3 gap-3">
+            {[0, 1, 2].map(i => (
+              <div key={i} className="h-14 rounded-lg bg-indigo-100 dark:bg-indigo-900/30" />
+            ))}
+          </div>
+          <div className="h-4 w-2/3 rounded bg-indigo-100 dark:bg-indigo-900/30" />
+        </div>
+      ) : (
+        <>
+          {/* Metric grid */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {/* Daily downloads */}
+            {dailyDl != null && (
+              <div
+                data-testid="daily-downloads"
+                className="rounded-lg bg-white/70 p-3 dark:bg-gray-800/50"
+              >
+                <p className="mb-1 flex items-center gap-1 text-xs text-indigo-500 dark:text-indigo-400">
+                  <Download className="h-3 w-3" />
+                  Daily Downloads
+                </p>
+                <p className="text-lg font-bold text-indigo-900 dark:text-indigo-100">
+                  {fmtNum(dailyDl)}
+                </p>
+              </div>
+            )}
+
+            {/* Monthly downloads */}
+            {monthlyDl != null && (
+              <div
+                data-testid="monthly-downloads"
+                className="rounded-lg bg-white/70 p-3 dark:bg-gray-800/50"
+              >
+                <p className="mb-1 flex items-center gap-1 text-xs text-indigo-500 dark:text-indigo-400">
+                  <Users className="h-3 w-3" />
+                  Monthly Downloads
+                </p>
+                <p className="text-lg font-bold text-indigo-900 dark:text-indigo-100">
+                  {fmtNum(monthlyDl)}
+                </p>
+                {(dlLow != null || dlHigh != null) && dlLow !== dlHigh && (
+                  <p className="mt-0.5 text-xs text-indigo-400">
+                    {fmtRange(dlLow, dlHigh)}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Monthly revenue */}
+            {revMonthly != null && (
+              <div
+                data-testid="monthly-revenue"
+                className="rounded-lg bg-white/70 p-3 dark:bg-gray-800/50"
+              >
+                <p className="mb-1 flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+                  <DollarSign className="h-3 w-3" />
+                  Monthly Revenue
+                </p>
+                <p className="text-lg font-bold text-emerald-800 dark:text-emerald-200">
+                  {fmtRev(revMonthly)}
+                </p>
+                {(revLow != null || revHigh != null) && revLow !== revHigh && (
+                  <p className="mt-0.5 text-xs text-emerald-500">
+                    {fmtRevRange(revLow, revHigh)}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Monetization hint + error state */}
+          {(monoHint || failed) && (
+            <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-indigo-100 pt-3 dark:border-indigo-900/40">
+              {monoHint && monoHint !== 'unknown' && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-700 capitalize dark:bg-indigo-900/40 dark:text-indigo-300">
+                  <DollarSign className="h-3 w-3" />
+                  {monoHint.replace(/_/g, ' ')}
+                </span>
+              )}
+              {failed && (
+                <span className="text-xs text-amber-600 dark:text-amber-400">
+                  Live estimate unavailable — showing cached data
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Estimation notes */}
+          {notes && (
+            <p
+              data-testid="estimation-notes"
+              className="mt-3 border-t border-indigo-100 pt-3 text-xs text-indigo-500 dark:border-indigo-900/40 dark:text-indigo-400"
+            >
+              {notes}
+            </p>
+          )}
+
+          {/* Disclaimer */}
+          <p className="mt-2 text-[10px] text-indigo-300 dark:text-indigo-600">
+            Directional estimates based on rank position, review velocity, keyword visibility, and momentum signals. Not guaranteed.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+
+function OverviewTab({ app, appId }: { app: AppDetail; appId: number }) {
   return (
     <div className="space-y-6">
       {app.description && (
@@ -229,55 +401,8 @@ function OverviewTab({ app }: { app: AppDetail }) {
         </div>
       </div>
 
-      {/* Install & Revenue Estimates */}
-      {(app.estimated_installs_min || app.estimated_revenue_monthly_min) && (
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-5 dark:border-indigo-800 dark:bg-indigo-950/30">
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-indigo-800 dark:text-indigo-300 flex items-center gap-2">
-              <Zap className="h-4 w-4" />
-              Market Estimates
-            </h3>
-            {app.install_confidence != null && (() => {
-              const conf = app.install_confidence >= 0.65 ? 'high' : app.install_confidence >= 0.40 ? 'medium' : 'low';
-              const cls = conf === 'high'
-                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
-                : conf === 'medium'
-                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
-                : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400';
-              return (
-                <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-medium', cls)}>
-                  {conf} confidence
-                </span>
-              );
-            })()}
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            {app.estimated_installs_min != null && (
-              <div>
-                <div className="flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400 mb-1">
-                  <Users className="h-3.5 w-3.5" />
-                  Monthly Downloads
-                </div>
-                <p className="text-lg font-bold text-indigo-900 dark:text-indigo-100">
-                  {formatRange(app.estimated_installs_min, app.estimated_installs_max)}
-                </p>
-              </div>
-            )}
-            {app.estimated_revenue_monthly_min != null && (
-              <div>
-                <div className="flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400 mb-1">
-                  <DollarSign className="h-3.5 w-3.5" />
-                  Monthly Revenue
-                </div>
-                <p className="text-lg font-bold text-indigo-900 dark:text-indigo-100">
-                  {formatRevenue(app.estimated_revenue_monthly_min, app.estimated_revenue_monthly_max)}
-                </p>
-                <p className="text-xs text-indigo-500">estimated net</p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Market Estimates — full rich card */}
+      <MarketEstimatesCard appId={appId} app={app} />
 
       {app.screenshots && app.screenshots.length > 0 && (
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
@@ -2675,7 +2800,7 @@ export default function AppDetailPage() {
 
         {/* Tab content */}
         <div className="min-h-0">
-          {activeTab === 'overview' && <OverviewTab app={app} />}
+          {activeTab === 'overview' && <OverviewTab app={app} appId={appId} />}
           {activeTab === 'versions' && <VersionsTab versions={versions} />}
           {activeTab === 'reviews' && <ReviewsTab reviews={reviews} appId={appId} />}
           {activeTab === 'rankings' && <RankingsTab appId={appId} />}

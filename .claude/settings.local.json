@@ -279,7 +279,15 @@
       "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m pytest tests/test_download_estimator.py -v 2>&1 | head -120)",
       "Bash(grep -n \"export.*AppCard\\\\|export.*AppRow\\\\|export.*AppList\" /Users/abdelhamid/appstore-spy-tool/frontend/src/components/*.tsx 2>/dev/null | head -20)",
       "Bash(python3 -m pytest tests/ -q --tb=short 2>&1 | tail -30)",
-      "Bash(npx tsc --noEmit 2>&1 | grep -E \"AppsClient|TrendingAppCard|LatestAppsClient|api\\\\.ts|page\\\\.tsx\" | head -20)"
+      "Bash(npx tsc --noEmit 2>&1 | grep -E \"AppsClient|TrendingAppCard|LatestAppsClient|api\\\\.ts|page\\\\.tsx\" | head -20)",
+      "Bash(ls /Users/abdelhamid/appstore-spy-tool/frontend/src/ 2>/dev/null && cat /Users/abdelhamid/appstore-spy-tool/frontend/package.json 2>/dev/null | python3 -c \"import sys, json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k:d.get\\(k\\) for k in ['scripts','devDependencies','dependencies']}, indent=2\\)\\)\" 2>/dev/null | grep -E \"jest|vitest|testing|test|@testing\" | head -20)",
+      "Bash(cat package.json | python3 -c \"import sys, json; d=json.load\\(sys.stdin\\); scripts=d.get\\('scripts',{}\\); deps={**d.get\\('dependencies',{}\\), **d.get\\('devDependencies',{}\\)}; print\\('SCRIPTS:', list\\(scripts.keys\\(\\)\\)\\); print\\('TEST DEPS:', [k for k in deps if any\\(t in k for t in ['jest','vitest','testing','playwright']\\)]\\)\")",
+      "Bash(node --version 2>/dev/null)",
+      "Bash(node --test src/lib/estimate-format.test.mjs 2>&1)",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m pytest tests/test_estimate_api.py -v 2>&1)",
+      "Bash(python3 -m pytest tests/ -q --tb=short 2>&1 | tail -10)",
+      "Bash(npx tsc --noEmit 2>&1 | grep -v \"node_modules\\\\|\\\\.next\" | head -20)",
+      "Bash(./node_modules/.bin/tsc --noEmit 2>&1 | grep -v \"node_modules\\\\|\\\\.next\\\\|\\\\.d\\\\.ts\" | head -20)"
     ]
   }
 }

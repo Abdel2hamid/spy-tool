@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { TrendingUp as TrendUpIcon, Star, TrendingDown, ShieldCheck } from 'lucide-react';
 import { TrendingApp } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { fmtNum, fmtRev } from '@/lib/estimate-format';
 
 interface TrendingAppCardProps {
   app: TrendingApp;
@@ -98,15 +99,14 @@ export function TrendingAppCard({ app }: TrendingAppCardProps) {
         </div>
 
         {(app.estimated_installs_min != null || app.estimated_revenue_monthly_min != null) && (
-          <div className="mt-3 flex items-center gap-4 border-t border-gray-100 pt-3 dark:border-gray-800">
+          <div
+            data-testid="estimate-row"
+            className="mt-3 flex items-center gap-4 border-t border-gray-100 pt-3 dark:border-gray-800"
+          >
             {app.estimated_installs_min != null && (
               <div>
                 <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">
-                  {app.estimated_installs_min >= 1_000_000
-                    ? `${(app.estimated_installs_min / 1_000_000).toFixed(1)}M`
-                    : app.estimated_installs_min >= 1_000
-                    ? `${(app.estimated_installs_min / 1_000).toFixed(1)}K`
-                    : String(app.estimated_installs_min)}
+                  {fmtNum(app.estimated_installs_min)}
                 </span>
                 <span className="ml-0.5 text-[10px] text-gray-400"> DL/mo</span>
               </div>
@@ -114,11 +114,7 @@ export function TrendingAppCard({ app }: TrendingAppCardProps) {
             {app.estimated_revenue_monthly_min != null && (
               <div>
                 <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                  ${app.estimated_revenue_monthly_min >= 1_000_000
-                    ? `${(app.estimated_revenue_monthly_min / 1_000_000).toFixed(1)}M`
-                    : app.estimated_revenue_monthly_min >= 1_000
-                    ? `${(app.estimated_revenue_monthly_min / 1_000).toFixed(1)}K`
-                    : String(Math.round(app.estimated_revenue_monthly_min))}
+                  {fmtRev(app.estimated_revenue_monthly_min)}
                 </span>
                 <span className="ml-0.5 text-[10px] text-gray-400"> Rev/mo</span>
               </div>
