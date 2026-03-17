@@ -3,18 +3,31 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components';
-import { App, AppListResponse, getLatestApps } from '@/lib/api';
-import { Star, Zap, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import {
+  App,
+  AppListResponse,
+  FreshRiserItem,
+  FreshRisersResponse,
+  getLatestApps,
+  getFreshRisers,
+} from '@/lib/api';
+import { Star, Zap, Rocket, ChevronDown, ChevronUp, Loader2, TrendingUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const SORT_OPTIONS = [
   { value: 'release_date', label: 'Release Date' },
-  { value: 'rating', label: 'Rating' },
-  { value: 'reviews', label: 'Reviews' },
-  { value: 'name', label: 'Name' },
+  { value: 'rating',       label: 'Rating' },
+  { value: 'reviews',      label: 'Reviews' },
+  { value: 'name',         label: 'Name' },
 ];
 
 const PAGE_SIZE = 48;
+
+type Tab = 'new_releases' | 'fresh_risers';
+
+// ---------------------------------------------------------------------------
+// Skeleton
+// ---------------------------------------------------------------------------
 
 function SkeletonCard() {
   return (
@@ -34,6 +47,10 @@ function SkeletonCard() {
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// New Releases card
+// ---------------------------------------------------------------------------
 
 function AppCard({ app }: { app: App }) {
   const releaseDate = app.release_date
@@ -94,17 +111,105 @@ function AppCard({ app }: { app: App }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Fresh Risers card
+// ---------------------------------------------------------------------------
+
+function FreshRiserCard({ item }: { item: FreshRiserItem }) {
+  const releaseDate = item.release_date
+    ? new Date(item.release_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : null;
+
+  const score = Math.round(item.fresh_riser_score);
+
+  const scoreColor =
+    score >= 70 ? 'text-emerald-600 dark:text-emerald-400' :
+    score >= 40 ? 'text-amber-600 dark:text-amber-400' :
+    'text-gray-500 dark:text-gray-400';
+
+  return (
+    <Link
+      href={`/apps/${item.app_id}`}
+      className="group rounded-xl border border-gray-100 bg-white p-4 transition-all hover:border-emerald-200 hover:shadow-md dark:border-gray-800 dark:bg-gray-900 dark:hover:border-emerald-800"
+    >
+      <div className="flex items-start gap-3">
+        <div className="h-14 w-14 flex-shrink-0 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center">
+          <Rocket className="h-6 w-6 text-white" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-semibold text-gray-900 group-hover:text-emerald-600 dark:text-white dark:group-hover:text-emerald-400">
+            {item.app_name}
+          </p>
+          {item.developer && (
+            <p className="truncate text-xs text-gray-500 dark:text-gray-400">{item.developer}</p>
+          )}
+          {releaseDate && (
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+              Released {releaseDate} · {item.age_days}d ago
+            </p>
+          )}
+        </div>
+        {/* Score badge */}
+        <div className="flex flex-col items-center">
+          <span className={cn('text-lg font-bold tabular-nums', scoreColor)}>{score}</span>
+          <span className="text-[9px] text-gray-400 uppercase tracking-wide">score</span>
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {item.category && (
+          <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
+            {item.category}
+          </span>
+        )}
+        {item.current_rank != null && (
+          <span className="inline-flex items-center gap-0.5 text-xs text-gray-500 dark:text-gray-400">
+            <TrendingUp className="h-3 w-3" />
+            #{item.current_rank}
+          </span>
+        )}
+        {item.current_reviews > 0 && (
+          <span className="text-xs text-gray-400">
+            {item.current_reviews >= 1000
+              ? `${(item.current_reviews / 1000).toFixed(1)}k reviews`
+              : `${item.current_reviews} reviews`}
+          </span>
+        )}
+        <span className="text-xs text-gray-400">{item.ranking_snapshots_count} snapshots</span>
+      </div>
+    </Link>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
 export default function LatestAppsClient() {
+  const [activeTab, setActiveTab] = useState<Tab>('new_releases');
+
+  // New Releases state
   const [apps, setApps] = useState<App[]>([]);
   const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [loadingNR, setLoadingNR] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [category, setCategory] = useState('');
   const [sortBy, setSortBy] = useState('release_date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [offset, setOffset] = useState(0);
 
+  // Fresh Risers state
+  const [freshRisers, setFreshRisers] = useState<FreshRiserItem[]>([]);
+  const [freshStatus, setFreshStatus] = useState<string>('');
+  const [freshMessage, setFreshMessage] = useState<string | null>(null);
+  const [loadingFR, setLoadingFR] = useState(false);
+  const freshFetchedRef = useRef(false);
+
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ------------------------------------------------------------------
+  // New Releases fetch
+  // ------------------------------------------------------------------
 
   const fetchApps = useCallback(
     async (cat: string, sb: string, so: 'asc' | 'desc', off: number, append = false) => {
@@ -124,14 +229,13 @@ export default function LatestAppsClient() {
     []
   );
 
-  // Initial + filter-change fetch
   useEffect(() => {
-    setLoading(true);
+    setLoadingNR(true);
     setOffset(0);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
       await fetchApps(category, sortBy, sortOrder, 0, false);
-      setLoading(false);
+      setLoadingNR(false);
     }, 400);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [category, sortBy, sortOrder, fetchApps]);
@@ -142,7 +246,32 @@ export default function LatestAppsClient() {
     setLoadingMore(false);
   };
 
+  // ------------------------------------------------------------------
+  // Fresh Risers fetch (lazy — only on first tab switch)
+  // ------------------------------------------------------------------
+
+  useEffect(() => {
+    if (activeTab !== 'fresh_risers' || freshFetchedRef.current) return;
+    freshFetchedRef.current = true;
+    setLoadingFR(true);
+    getFreshRisers({ limit: 50 })
+      .then(data => {
+        setFreshRisers(data.items);
+        setFreshStatus(data.status);
+        setFreshMessage(data.message ?? null);
+      })
+      .catch(err => {
+        console.error('Failed to fetch fresh risers:', err);
+        setFreshStatus('error');
+      })
+      .finally(() => setLoadingFR(false));
+  }, [activeTab]);
+
   const toggleSortOrder = () => setSortOrder(o => (o === 'desc' ? 'asc' : 'desc'));
+
+  // ------------------------------------------------------------------
+  // Render
+  // ------------------------------------------------------------------
 
   return (
     <AppShell>
@@ -154,88 +283,147 @@ export default function LatestAppsClient() {
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Latest Apps</h1>
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            Apps released or added in the last 60 days
+            Discover newly released apps and those already gaining traction
           </p>
         </div>
 
-        {/* Stats + filters */}
-        <div className="flex flex-wrap items-center gap-3">
-          {!loading && (
-            <span className="rounded-full bg-indigo-50 px-3 py-1 text-sm font-medium text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
-              {total.toLocaleString()} apps
-            </span>
-          )}
-
-          <input
-            type="text"
-            placeholder="Filter by category…"
-            value={category}
-            onChange={e => setCategory(e.target.value)}
-            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-400 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:placeholder-gray-500"
-          />
-
-          <select
-            value={sortBy}
-            onChange={e => setSortBy(e.target.value)}
-            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 focus:border-indigo-400 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
-          >
-            {SORT_OPTIONS.map(o => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-
+        {/* Tabs */}
+        <div className="flex gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1 w-fit dark:border-gray-700 dark:bg-gray-800/50">
           <button
-            onClick={toggleSortOrder}
-            title={sortOrder === 'desc' ? 'Descending' : 'Ascending'}
-            className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+            onClick={() => setActiveTab('new_releases')}
+            className={cn(
+              'flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+              activeTab === 'new_releases'
+                ? 'bg-white text-indigo-700 shadow-sm dark:bg-gray-700 dark:text-indigo-300'
+                : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+            )}
           >
-            {sortOrder === 'desc' ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+            <Zap className="h-4 w-4" />
+            New Releases
+          </button>
+          <button
+            onClick={() => setActiveTab('fresh_risers')}
+            className={cn(
+              'flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-all',
+              activeTab === 'fresh_risers'
+                ? 'bg-white text-emerald-700 shadow-sm dark:bg-gray-700 dark:text-emerald-300'
+                : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+            )}
+          >
+            <Rocket className="h-4 w-4" />
+            Fresh Risers
           </button>
         </div>
 
-        {/* Grid */}
-        {loading ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)}
-          </div>
-        ) : apps.length === 0 ? (
-          <div className="rounded-xl border border-gray-100 bg-white p-12 text-center dark:border-gray-800 dark:bg-gray-900">
-            <Zap className="mx-auto mb-3 h-10 w-10 text-gray-300 dark:text-gray-600" />
-            <p className="text-gray-500 dark:text-gray-400">No apps found for the last 60 days.</p>
-            {category && (
-              <button
-                onClick={() => setCategory('')}
-                className="mt-2 text-sm text-indigo-500 hover:underline"
-              >
-                Clear category filter
-              </button>
-            )}
-          </div>
-        ) : (
+        {/* ── NEW RELEASES TAB ── */}
+        {activeTab === 'new_releases' && (
           <>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {apps.map(app => <AppCard key={app.id} app={app} />)}
+            {/* Filters */}
+            <div className="flex flex-wrap items-center gap-3">
+              {!loadingNR && (
+                <span className="rounded-full bg-indigo-50 px-3 py-1 text-sm font-medium text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
+                  {total.toLocaleString()} apps
+                </span>
+              )}
+              <input
+                type="text"
+                placeholder="Filter by category…"
+                value={category}
+                onChange={e => setCategory(e.target.value)}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-400 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:placeholder-gray-500"
+              />
+              <select
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value)}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 focus:border-indigo-400 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
+              >
+                {SORT_OPTIONS.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <button
+                onClick={toggleSortOrder}
+                title={sortOrder === 'desc' ? 'Descending' : 'Ascending'}
+                className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                {sortOrder === 'desc' ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+              </button>
             </div>
 
-            {apps.length < total && (
-              <div className="flex justify-center pt-2">
-                <button
-                  onClick={handleLoadMore}
-                  disabled={loadingMore}
-                  className={cn(
-                    'flex items-center gap-2 rounded-lg bg-indigo-600 px-6 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:opacity-60',
-                  )}
-                >
-                  {loadingMore ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Loading…
-                    </>
-                  ) : (
-                    `Load More (${total - apps.length} remaining)`
-                  )}
-                </button>
+            {/* Grid */}
+            {loadingNR ? (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)}
               </div>
+            ) : apps.length === 0 ? (
+              <div className="rounded-xl border border-gray-100 bg-white p-12 text-center dark:border-gray-800 dark:bg-gray-900">
+                <Zap className="mx-auto mb-3 h-10 w-10 text-gray-300 dark:text-gray-600" />
+                <p className="text-gray-500 dark:text-gray-400">No apps released in the last 30 days.</p>
+                {category && (
+                  <button
+                    onClick={() => setCategory('')}
+                    className="mt-2 text-sm text-indigo-500 hover:underline"
+                  >
+                    Clear category filter
+                  </button>
+                )}
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {apps.map(app => <AppCard key={app.id} app={app} />)}
+                </div>
+                {apps.length < total && (
+                  <div className="flex justify-center pt-2">
+                    <button
+                      onClick={handleLoadMore}
+                      disabled={loadingMore}
+                      className={cn(
+                        'flex items-center gap-2 rounded-lg bg-indigo-600 px-6 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:opacity-60',
+                      )}
+                    >
+                      {loadingMore ? (
+                        <><Loader2 className="h-4 w-4 animate-spin" />Loading…</>
+                      ) : (
+                        `Load More (${total - apps.length} remaining)`
+                      )}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </>
+        )}
+
+        {/* ── FRESH RISERS TAB ── */}
+        {activeTab === 'fresh_risers' && (
+          <>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Apps released in the last 30 days already showing chart traction and review growth.
+            </p>
+
+            {loadingFR ? (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)}
+              </div>
+            ) : freshStatus !== 'success' ? (
+              <div className="rounded-xl border border-gray-100 bg-white p-12 text-center dark:border-gray-800 dark:bg-gray-900">
+                <Rocket className="mx-auto mb-3 h-10 w-10 text-gray-300 dark:text-gray-600" />
+                <p className="text-gray-500 dark:text-gray-400">
+                  {freshMessage ?? 'No fresh risers found yet. Check back after the next scoring run.'}
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-2">
+                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
+                    {freshRisers.length} risers
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {freshRisers.map(item => <FreshRiserCard key={item.app_id} item={item} />)}
+                </div>
+              </>
             )}
           </>
         )}

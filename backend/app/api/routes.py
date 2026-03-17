@@ -351,7 +351,7 @@ def get_apps(
 
 
 @router.get("/apps/latest-60-days", response_model=AppListResponse)
-def get_latest_apps(
+def get_latest_apps_legacy(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     category: Optional[str] = Query(None),
@@ -360,12 +360,42 @@ def get_latest_apps(
     db: Session = Depends(get_db),
 ):
     cutoff = datetime.utcnow() - timedelta(days=60)
+    query = db.query(models.App).filter(
+        or_(models.App.release_date >= cutoff, models.App.created_at >= cutoff)
+    )
+    if category:
+        query = query.filter(
+            or_(
+                models.App.primary_category.ilike(f"%{category}%"),
+                models.App.secondary_category.ilike(f"%{category}%"),
+            )
+        )
+    sort_col = _VALID_SORT_FIELDS.get(sort_by, models.App.release_date)
+    query = query.order_by(sort_col.desc() if sort_order == "desc" else sort_col.asc())
+    total = query.count()
+    apps = query.offset(offset).limit(limit).all()
+    return AppListResponse(apps=apps, total=total, skip=offset, limit=limit)
+
+
+@router.get("/apps/latest", response_model=AppListResponse)
+def get_latest_apps(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    category: Optional[str] = Query(None),
+    sort_by: str = Query("release_date"),
+    sort_order: str = Query("desc"),
+    db: Session = Depends(get_db),
+):
+    """
+    New Releases: apps with release_date in the last 30 days.
+    Strictly uses release_date only — created_at and updated_at are never consulted.
+    Apps without a release_date are excluded.
+    """
+    cutoff = datetime.utcnow() - timedelta(days=30)
 
     query = db.query(models.App).filter(
-        or_(
-            models.App.release_date >= cutoff,
-            models.App.created_at >= cutoff,
-        )
+        models.App.release_date.isnot(None),
+        models.App.release_date >= cutoff,
     )
 
     if category:
@@ -378,7 +408,7 @@ def get_latest_apps(
 
     sort_col = _VALID_SORT_FIELDS.get(sort_by, models.App.release_date)
     query = query.order_by(
-        sort_col.desc() if sort_order == "desc" else sort_col.asc()
+        sort_col.desc().nullslast() if sort_order == "desc" else sort_col.asc().nullsfirst()
     )
 
     total = query.count()

@@ -430,7 +430,7 @@ export async function getFilteredApps(filters: AppFilters = {}): Promise<AppList
 }
 
 // ---------------------------------------------------------------------------
-// Latest 60 Days
+// Latest Apps (New Releases — last 30 days, release_date only)
 // ---------------------------------------------------------------------------
 
 export interface LatestAppsParams {
@@ -448,7 +448,45 @@ export async function getLatestApps(params: LatestAppsParams = {}): Promise<AppL
   if (params.category)   p.set('category',   params.category);
   if (params.sort_by)    p.set('sort_by',    params.sort_by);
   if (params.sort_order) p.set('sort_order', params.sort_order);
-  const res = await fetch(`${API_BASE}/apps/latest-60-days?${p.toString()}`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/apps/latest?${p.toString()}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Fresh Risers
+// ---------------------------------------------------------------------------
+
+export interface FreshRiserItem {
+  app_id: number;
+  app_name: string;
+  developer: string | null;
+  release_date: string | null;
+  current_rank: number | null;
+  current_reviews: number;
+  category: string | null;
+  fresh_riser_score: number;
+  freshness_score: number;
+  review_traction_score: number;
+  rank_quality_score: number;
+  momentum_score: number;
+  niche_viability_score: number;
+  ranking_snapshots_count: number;
+  age_days: number;
+}
+
+export interface FreshRisersResponse {
+  status: string;
+  message: string | null;
+  required_signals: string[] | null;
+  items: FreshRiserItem[];
+}
+
+export async function getFreshRisers(params: { limit?: number; mode?: string } = {}): Promise<FreshRisersResponse> {
+  const p = new URLSearchParams();
+  p.set('mode', params.mode ?? 'fresh_risers');
+  if (params.limit) p.set('limit', String(params.limit));
+  const res = await fetch(`${API_BASE}/fresh-risers?${p.toString()}`, { cache: 'no-store' });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
