@@ -284,7 +284,7 @@ export default function LatestAppsClient() {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <Zap className="h-6 w-6 text-indigo-500" />
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Latest Apps</h1>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">New Releases</h1>
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400">
             Discover newly released apps, today's launches, and new apps already gaining traction.

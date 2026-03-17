@@ -1,9 +1,7 @@
-export const dynamic = 'force-dynamic';
-
-import NicheRadarClient from './NicheRadarClient';
-
-export const metadata = { title: 'Niche Radar — AppStore Spy' };
+// Niche Radar has been merged into the Opportunities hub.
+// This redirect preserves old bookmarks.
+import { redirect } from 'next/navigation';
 
 export default function NicheRadarPage() {
-  return <NicheRadarClient />;
+  redirect('/opportunities?tab=niches');
 }

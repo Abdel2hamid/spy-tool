@@ -10,23 +10,24 @@ import {
   AppWindow,
   BarChart3,
   Settings,
-  Lightbulb,
-  Radar,
   Zap,
   Flame,
   Megaphone,
   TrendingUp as CampaignIcon,
   X,
+  Users,
+  Bell,
+  Star,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const navSections = [
   {
-    label: 'MAIN',
+    label: 'DISCOVER',
     items: [
       { href: '/', label: 'Dashboard', icon: LayoutDashboard },
       { href: '/apps', label: 'Apps', icon: AppWindow },
-      { href: '/latest-apps', label: 'Latest Apps', icon: Zap },
+      { href: '/latest-apps', label: 'New Releases', icon: Zap },
       { href: '/trending', label: 'Trending', icon: TrendingUp },
     ],
   },
@@ -42,15 +43,15 @@ const navSections = [
     label: 'INTELLIGENCE',
     items: [
       { href: '/opportunities', label: 'Opportunities', icon: Target },
-      { href: '/ideas', label: 'AI Opportunities', icon: Lightbulb },
-      { href: '/niche-radar', label: 'Niche Radar', icon: Radar },
       { href: '/keywords', label: 'Keywords', icon: Search },
       { href: '/rankings', label: 'Rankings', icon: BarChart3 },
     ],
   },
   {
-    label: 'SYSTEM',
+    label: 'TOOLS',
     items: [
+      { href: '/competitors', label: 'Competitors', icon: Users },
+      { href: '/alerts', label: 'Alerts', icon: Bell },
       { href: '/settings', label: 'Settings', icon: Settings },
     ],
   },

@@ -1,9 +1,7 @@
-export const dynamic = 'force-dynamic';
-
-import IdeasClient from './IdeasClient';
-
-export const metadata = { title: 'AI Opportunities — AppStore Spy' };
+// AI Opportunities has been merged into the Opportunities hub.
+// This redirect preserves old bookmarks.
+import { redirect } from 'next/navigation';
 
 export default function IdeasPage() {
-  return <IdeasClient />;
+  redirect('/opportunities?tab=ideas');
 }
