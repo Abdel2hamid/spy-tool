@@ -26,7 +26,26 @@ const SORT_OPTIONS = [
   { value: 'release_date', label: 'Release Date' },
   { value: 'last_updated', label: 'Last Updated' },
   { value: 'created_at', label: 'Date Added' },
+  { value: 'estimated_downloads', label: 'Est. Downloads' },
+  { value: 'estimated_revenue', label: 'Est. Revenue' },
+  { value: 'install_confidence', label: 'Confidence' },
 ];
+
+function fmtNum(n: number | null | undefined): string {
+  if (n == null || isNaN(n)) return '—';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+function fmtRev(n: number | null | undefined): string {
+  if (n == null || isNaN(n)) return '—';
+  return `$${fmtNum(n)}`;
+}
+const CONFIDENCE_COLORS: Record<string, string> = {
+  high: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400',
+  medium: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400',
+  low: 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
+};
 
 const DEFAULT_FILTERS: AppFilters = {
   search: '',
@@ -46,6 +65,11 @@ const DEFAULT_FILTERS: AppFilters = {
   released_before: '',
   min_success_probability: '',
   min_feature_gaps: '',
+  min_estimated_downloads: '',
+  max_estimated_downloads: '',
+  min_estimated_revenue: '',
+  max_estimated_revenue: '',
+  confidence_label: '',
   ai_only: false,
   sort_by: '',
   sort_order: 'desc',
@@ -90,6 +114,11 @@ function buildChips(filters: AppFilters): FilterChip[] {
   add('released_before', 'Released before');
   add('min_success_probability', 'Success prob.', v => `≥ ${v}%`);
   add('min_feature_gaps', 'Feature gaps', v => `≥ ${v} gaps`);
+  add('min_estimated_downloads', 'Min DL/mo', v => `≥ ${fmtNum(Number(v))}`);
+  add('max_estimated_downloads', 'Max DL/mo', v => `≤ ${fmtNum(Number(v))}`);
+  add('min_estimated_revenue', 'Min Rev/mo', v => `≥ ${fmtRev(Number(v))}`);
+  add('max_estimated_revenue', 'Max Rev/mo', v => `≤ ${fmtRev(Number(v))}`);
+  add('confidence_label', 'Confidence');
   add('ai_only', 'AI', () => 'AI apps only');
   add('sort_by', 'Sort', v => `${SORT_OPTIONS.find(o => o.value === v)?.label ?? v} ${filters.sort_order === 'asc' ? '↑' : '↓'}`);
   return chips;
@@ -467,6 +496,36 @@ export default function AppsClient() {
                         </span>
                       )}
                     </div>
+                    {(app.estimated_installs_min != null || app.estimated_revenue_monthly_min != null) && (
+                      <div className="mt-2 flex items-center justify-between border-t border-gray-100 pt-2 dark:border-gray-800">
+                        <div className="flex items-center gap-3">
+                          {app.estimated_installs_min != null && (
+                            <div className="text-center">
+                              <span className="block text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+                                {fmtNum(app.estimated_installs_min)}
+                              </span>
+                              <span className="text-[10px] text-gray-400">DL/mo</span>
+                            </div>
+                          )}
+                          {app.estimated_revenue_monthly_min != null && (
+                            <div className="text-center">
+                              <span className="block text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                                {fmtRev(app.estimated_revenue_monthly_min)}
+                              </span>
+                              <span className="text-[10px] text-gray-400">Rev/mo</span>
+                            </div>
+                          )}
+                        </div>
+                        {app.install_confidence != null && (() => {
+                          const conf = app.install_confidence >= 0.65 ? 'high' : app.install_confidence >= 0.40 ? 'medium' : 'low';
+                          return (
+                            <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium', CONFIDENCE_COLORS[conf])}>
+                              {conf}
+                            </span>
+                          );
+                        })()}
+                      </div>
+                    )}
                   </div>
                 </Link>
               ))}
@@ -765,6 +824,42 @@ export default function AppsClient() {
               <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
                 Show apps where users requested at least N distinct features
               </p>
+            </div>
+          </DrawerSection>
+
+          {/* Download & Revenue Estimates */}
+          <DrawerSection title="Download & Revenue Estimates">
+            <RangeInput
+              minKey="min_estimated_downloads" maxKey="max_estimated_downloads"
+              label="Est. Downloads / month" draft={draftFilters} setDraft={setDraftFilters}
+              min={0}
+            />
+            <RangeInput
+              minKey="min_estimated_revenue" maxKey="max_estimated_revenue"
+              label="Est. Revenue / month ($)" draft={draftFilters} setDraft={setDraftFilters}
+              min={0}
+            />
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                Confidence Level
+              </label>
+              <div className="flex gap-1">
+                {(['', 'high', 'medium', 'low'] as const).map(level => (
+                  <button
+                    key={level}
+                    type="button"
+                    onClick={() => setDraftFilters({ ...draftFilters, confidence_label: level })}
+                    className={cn(
+                      'flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors',
+                      draftFilters.confidence_label === level
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600',
+                    )}
+                  >
+                    {level === '' ? 'Any' : level.charAt(0).toUpperCase() + level.slice(1)}
+                  </button>
+                ))}
+              </div>
             </div>
           </DrawerSection>
 

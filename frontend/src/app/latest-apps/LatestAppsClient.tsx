@@ -107,6 +107,30 @@ function AppCard({ app }: { app: App }) {
           </span>
         )}
       </div>
+      {(app.estimated_installs_min != null || app.estimated_revenue_monthly_min != null) && (
+        <div className="mt-2 flex items-center gap-3 border-t border-gray-100 pt-2 dark:border-gray-800">
+          {app.estimated_installs_min != null && (
+            <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+              {app.estimated_installs_min >= 1_000_000
+                ? `${(app.estimated_installs_min / 1_000_000).toFixed(1)}M`
+                : app.estimated_installs_min >= 1_000
+                ? `${(app.estimated_installs_min / 1_000).toFixed(1)}K`
+                : String(app.estimated_installs_min)}
+              <span className="ml-0.5 font-normal text-gray-400"> DL/mo</span>
+            </span>
+          )}
+          {app.estimated_revenue_monthly_min != null && (
+            <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+              ${app.estimated_revenue_monthly_min >= 1_000_000
+                ? `${(app.estimated_revenue_monthly_min / 1_000_000).toFixed(1)}M`
+                : app.estimated_revenue_monthly_min >= 1_000
+                ? `${(app.estimated_revenue_monthly_min / 1_000).toFixed(1)}K`
+                : String(Math.round(app.estimated_revenue_monthly_min))}
+              <span className="ml-0.5 font-normal text-gray-400"> Rev/mo</span>
+            </span>
+          )}
+        </div>
+      )}
     </Link>
   );
 }

@@ -403,6 +403,11 @@ class TrendingAppV2Response(BaseModel):
     consistency_score: float
     confidence_factor: float
     absolute_rank_bonus: float
+    estimated_installs_min: Optional[int] = None
+    estimated_installs_max: Optional[int] = None
+    install_confidence: Optional[float] = None
+    estimated_revenue_monthly_min: Optional[float] = None
+    estimated_revenue_monthly_max: Optional[float] = None
     review_momentum: float
 
 

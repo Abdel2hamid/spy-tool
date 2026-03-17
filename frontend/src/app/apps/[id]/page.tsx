@@ -232,10 +232,25 @@ function OverviewTab({ app }: { app: AppDetail }) {
       {/* Install & Revenue Estimates */}
       {(app.estimated_installs_min || app.estimated_revenue_monthly_min) && (
         <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-5 dark:border-indigo-800 dark:bg-indigo-950/30">
-          <h3 className="mb-3 text-sm font-semibold text-indigo-800 dark:text-indigo-300 flex items-center gap-2">
-            <Zap className="h-4 w-4" />
-            Market Estimates
-          </h3>
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-indigo-800 dark:text-indigo-300 flex items-center gap-2">
+              <Zap className="h-4 w-4" />
+              Market Estimates
+            </h3>
+            {app.install_confidence != null && (() => {
+              const conf = app.install_confidence >= 0.65 ? 'high' : app.install_confidence >= 0.40 ? 'medium' : 'low';
+              const cls = conf === 'high'
+                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
+                : conf === 'medium'
+                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
+                : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400';
+              return (
+                <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-medium', cls)}>
+                  {conf} confidence
+                </span>
+              );
+            })()}
+          </div>
           <div className="grid grid-cols-2 gap-4">
             {app.estimated_installs_min != null && (
               <div>
@@ -246,11 +261,6 @@ function OverviewTab({ app }: { app: AppDetail }) {
                 <p className="text-lg font-bold text-indigo-900 dark:text-indigo-100">
                   {formatRange(app.estimated_installs_min, app.estimated_installs_max)}
                 </p>
-                {app.install_confidence != null && (
-                  <p className="text-xs text-indigo-500">
-                    {Math.round(app.install_confidence * 100)}% confidence
-                  </p>
-                )}
               </div>
             )}
             {app.estimated_revenue_monthly_min != null && (

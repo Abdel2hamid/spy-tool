@@ -96,6 +96,35 @@ export function TrendingAppCard({ app }: TrendingAppCardProps) {
             <div className="text-xs text-gray-500 dark:text-gray-400">score</div>
           </div>
         </div>
+
+        {(app.estimated_installs_min != null || app.estimated_revenue_monthly_min != null) && (
+          <div className="mt-3 flex items-center gap-4 border-t border-gray-100 pt-3 dark:border-gray-800">
+            {app.estimated_installs_min != null && (
+              <div>
+                <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+                  {app.estimated_installs_min >= 1_000_000
+                    ? `${(app.estimated_installs_min / 1_000_000).toFixed(1)}M`
+                    : app.estimated_installs_min >= 1_000
+                    ? `${(app.estimated_installs_min / 1_000).toFixed(1)}K`
+                    : String(app.estimated_installs_min)}
+                </span>
+                <span className="ml-0.5 text-[10px] text-gray-400"> DL/mo</span>
+              </div>
+            )}
+            {app.estimated_revenue_monthly_min != null && (
+              <div>
+                <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                  ${app.estimated_revenue_monthly_min >= 1_000_000
+                    ? `${(app.estimated_revenue_monthly_min / 1_000_000).toFixed(1)}M`
+                    : app.estimated_revenue_monthly_min >= 1_000
+                    ? `${(app.estimated_revenue_monthly_min / 1_000).toFixed(1)}K`
+                    : String(Math.round(app.estimated_revenue_monthly_min))}
+                </span>
+                <span className="ml-0.5 text-[10px] text-gray-400"> Rev/mo</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </Link>
   );

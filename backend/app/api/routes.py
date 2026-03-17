@@ -149,6 +149,8 @@ _VALID_SORT_FIELDS = {
     "release_date": models.App.release_date,
     "last_updated": models.App.last_updated,
     "created_at": models.App.created_at,
+    "estimated_downloads": models.App.estimated_installs_min,
+    "estimated_revenue": models.App.estimated_revenue_monthly_min,
 }
 
 _AI_TERMS = ["%ai%", "%artificial intelligence%", "%machine learning%",
@@ -196,6 +198,12 @@ def get_apps(
     min_negative_ratio: Optional[float] = Query(None, ge=0, le=1),
     # ── feature gaps ──────────────────────────────────────────────────────
     min_feature_gaps: Optional[int] = Query(None, ge=1),
+    # ── download / revenue estimates ──────────────────────────────────────
+    min_estimated_downloads: Optional[int] = Query(None, ge=0),
+    max_estimated_downloads: Optional[int] = Query(None, ge=0),
+    min_estimated_revenue: Optional[float] = Query(None, ge=0),
+    max_estimated_revenue: Optional[float] = Query(None, ge=0),
+    confidence_label: Optional[str] = Query(None, description="low | medium | high"),
     # ── sorting ──────────────────────────────────────────────────────────
     sort_by: Optional[str] = None,
     sort_order: str = Query("desc"),
@@ -336,10 +344,32 @@ def get_apps(
     if min_freshness_score is not None:
         query = query.filter(models.App.freshness_score >= min_freshness_score)
 
+    # ── download / revenue estimate filters ───────────────────────────────
+    if min_estimated_downloads is not None:
+        query = query.filter(models.App.estimated_installs_min >= min_estimated_downloads)
+    if max_estimated_downloads is not None:
+        query = query.filter(models.App.estimated_installs_min <= max_estimated_downloads)
+    if min_estimated_revenue is not None:
+        query = query.filter(models.App.estimated_revenue_monthly_min >= min_estimated_revenue)
+    if max_estimated_revenue is not None:
+        query = query.filter(models.App.estimated_revenue_monthly_min <= max_estimated_revenue)
+    if confidence_label is not None:
+        query = query.filter(models.App.install_confidence.isnot(None))
+        if confidence_label == "high":
+            query = query.filter(models.App.install_confidence >= 0.65)
+        elif confidence_label == "medium":
+            query = query.filter(
+                models.App.install_confidence >= 0.40,
+                models.App.install_confidence < 0.65,
+            )
+        elif confidence_label == "low":
+            query = query.filter(models.App.install_confidence < 0.40)
+
     # ── sorting ──────────────────────────────────────────────────────────
     _VALID_SORT_FIELDS_LOCAL = {
         **_VALID_SORT_FIELDS,
         "freshness_score": models.App.freshness_score,
+        "install_confidence": models.App.install_confidence,
     }
     sort_col = _VALID_SORT_FIELDS_LOCAL.get(sort_by or "", models.App.created_at)
     if sort_order == "asc":
@@ -786,6 +816,11 @@ def _read_precomputed_trending(
             "confidence_factor": score.confidence_factor,
             "absolute_rank_bonus": score.absolute_rank_bonus,
             "review_momentum": score.review_momentum,
+            "estimated_installs_min": app.estimated_installs_min,
+            "estimated_installs_max": app.estimated_installs_max,
+            "install_confidence": app.install_confidence,
+            "estimated_revenue_monthly_min": app.estimated_revenue_monthly_min,
+            "estimated_revenue_monthly_max": app.estimated_revenue_monthly_max,
         }
         for score, app in rows
     ]

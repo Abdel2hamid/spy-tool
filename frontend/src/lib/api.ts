@@ -53,6 +53,11 @@ export interface TrendingApp {
   confidence_factor: number;
   absolute_rank_bonus: number;
   review_momentum: number;
+  estimated_installs_min: number | null;
+  estimated_installs_max: number | null;
+  install_confidence: number | null;
+  estimated_revenue_monthly_min: number | null;
+  estimated_revenue_monthly_max: number | null;
 }
 
 export interface OpportunityOfDay {
@@ -379,6 +384,11 @@ export interface AppFilters {
   weak_market?: string;
   min_negative_ratio?: number | '';
   min_feature_gaps?: number | '';
+  min_estimated_downloads?: number | '';
+  max_estimated_downloads?: number | '';
+  min_estimated_revenue?: number | '';
+  max_estimated_revenue?: number | '';
+  confidence_label?: 'low' | 'medium' | 'high' | '';
   sort_by?: string;
   sort_order?: 'asc' | 'desc';
   skip?: number;
@@ -419,6 +429,11 @@ export async function getFilteredApps(filters: AppFilters = {}): Promise<AppList
   set('weak_market', filters.weak_market);
   set('min_negative_ratio', filters.min_negative_ratio);
   set('min_feature_gaps', filters.min_feature_gaps);
+  set('min_estimated_downloads', filters.min_estimated_downloads);
+  set('max_estimated_downloads', filters.max_estimated_downloads);
+  set('min_estimated_revenue', filters.min_estimated_revenue);
+  set('max_estimated_revenue', filters.max_estimated_revenue);
+  set('confidence_label', filters.confidence_label);
   set('sort_by', filters.sort_by);
   set('sort_order', filters.sort_order || 'desc');
   params.set('skip', String(filters.skip ?? 0));
@@ -1079,6 +1094,35 @@ export async function getInstallEstimate(appId: number): Promise<InstallEstimate
 
 export async function getRevenueEstimate(appId: number): Promise<RevenueEstimate> {
   const res = await fetch(`${API_BASE}/apps/${appId}/revenue-estimate`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export interface DownloadEstimate {
+  app_id: number;
+  estimated_downloads_daily: number;
+  estimated_downloads_monthly: number;
+  downloads_range_low: number;
+  downloads_range_high: number;
+  estimated_revenue_monthly: number | null;
+  revenue_range_low: number | null;
+  revenue_range_high: number | null;
+  estimation_confidence: number;
+  confidence_label: 'low' | 'medium' | 'high';
+  monetization_model_hint: string | null;
+  factor_breakdown: {
+    rank_baseline: number | null;
+    review_velocity_estimate: number | null;
+    visibility_estimate: number | null;
+    momentum_adjustment_pct: number | null;
+    weights_used: Record<string, number> | null;
+    confidence_factors: Record<string, number> | null;
+  };
+  estimation_notes: string;
+}
+
+export async function getDownloadEstimate(appId: number): Promise<DownloadEstimate> {
+  const res = await fetch(`${API_BASE}/apps/${appId}/download-estimate`, { cache: 'no-store' });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }

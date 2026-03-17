@@ -277,7 +277,9 @@
       "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m pytest tests/test_new_releases.py -v 2>&1)",
       "Bash(python3 -m pytest tests/test_reviews_intelligence.py::TestFeatureGapService::test_compute_for_all_apps_returns_count -v 2>&1)",
       "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m pytest tests/test_download_estimator.py -v 2>&1 | head -120)",
-      "Bash(grep -n \"export.*AppCard\\\\|export.*AppRow\\\\|export.*AppList\" /Users/abdelhamid/appstore-spy-tool/frontend/src/components/*.tsx 2>/dev/null | head -20)"
+      "Bash(grep -n \"export.*AppCard\\\\|export.*AppRow\\\\|export.*AppList\" /Users/abdelhamid/appstore-spy-tool/frontend/src/components/*.tsx 2>/dev/null | head -20)",
+      "Bash(python3 -m pytest tests/ -q --tb=short 2>&1 | tail -30)",
+      "Bash(npx tsc --noEmit 2>&1 | grep -E \"AppsClient|TrendingAppCard|LatestAppsClient|api\\\\.ts|page\\\\.tsx\" | head -20)"
     ]
   }
 }
