@@ -1,6 +1,6 @@
 import enum
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, Index, Boolean, JSON
+from sqlalchemy import Column, Integer, String, Float, DateTime, Date, Text, ForeignKey, Index, Boolean, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -380,6 +380,27 @@ class DailyReport(Base):
     opportunity_of_day = Column(JSON)
     category_insights = Column(JSON)
     generated_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DailyOpportunity(Base):
+    """
+    Structured daily opportunity record — one row per calendar date (unique).
+    Richer than DailyReport.opportunity_of_day: has explicit niche/keyword
+    columns, an ai_summary, and a related_apps JSON list for the frontend.
+    """
+    __tablename__ = "daily_opportunities"
+
+    id                  = Column(Integer, primary_key=True, index=True)
+    date                = Column(Date, nullable=False, unique=True)
+    keyword             = Column(String(255))
+    niche               = Column(String(255))
+    competition_score   = Column(Float)
+    trend_score         = Column(Float)
+    success_probability = Column(Float)
+    ai_summary          = Column(Text)
+    related_apps        = Column(JSON)   # List[{id, name, rating, reviews, icon_url}]
+    full_data           = Column(JSON)   # Full opportunity dict returned by API
+    generated_at        = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class KeywordSearchSnapshot(Base):

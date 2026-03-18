@@ -127,33 +127,23 @@ async def job_hourly_scoring():
 
 async def job_opportunity_compute():
     """
-    Precompute today's Opportunity of the Day and persist it into DailyReport.
+    Precompute today's Opportunity of the Day (with related apps + AI summary).
+    Persists to both daily_opportunities and legacy DailyReport tables.
     Runs every 1 h (first run +5 min) so the /opportunity-of-day endpoint is
-    always a fast read — no on-demand engine call needed.
+    always a fast read — no on-demand computation needed.
     """
     job_id = "opportunity_compute"
     t0 = _log_start(job_id)
     from app.database import SessionLocal
-    from app.scoring.engine import ScoringEngine
-    from app.models.models import DailyReport
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from app.services.opportunity_of_day_service import OpportunityOfDayService
 
     db = SessionLocal()
     try:
-        engine = ScoringEngine(db)
-        opportunity = await asyncio.to_thread(engine.generate_opportunity_of_day)
-        if opportunity:
-            today = datetime.utcnow().date()
-            stmt = pg_insert(DailyReport).values(
-                date=today,
-                opportunity_of_day=opportunity,
-            ).on_conflict_do_update(
-                index_elements=["date"],
-                set_={"opportunity_of_day": opportunity},
-            )
-            db.execute(stmt)
-            db.commit()
-            _log_done(job_id, t0, f"opportunity computed for {today}")
+        svc = OpportunityOfDayService(db)
+        result = await asyncio.to_thread(svc.get_or_generate)
+        if result:
+            today = result.get("app_name", "unknown")
+            _log_done(job_id, t0, f"opportunity computed (app={today})")
         else:
             _log_done(job_id, t0, "no qualifying opportunity (insufficient data)")
     except Exception as exc:

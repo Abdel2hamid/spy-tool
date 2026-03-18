@@ -60,6 +60,16 @@ export interface TrendingApp {
   estimated_revenue_monthly_max: number | null;
 }
 
+export interface RelatedApp {
+  id: number;
+  name: string;
+  rating: number | null;
+  reviews: number | null;
+  rank: number | null;
+  icon_url: string | null;
+  category: string | null;
+}
+
 export interface OpportunityOfDay {
   app_id: number;
   app_name: string;
@@ -74,6 +84,8 @@ export interface OpportunityOfDay {
   category_growth: number;
   category: string;
   recommendation: string;
+  ai_summary?: string | null;
+  related_apps?: RelatedApp[] | null;
 }
 
 export interface OpportunityOfDayWrapper {

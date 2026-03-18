@@ -278,6 +278,22 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_growth_type     ON growth_events (event_type)",
     "CREATE INDEX IF NOT EXISTS idx_growth_detected ON growth_events (detected_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_growth_active   ON growth_events (app_id, active_status)",
+
+    # Daily Opportunity — one canonical opportunity per calendar day
+    """CREATE TABLE IF NOT EXISTS daily_opportunities (
+        id                  SERIAL PRIMARY KEY,
+        date                DATE NOT NULL UNIQUE,
+        keyword             VARCHAR(255),
+        niche               VARCHAR(255),
+        competition_score   FLOAT,
+        trend_score         FLOAT,
+        success_probability FLOAT,
+        ai_summary          TEXT,
+        related_apps        JSONB,
+        full_data           JSONB,
+        generated_at        TIMESTAMPTZ DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_daily_opp_date ON daily_opportunities (date DESC)",
 ]
 
 

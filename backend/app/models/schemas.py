@@ -413,6 +413,16 @@ class TrendingAppV2Response(BaseModel):
     review_momentum: float
 
 
+class RelatedAppItem(BaseModel):
+    id: int
+    name: str
+    rating: Optional[float] = None
+    reviews: Optional[int] = None
+    rank: Optional[int] = None
+    icon_url: Optional[str] = None
+    category: Optional[str] = None
+
+
 class OpportunityOfDayResponse(BaseModel):
     app_id: int
     app_name: str
@@ -430,6 +440,8 @@ class OpportunityOfDayResponse(BaseModel):
     category_growth: float
     category: str
     recommendation: str
+    ai_summary: Optional[str] = None
+    related_apps: Optional[List[RelatedAppItem]] = None
 
 
 class KeywordOpportunityResponse(BaseModel):
