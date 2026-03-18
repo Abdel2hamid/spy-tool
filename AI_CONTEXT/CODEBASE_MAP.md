@@ -56,9 +56,11 @@ backend/
 │       ├── __init__.py
 │       └── parse_appstore_query.py  ParsedQuery dataclass + parse_appstore_query(q) — detects App Store URLs, iTunes URLs, id-slug, numeric trackIds vs plain text
 ├── tests/
-│   ├── test_import_search.py   36 tests for AppImportService
-│   ├── test_download_estimator.py  70 tests for DownloadEstimator + ConfidenceEngine
-│   ├── test_growth_intelligence.py 41 tests for AdIntelligence + CampaignTracking
+│   ├── test_import_search.py          36 tests for AppImportService
+│   ├── test_import_flow.py            37+ tests for import flow + route regression
+│   ├── test_download_estimator.py     70 tests for DownloadEstimator + ConfidenceEngine
+│   ├── test_growth_intelligence.py    41 tests for AdIntelligence + CampaignTracking
+│   ├── test_post_import_hydration.py  12 tests for PostImportHydrationService
 │   └── ...
 ├── requirements.txt
 └── venv/
@@ -103,6 +105,7 @@ backend/
 | `app_autopsy.py` | `AppAutopsyService` — "why is this app winning" narrative |
 | `backfill_keyword_structure.py` | One-time backfill utility |
 | `keyword_quality_backfill.py` | Quality score backfill utility |
+| `post_import_hydration.py` | `PostImportHydrationService` — background pipeline after app import (full scrape + keyword enrichment + estimation) |
 
 ---
 

@@ -156,7 +156,12 @@ Frontend flow (`SearchDropdown.tsx`):
 6. Import failure → `importError` state shown below results in dropdown
 7. `searchError` shown in dropdown when lookup/search fails
 
-**Enrichment:** triggered via `background_tasks.add_task(service.trigger_enrichment, id)` only when `is_new=True`. Runs: keyword extraction → competitor mining → keyword intelligence pipeline.
+**Post-import hydration:** triggered via `PostImportHydrationService().hydrate(app_id, app_store_id)` as a `BackgroundTask`, only when `is_new=True`. Three sequential steps (each in its own try/except so partial failures don't block subsequent steps):
+1. **Full scrape** — `ScraperWorker.scrape_app_full_details()` via `asyncio.run()` (metadata + reviews + versions)
+2. **Keyword enrichment** — extraction + competitor mining + intelligence pipeline (each with own `SessionLocal`)
+3. **Estimation** — `MetricSnapshotService.compute_for_app()` writes download/revenue snapshot
+
+**Frontend banner:** `/apps/{id}?imported=1` → green "App imported successfully!" banner (dismissible, already implemented in `apps/[id]/page.tsx`).
 
 ---
 
@@ -168,6 +173,7 @@ backend/tests/
 ├── test_import_flow.py            37 tests — end-to-end import flow + route 200 regression
 ├── test_download_estimator.py     70 tests — DownloadEstimator + ConfidenceEngine
 ├── test_growth_intelligence.py    41 tests — AdIntelligence + CampaignTracking
+├── test_post_import_hydration.py  12 tests — PostImportHydrationService
 └── (more tests)
 ```
 

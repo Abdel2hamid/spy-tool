@@ -5,6 +5,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 import asyncio
 import logging
+import threading
 
 from app.database import get_db
 from app.models import models
@@ -594,7 +595,6 @@ def get_blowing_up_apps(
 def import_search_apps(
     q: str = Query(..., min_length=1, description="App name, App Store URL, or Apple trackId"),
     limit: int = Query(10, ge=1, le=20, description="Max results"),
-    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -619,8 +619,13 @@ def import_search_apps(
     if parsed and parsed.type in ("url", "track_id") and parsed.track_id:
         result = service.lookup_app(parsed.track_id)
         if "error" not in result:
-            if result.get("is_new") and result.get("id") and background_tasks:
-                background_tasks.add_task(service.trigger_enrichment, result["id"])
+            if result.get("is_new") and result.get("id"):
+                from app.services.post_import_hydration import PostImportHydrationService
+                threading.Thread(
+                    target=PostImportHydrationService().hydrate,
+                    args=(result["id"], result.get("app_id", "")),
+                    daemon=True,
+                ).start()
             item = {
                 "id": result.get("id", 0),
                 "app_id": result.get("app_id", ""),
@@ -674,7 +679,6 @@ def import_search_apps(
 @router.get("/apps/lookup/{track_id}", response_model=AppLookupResponse)
 def lookup_app(
     track_id: str,
-    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -693,7 +697,12 @@ def lookup_app(
         raise HTTPException(status_code=404, detail=result["error"])
 
     if result.get("is_new") and result.get("id"):
-        background_tasks.add_task(service.trigger_enrichment, result["id"])
+        from app.services.post_import_hydration import PostImportHydrationService
+        threading.Thread(
+            target=PostImportHydrationService().hydrate,
+            args=(result["id"], result.get("app_id", "")),
+            daemon=True,
+        ).start()
 
     return result
 

@@ -184,7 +184,15 @@ frontend/src/
 - Quality engine: quality_score + quality_tier (A/B/C) + canonical dedup
 - **File:** `services/keyword_intelligence_pipeline.py`, `services/keyword_quality_engine.py`
 
-### 6. Growth Intelligence Layer
+### 6. Post-Import Hydration Pipeline
+- Triggered on-demand when a new app is imported (is_new=True)
+- Runs in a **daemon thread** (`threading.Thread(daemon=True).start()`) — HTTP response returns in <50ms
+- 3 sequential steps, each isolated in try/except: (1) full scrape, (2) keyword enrichment, (3) estimation
+- `asyncio.run()` inside the daemon thread is safe — creates its own event loop (no running loop in thread)
+- Frontend shows green "App imported!" banner via `?imported=1` query param
+- **File:** `services/post_import_hydration.py`
+
+### 7. Growth Intelligence Layer
 - **Ad Intelligence:** Detects Apple Search Ads signals (rank + reviews correlation); optional Meta Ads Library integration (`FACEBOOK_ACCESS_TOKEN` required)
 - **Campaign Tracking:** Classifies `growth_events` as paid_push / organic_breakout / mixed / momentum_surge / campaign_cooling / unknown_unusual
 - **Metric Snapshots:** Download + revenue snapshots written to `app_metric_snapshots` on every scoring cycle
