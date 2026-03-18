@@ -471,6 +471,37 @@ class OpportunityOfDayWrapperResponse(BaseModel):
     item: Optional[OpportunityOfDayResponse] = None
 
 
+class WeeklyOpportunityItem(BaseModel):
+    """One ranked opportunity in the Top-5 This Week list."""
+    rank: int
+    week_start_date: Optional[str] = None
+    app_id: int
+    app_name: str
+    primary_keyword: str
+    competition_score: float
+    trend_score: float
+    success_probability: float
+    opportunity_score: float
+    attractiveness_score: Optional[float] = None
+    feasibility_score: Optional[float] = None
+    feasibility_details: Optional[dict] = None
+    ai_integration_potential: Optional[float] = None
+    rank_velocity: Optional[float] = None
+    review_growth: Optional[float] = None
+    category: str
+    recommendation: Optional[str] = None
+    ai_summary: Optional[str] = None
+    related_apps: Optional[List[RelatedAppItem]] = None
+
+
+class WeeklyOpportunitiesResponse(BaseModel):
+    """Top-5 Opportunities This Week."""
+    status: str  # "success" | "insufficient_data" | "empty"
+    message: Optional[str] = None
+    week_start_date: Optional[str] = None
+    items: List[WeeklyOpportunityItem] = []
+
+
 class KeywordOpportunitiesWrapperResponse(BaseModel):
     """Wrapper response for keyword opportunities with status information."""
     status: str  # "success" | "insufficient_data" | "empty" | "pipeline_not_run"

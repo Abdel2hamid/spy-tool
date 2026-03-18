@@ -152,6 +152,28 @@ async def job_opportunity_compute():
         db.close()
 
 
+async def job_weekly_opportunities_compute():
+    """
+    Precompute this week's Top-5 Opportunities (Mon–Sun ISO week).
+    Runs every 6 h. On first call of the week it generates and persists 5 ranked
+    rows; subsequent calls within the same week hit the cache immediately.
+    """
+    job_id = "weekly_opportunities_compute"
+    t0 = _log_start(job_id)
+    from app.database import SessionLocal
+    from app.services.weekly_opportunities_service import WeeklyOpportunitiesService
+
+    db = SessionLocal()
+    try:
+        svc = WeeklyOpportunitiesService(db)
+        items = await asyncio.to_thread(svc.get_or_generate)
+        _log_done(job_id, t0, f"weekly opportunities: {len(items)} items")
+    except Exception as exc:
+        _log_fail(job_id, exc)
+    finally:
+        db.close()
+
+
 async def job_blowing_up_compute():
     """
     Precompute and persist 'blowing up' momentum scores for all apps that
@@ -1043,6 +1065,20 @@ def setup_scheduler() -> AsyncIOScheduler:
         ),
         id="opportunity_compute",
         name="Every 1h: Precompute Opportunity of the Day",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── every 6 h: precompute weekly top-5 opportunities ─────────────────────
+    # First run: 7 min after startup (after opportunity_compute starts).
+    scheduler.add_job(
+        job_weekly_opportunities_compute,
+        trigger=IntervalTrigger(
+            hours=6,
+            start_date=now + timedelta(minutes=7),
+            timezone="UTC",
+        ),
+        id="weekly_opportunities_compute",
+        name="Every 6h: Precompute Weekly Top-5 Opportunities",
         **_JOB_DEFAULTS,
     )
 

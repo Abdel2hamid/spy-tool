@@ -79,6 +79,8 @@ from app.models.schemas import (
     CampaignTrackingListResponse,
     DashboardKeywordHighlight,
     DashboardKeywordHighlightsResponse,
+    WeeklyOpportunityItem,
+    WeeklyOpportunitiesResponse,
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
@@ -1167,6 +1169,44 @@ def get_opportunity_of_day(db: Session = Depends(get_db)):
         "message": "Today's opportunity is still being computed. Check back shortly.",
         "required_signals": ["daily_report"],
         "item": None,
+    }
+
+
+@router.get("/weekly-opportunities", response_model=WeeklyOpportunitiesResponse)
+def get_weekly_opportunities(db: Session = Depends(get_db)):
+    """
+    Return the Top-5 Opportunities This Week.
+
+    Same-week caching: computed once per ISO week (Mon–Sun), cached in
+    weekly_opportunities table, returned instantly on subsequent calls.
+
+    Each item is ranked 1–5 by:
+        opportunity_score = trend_score * 0.5
+                          + (100 - competition_score) * 0.3
+                          + success_probability * 0.2
+    """
+    from app.services.weekly_opportunities_service import WeeklyOpportunitiesService, _week_start
+    from datetime import date as _date
+
+    try:
+        svc = WeeklyOpportunitiesService(db)
+        items = svc.get_or_generate()
+        if items:
+            week_start = _week_start(_date.today()).isoformat()
+            return {
+                "status": "success",
+                "message": None,
+                "week_start_date": week_start,
+                "items": items,
+            }
+    except Exception as exc:
+        logger.warning("weekly-opportunities error: %s", exc, exc_info=True)
+
+    return {
+        "status": "insufficient_data",
+        "message": "Weekly opportunities are still being computed. Check back shortly.",
+        "week_start_date": None,
+        "items": [],
     }
 
 

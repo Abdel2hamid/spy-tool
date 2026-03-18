@@ -403,6 +403,33 @@ class DailyOpportunity(Base):
     generated_at        = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class WeeklyOpportunity(Base):
+    """
+    Top-5 ranked opportunities for a given ISO week.
+    Five rows per week: one per rank (1–5), keyed by (week_start_date, rank).
+    """
+    __tablename__ = "weekly_opportunities"
+
+    id                  = Column(Integer, primary_key=True, index=True)
+    week_start_date     = Column(Date, nullable=False)
+    rank                = Column(Integer, nullable=False)   # 1–5
+    keyword             = Column(String(255))
+    niche               = Column(String(255))
+    competition_score   = Column(Float)
+    trend_score         = Column(Float)
+    success_probability = Column(Float)
+    opportunity_score   = Column(Float)   # trend*0.5 + (100-comp)*0.3 + success*0.2
+    ai_summary          = Column(Text)
+    related_apps        = Column(JSON)    # List[{id, name, rating, reviews, icon_url}]
+    full_data           = Column(JSON)    # Full scored dict
+    generated_at        = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_weekly_opp_week", "week_start_date"),
+        Index("idx_weekly_opp_week_rank", "week_start_date", "rank", unique=True),
+    )
+
+
 class KeywordSearchSnapshot(Base):
     """
     One row per (keyword, country, app, captured_at) — stores a point-in-time

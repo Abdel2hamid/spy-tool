@@ -95,6 +95,34 @@ export interface OpportunityOfDayWrapper {
   required_signals: string[] | null;
 }
 
+export interface WeeklyOpportunityItem {
+  rank: number;
+  week_start_date?: string | null;
+  app_id: number;
+  app_name: string;
+  primary_keyword: string;
+  competition_score: number;
+  trend_score: number;
+  success_probability: number;
+  opportunity_score: number;
+  attractiveness_score?: number | null;
+  feasibility_score?: number | null;
+  ai_integration_potential?: number | null;
+  rank_velocity?: number | null;
+  review_growth?: number | null;
+  category: string;
+  recommendation?: string | null;
+  ai_summary?: string | null;
+  related_apps?: RelatedApp[] | null;
+}
+
+export interface WeeklyOpportunitiesResponse {
+  status: 'success' | 'insufficient_data' | 'empty';
+  message?: string | null;
+  week_start_date?: string | null;
+  items: WeeklyOpportunityItem[];
+}
+
 export interface KeywordOpportunity {
   keyword: string;
   search_volume: number;
@@ -569,6 +597,14 @@ export async function getOpportunityOfDay(): Promise<OpportunityOfDayWrapper> {
     message: null,
     required_signals: null,
   };
+}
+
+export async function getWeeklyOpportunities(): Promise<WeeklyOpportunitiesResponse> {
+  const response = await fetchApi<WeeklyOpportunitiesResponse>('/weekly-opportunities');
+  if (response && 'status' in response) {
+    return response;
+  }
+  return { status: 'insufficient_data', items: [] };
 }
 
 export async function getKeywordOpportunities(

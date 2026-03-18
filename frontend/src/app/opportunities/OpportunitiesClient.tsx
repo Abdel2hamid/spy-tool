@@ -5,14 +5,17 @@ import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { AppShell } from '@/components';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { OpportunityOfDayCard } from '@/components/OpportunityOfDayCard';
+import { WeeklyOpportunitiesCard } from '@/components/WeeklyOpportunitiesCard';
 import { SimpleChart } from '@/components/Charts';
 import {
   OpportunityOfDayWrapper,
+  WeeklyOpportunitiesResponse,
   KeywordOpportunity,
   AppIdea,
   AppIdeaListResponse,
   NicheRadarItem,
   getOpportunityOfDay,
+  getWeeklyOpportunities,
   getKeywordOpportunities,
   getIdeas,
   generateIdeas,
@@ -52,15 +55,18 @@ const TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
 
 function KeywordsTab() {
   const [opportunity, setOpportunity] = useState<OpportunityOfDayWrapper | null>(null);
+  const [weeklyOpps, setWeeklyOpps]   = useState<WeeklyOpportunitiesResponse | null>(null);
   const [keywordOpps, setKeywordOpps]   = useState<KeywordOpportunity[]>([]);
   const [loading, setLoading]            = useState(true);
 
   useEffect(() => {
     Promise.all([
       getOpportunityOfDay().catch(() => null),
+      getWeeklyOpportunities().catch(() => null),
       getKeywordOpportunities().then(r => Array.isArray(r) ? r : []).catch(() => []),
-    ]).then(([opp, kwOpps]) => {
+    ]).then(([opp, weekly, kwOpps]) => {
       setOpportunity(opp);
+      setWeeklyOpps(weekly);
       setKeywordOpps(kwOpps);
       setLoading(false);
     });
@@ -86,6 +92,14 @@ function KeywordsTab() {
 
   return (
     <div className="space-y-6">
+      {/* Top 5 Opportunities This Week */}
+      {weeklyOpps?.status === 'success' && weeklyOpps.items.length > 0 ? (
+        <WeeklyOpportunitiesCard
+          items={weeklyOpps.items}
+          weekStartDate={weeklyOpps.week_start_date}
+        />
+      ) : null}
+
       {/* Opportunity of the Day */}
       {opportunity?.status === 'success' && opportunity.item ? (
         <OpportunityOfDayCard opportunity={opportunity.item} />

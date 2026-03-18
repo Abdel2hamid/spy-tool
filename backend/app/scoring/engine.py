@@ -465,38 +465,23 @@ class ScoringEngine:
     # Opportunity of the Day
     # ------------------------------------------------------------------
 
-    def generate_opportunity_of_day(self) -> Optional[Dict]:
+    def _build_scored_opportunities(self) -> List[Dict]:
         """
-        Generate the Opportunity of the Day by scoring all tracked apps.
-        
-        Previous naive implementation used `app.name.split()[0].lower()` to extract
-        the primary keyword, which is flawed because:
-        - First token is often a brand name (e.g., "Spotify", "Instagram")
-        - Adjectives like "Best", "Easy", "Smart" provide no ASO value
-        - Single tokens miss multi-word keyword opportunities
-        - No consideration of actual keyword performance data
-        
-        The new `select_primary_keyword()` method uses 4-tier selection:
-        1. AppKeywordIntelligence - highest traffic_score from extracted keywords
-        2. AppDiscoveredKeyword - highest opportunity_score from discovery
-        3. Title/Subtitle phrases - 2-3 word phrases from app metadata
-        4. Smart fallback - stopword-filtered phrase extraction
+        Score all ranked apps and return them sorted by success_probability descending.
+
+        Uses 4-tier keyword selection, brand/incumbent exclusions, attractiveness,
+        and feasibility scoring. Shared by generate_opportunity_of_day() and
+        get_all_scored_opportunities().
         """
         apps = self.db.query(App).filter(App.current_rank.isnot(None)).all()
-
-        if not apps:
-            return None
-
         scored = []
 
         for app in apps:
-            # Hard exclusion: major brand developer or product name
-            excluded, _excl_reason = self._is_excluded_big_brand(app)
+            excluded, _ = self._is_excluded_big_brand(app)
             if excluded:
                 continue
 
-            # Hard exclusion: entrenched market incumbent
-            dominated, _dom_reason = self._is_dominated_market(app)
+            dominated, _ = self._is_dominated_market(app)
             if dominated:
                 continue
 
@@ -504,7 +489,6 @@ class ScoringEngine:
             competition_score = self.calculate_keyword_competition(primary_keyword)
             ai_potential = self.calculate_ai_potential(app.id, app.name, app.description or "")
 
-            # Attractiveness — market size + demand signals
             _aw = WINNABILITY_CONFIG["attractiveness_weights"]
             rank_score = max(0.0, 100.0 - (app.current_rank * 2)) if app.current_rank else 0.0
             rating_score = (app.current_rating or 0.0) * 20.0
@@ -516,7 +500,6 @@ class ScoringEngine:
                 100.0,
             )
 
-            # Feasibility / Winnability
             feasibility, feasibility_details = self.calculate_feasibility_score(app, competition_score)
 
             _cw = WINNABILITY_CONFIG["combined_weights"]
@@ -552,11 +535,30 @@ class ScoringEngine:
                 ),
             })
 
-        if not scored:
-            return None
-
         scored.sort(key=lambda x: x["success_probability"], reverse=True)
-        return scored[0]
+        return scored
+
+    def generate_opportunity_of_day(self) -> Optional[Dict]:
+        """
+        Generate the Opportunity of the Day by scoring all tracked apps.
+
+        Uses 4-tier keyword selection:
+        1. AppKeywordIntelligence - highest traffic_score from extracted keywords
+        2. AppDiscoveredKeyword - highest opportunity_score from discovery
+        3. Title/Subtitle phrases - 2-3 word phrases from app metadata
+        4. Smart fallback - stopword-filtered phrase extraction
+        """
+        scored = self._build_scored_opportunities()
+        return scored[0] if scored else None
+
+    def get_all_scored_opportunities(self, n: Optional[int] = None) -> List[Dict]:
+        """
+        Return all scored opportunities sorted by success_probability descending.
+        Pass n to cap the result (e.g., n=20 for candidate pool).
+        Used by WeeklyOpportunitiesService to build the top-5 weekly list.
+        """
+        scored = self._build_scored_opportunities()
+        return scored[:n] if n is not None else scored
 
     def get_top_trending_apps(self, limit: int = 10) -> List[Dict]:
         cutoff = datetime.utcnow() - timedelta(days=7)

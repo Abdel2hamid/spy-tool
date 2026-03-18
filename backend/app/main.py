@@ -294,6 +294,25 @@ _MIGRATIONS = [
         generated_at        TIMESTAMPTZ DEFAULT NOW()
     )""",
     "CREATE INDEX IF NOT EXISTS idx_daily_opp_date ON daily_opportunities (date DESC)",
+
+    # Weekly Opportunities — top-5 ranked opportunities per ISO week
+    """CREATE TABLE IF NOT EXISTS weekly_opportunities (
+        id                SERIAL PRIMARY KEY,
+        week_start_date   DATE NOT NULL,
+        rank              INTEGER NOT NULL,
+        keyword           VARCHAR(255),
+        niche             VARCHAR(255),
+        competition_score FLOAT,
+        trend_score       FLOAT,
+        success_probability FLOAT,
+        opportunity_score FLOAT,
+        ai_summary        TEXT,
+        related_apps      JSONB,
+        full_data         JSONB,
+        generated_at      TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(week_start_date, rank)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_weekly_opp_week ON weekly_opportunities (week_start_date DESC)",
 ]
 
 
