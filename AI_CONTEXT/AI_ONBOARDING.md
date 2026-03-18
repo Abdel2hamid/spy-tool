@@ -134,7 +134,20 @@ The app has two search modes:
 
 **Duplicate prevention:** `App.app_id` has `UNIQUE` constraint. `_get_or_create_app()` uses select-before-insert with rollback recovery (retries SELECT after unique violation to handle race conditions).
 
-Frontend flow (`Header.tsx`):
+**Search component architecture** (3 files in `frontend/src/components/`):
+- `SearchDropdown.tsx` — self-contained; holds all state + API calls; renders input + animated panel
+- `SearchResultRow.tsx` — one result row; props: `app`, `isFocused`, `isImporting`, `onClick`, `onMouseEnter`
+- `SearchSection.tsx` — section wrapper with `title` prop and `role="group"` for accessibility
+- `Header.tsx` — thin shell; just `<SearchDropdown />` + mobile menu + notifications
+
+**Keyboard navigation** (in `SearchDropdown`):
+- `ArrowDown/Up` — moves `focusedIndex` through `[...localResults, ...storeResults]`
+- `Enter` — triggers Open or Import for focused item
+- `Escape` — calls `closeDropdown()` (clears query + blurs input)
+
+**Dropdown animation** — always in DOM; `opacity-0 scale-95 pointer-events-none` → `opacity-100 scale-100 pointer-events-auto` via `transition-all duration-150 ease-out origin-top`
+
+Frontend flow (`SearchDropdown.tsx`):
 1. User types in header search → debounced `searchAppsImport(q)` call
 2. If `res.error_hint` set → show error message in dropdown (e.g. "App not found...")
 3. If `res.direct_lookup && results[0].id > 0` → auto-navigate to `/apps/{id}`

@@ -9,3 +9,6 @@ export { TrendingAppCard } from './TrendingAppCard';
 export { OpportunityOfDayCard } from './OpportunityOfDayCard';
 export { KeywordOpportunityCard } from './KeywordOpportunityCard';
 export { SimpleChart, RankHistoryChart } from './Charts';
+export { SearchDropdown } from './SearchDropdown';
+export { SearchResultRow } from './SearchResultRow';
+export { SearchSection } from './SearchSection';

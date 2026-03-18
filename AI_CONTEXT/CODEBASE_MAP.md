@@ -158,7 +158,10 @@ frontend/src/
 ├── components/
 │   ├── AppShell.tsx              REQUIRED wrapper for all pages (Sidebar + Header)
 │   ├── Sidebar.tsx               Left nav with all page links
-│   ├── Header.tsx                Top bar: global search + notifications + theme toggle
+│   ├── Header.tsx                Top bar shell — delegates search to SearchDropdown
+│   ├── SearchDropdown.tsx        Full global search UX: input + debounce + keyboard nav + results panel
+│   ├── SearchResultRow.tsx       One result row — app icon, name, rating·developer, Open/Import action
+│   ├── SearchSection.tsx         Section wrapper with uppercase heading label
 │   ├── Charts.tsx                Recharts wrappers
 │   ├── StatsCard.tsx             KPI card with trend indicator
 │   ├── TrendingAppCard.tsx       Trending app card

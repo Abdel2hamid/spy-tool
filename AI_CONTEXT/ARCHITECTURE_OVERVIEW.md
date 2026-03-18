@@ -78,7 +78,11 @@ frontend/src/
 │   ├── competitors/page.tsx  — Competitor analysis (UI stub — no backend)
 │   ├── alerts/page.tsx       — Alerts (UI stub — no backend)
 │   └── settings/page.tsx     — Settings (UI stub — no backend)
-├── components/               — AppShell, ErrorBoundary, TrendingAppCard, sidebar, etc.
+├── components/               — AppShell, ErrorBoundary, TrendingAppCard, sidebar, global search, etc.
+│   ├── Header.tsx            — Thin shell: mobile menu + <SearchDropdown /> + notifications
+│   ├── SearchDropdown.tsx    — Full search UX: input, debounce, keyboard nav, results panel
+│   ├── SearchResultRow.tsx   — Individual result row: icon, name, rating·developer, Open/Import action
+│   └── SearchSection.tsx     — Section wrapper with uppercase label ("In your workspace" / "From App Store")
 └── lib/
     ├── api.ts                — Typed API client (~1500 lines); all fetch calls live here
     ├── estimate-format.ts    — Shared formatters: fmtNum, fmtRev, fmtRange, confidenceLabel
