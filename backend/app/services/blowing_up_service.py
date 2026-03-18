@@ -25,10 +25,12 @@ Refreshed every 15 minutes by the blowing_up_compute scheduler job.
 """
 
 import logging
-from datetime import datetime, timedelta
+import time
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
-from sqlalchemy import func, exists as sa_exists
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -332,105 +334,252 @@ class BlowingUpService:
         }
 
     # ------------------------------------------------------------------
+    # Prefetch-based scoring (used by batch path)
+    # ------------------------------------------------------------------
+
+    def _compute_from_prefetch(
+        self,
+        app_id: int,
+        rankings: list,
+        review_count: int,
+        is_new_entry: bool,
+        timeframe_days: int,
+        now: datetime,
+    ) -> Optional[Dict]:
+        """
+        Compute score for one app using pre-fetched data (no DB access).
+        Returns None if there is insufficient data (< 2 ranking snapshots).
+        """
+        if len(rankings) < 2:
+            return None
+
+        latest       = rankings[-1]
+        first        = rankings[0]
+        current_rank = latest.rank
+        starting_rank = first.rank
+
+        rank_change  = starting_rank - current_rank
+
+        velocities   = [r.rank_velocity for r in rankings if r.rank_velocity is not None]
+        avg_velocity = sum(velocities) / len(velocities) if velocities else 0.0
+
+        reviews_velocity = review_count / max(timeframe_days, 1)
+
+        chart_types      = {r.chart_type  for r in rankings if r.chart_type}
+        category_ids     = {r.category_id for r in rankings if r.category_id is not None}
+        chart_appearances = len(rankings)
+        markets_count     = len(chart_types) + len(category_ids)
+
+        consistency_score = _consistency(rankings)
+        confidence_factor = _confidence(len(rankings))
+
+        rvs  = _norm_rank_velocity(avg_velocity)
+        rcs  = _norm_rank_change(rank_change, starting_rank)
+        revs = _norm_reviews_velocity(reviews_velocity)
+        cps  = _norm_chart_presence(chart_appearances, timeframe_days)
+        cms  = _norm_cross_market(markets_count)
+        con  = consistency_score
+
+        composite = (
+            _WEIGHTS["rank_velocity_score"]    * rvs  +
+            _WEIGHTS["rank_change_score"]      * rcs  +
+            _WEIGHTS["reviews_velocity_score"] * revs +
+            _WEIGHTS["chart_presence_score"]   * cps  +
+            _WEIGHTS["cross_market_score"]     * cms  +
+            _WEIGHTS["consistency_score"]      * con
+        )
+
+        blowing_up_score = round(composite * confidence_factor, 2)
+        confidence_score = round(confidence_factor * 100, 2)
+
+        return {
+            "app_id":                 app_id,
+            "blowing_up_score":       blowing_up_score,
+            "rank_velocity_score":    round(rvs, 2),
+            "rank_change_score":      round(rcs, 2),
+            "reviews_velocity_score": round(revs, 2),
+            "chart_presence_score":   round(cps, 2),
+            "cross_market_score":     round(cms, 2),
+            "consistency_score":      round(con, 2),
+            "confidence_score":       confidence_score,
+            "rank_change":            rank_change,
+            "rank_velocity":          round(avg_velocity, 2),
+            "reviews_velocity":       round(reviews_velocity, 2),
+            "chart_appearances":      chart_appearances,
+            "markets_count":          markets_count,
+            "badges": _badges(rcs, revs, markets_count, con, confidence_score, is_new_entry),
+            "why_flagged": _why_flagged(
+                rank_change, starting_rank, current_rank,
+                reviews_velocity, chart_appearances, markets_count,
+                con, timeframe_days, len(rankings),
+            ),
+        }
+
+    # ------------------------------------------------------------------
     # Batch computation + persistence
     # ------------------------------------------------------------------
 
-    def compute_for_all_apps(self, timeframe_days: int = 7) -> int:
+    def compute_for_all_apps(self, timeframe_days: int = 7, max_apps: int = 100) -> int:
         """
         Compute and persist blowing_up_score for all eligible apps.
-        Returns the number of apps scored (inserted/updated).
 
-        Commit strategy: per-app commit so that one bad row never rolls back
-        the entire batch.
+        Performance optimisation (vs the old N+1 approach):
+          • Candidates are capped at *max_apps* (most active first) so the loop
+            is always bounded — default 100 apps.
+          • All ranking rows, review counts and pre-window flags are fetched in
+            three bulk queries instead of 3 × N individual queries.
+          • A single transaction replaces per-app commits.
+
+        Returns the number of apps scored (inserted/updated).
         """
-        now    = datetime.utcnow()
+        t0 = time.monotonic()
+        now    = datetime.now(timezone.utc)
         cutoff = now - timedelta(days=timeframe_days)
 
-        # Candidate selection: apps with ≥ 2 ranking snapshots in the window
-        app_ids = [
+        # ── 1. Candidates: apps with ≥2 snapshots in window, most active first ──
+        candidate_rows = (
+            self.db.query(Ranking.app_id, func.count(Ranking.id).label("cnt"))
+            .filter(Ranking.recorded_at >= cutoff, Ranking.rank.isnot(None))
+            .group_by(Ranking.app_id)
+            .having(func.count(Ranking.id) >= 2)
+            .order_by(func.count(Ranking.id).desc())
+            .limit(max_apps)
+            .all()
+        )
+        app_ids = [row[0] for row in candidate_rows]
+        candidates = len(app_ids)
+
+        logger.info(
+            "[BlowingUp] starting compute: %d candidate apps "
+            "(timeframe=%dd, max_apps=%d, cutoff=%s)",
+            candidates, timeframe_days, max_apps, cutoff.date(),
+        )
+
+        if not app_ids:
+            logger.info("[BlowingUp] no candidates — done in %.2fs", time.monotonic() - t0)
+            return 0
+
+        # ── 2. Bulk-prefetch rankings in window (single query) ──
+        all_rankings = (
+            self.db.query(Ranking)
+            .filter(
+                Ranking.app_id.in_(app_ids),
+                Ranking.recorded_at >= cutoff,
+                Ranking.rank.isnot(None),
+            )
+            .order_by(Ranking.app_id, Ranking.recorded_at.asc())
+            .all()
+        )
+        rankings_by_app: Dict[int, List] = defaultdict(list)
+        for r in all_rankings:
+            rankings_by_app[r.app_id].append(r)
+
+        # ── 3. Bulk-prefetch review counts (single query) ──
+        review_count_rows = (
+            self.db.query(Review.app_id, func.count(Review.id).label("cnt"))
+            .filter(Review.app_id.in_(app_ids), Review.date >= cutoff)
+            .group_by(Review.app_id)
+            .all()
+        )
+        review_counts: Dict[int, int] = {row[0]: row[1] for row in review_count_rows}
+
+        # ── 4. Bulk-prefetch pre-window existence (single query) ──
+        pre_window_apps = set(
             row[0]
             for row in (
                 self.db.query(Ranking.app_id)
-                .filter(Ranking.recorded_at >= cutoff, Ranking.rank.isnot(None))
-                .group_by(Ranking.app_id)
-                .having(func.count(Ranking.id) >= 2)
+                .filter(
+                    Ranking.app_id.in_(app_ids),
+                    Ranking.recorded_at < cutoff,
+                    Ranking.rank.isnot(None),
+                )
+                .distinct()
                 .all()
             )
-        ]
-
-        candidates = len(app_ids)
-        logger.info(
-            f"[BlowingUp] starting compute: {candidates} candidate apps "
-            f"(timeframe={timeframe_days}d, cutoff={cutoff.date()})"
         )
 
-        scored = 0
+        # ── 5. Score each app using only in-memory data ──
+        results: List[Dict] = []
         skipped_no_data = 0
         failed = 0
-
         for app_id in app_ids:
             try:
-                result = self.compute_for_app(app_id, timeframe_days)
+                result = self._compute_from_prefetch(
+                    app_id=app_id,
+                    rankings=rankings_by_app.get(app_id, []),
+                    review_count=review_counts.get(app_id, 0),
+                    is_new_entry=(app_id not in pre_window_apps),
+                    timeframe_days=timeframe_days,
+                    now=now,
+                )
                 if result is None:
                     skipped_no_data += 1
-                    continue
-
-                stmt = (
-                    pg_insert(AppBlowingUpScore)
-                    .values(
-                        app_id=app_id,
-                        blowing_up_score=result["blowing_up_score"],
-                        rank_velocity_score=result["rank_velocity_score"],
-                        rank_change_score=result["rank_change_score"],
-                        reviews_velocity_score=result["reviews_velocity_score"],
-                        chart_presence_score=result["chart_presence_score"],
-                        cross_market_score=result["cross_market_score"],
-                        consistency_score=result["consistency_score"],
-                        confidence_score=result["confidence_score"],
-                        rank_change=result["rank_change"],
-                        rank_velocity=result["rank_velocity"],
-                        reviews_velocity=result["reviews_velocity"],
-                        chart_appearances=result["chart_appearances"],
-                        markets_count=result["markets_count"],
-                        badges=result["badges"],
-                        why_flagged=result["why_flagged"],
-                        computed_at=now,
-                    )
-                    .on_conflict_do_update(
-                        index_elements=["app_id"],
-                        set_={
-                            "blowing_up_score":       result["blowing_up_score"],
-                            "rank_velocity_score":    result["rank_velocity_score"],
-                            "rank_change_score":      result["rank_change_score"],
-                            "reviews_velocity_score": result["reviews_velocity_score"],
-                            "chart_presence_score":   result["chart_presence_score"],
-                            "cross_market_score":     result["cross_market_score"],
-                            "consistency_score":      result["consistency_score"],
-                            "confidence_score":       result["confidence_score"],
-                            "rank_change":            result["rank_change"],
-                            "rank_velocity":          result["rank_velocity"],
-                            "reviews_velocity":       result["reviews_velocity"],
-                            "chart_appearances":      result["chart_appearances"],
-                            "markets_count":          result["markets_count"],
-                            "badges":                 result["badges"],
-                            "why_flagged":            result["why_flagged"],
-                            "computed_at":            now,
-                        },
-                    )
-                )
-                self.db.execute(stmt)
-                # Commit per-app: prevents one bad row from rolling back the batch
-                self.db.commit()
-                scored += 1
-
+                else:
+                    results.append(result)
             except Exception as exc:
-                logger.warning(f"[BlowingUp] app_id={app_id} failed: {exc}")
-                self.db.rollback()
+                logger.warning("[BlowingUp] app_id=%s scoring failed: %s", app_id, exc)
                 failed += 1
 
+        # ── 6. Batch upsert in a single transaction ──
+        scored = 0
+        if results:
+            try:
+                for result in results:
+                    stmt = (
+                        pg_insert(AppBlowingUpScore)
+                        .values(
+                            app_id=result["app_id"],
+                            blowing_up_score=result["blowing_up_score"],
+                            rank_velocity_score=result["rank_velocity_score"],
+                            rank_change_score=result["rank_change_score"],
+                            reviews_velocity_score=result["reviews_velocity_score"],
+                            chart_presence_score=result["chart_presence_score"],
+                            cross_market_score=result["cross_market_score"],
+                            consistency_score=result["consistency_score"],
+                            confidence_score=result["confidence_score"],
+                            rank_change=result["rank_change"],
+                            rank_velocity=result["rank_velocity"],
+                            reviews_velocity=result["reviews_velocity"],
+                            chart_appearances=result["chart_appearances"],
+                            markets_count=result["markets_count"],
+                            badges=result["badges"],
+                            why_flagged=result["why_flagged"],
+                            computed_at=now,
+                        )
+                        .on_conflict_do_update(
+                            index_elements=["app_id"],
+                            set_={
+                                "blowing_up_score":       result["blowing_up_score"],
+                                "rank_velocity_score":    result["rank_velocity_score"],
+                                "rank_change_score":      result["rank_change_score"],
+                                "reviews_velocity_score": result["reviews_velocity_score"],
+                                "chart_presence_score":   result["chart_presence_score"],
+                                "cross_market_score":     result["cross_market_score"],
+                                "consistency_score":      result["consistency_score"],
+                                "confidence_score":       result["confidence_score"],
+                                "rank_change":            result["rank_change"],
+                                "rank_velocity":          result["rank_velocity"],
+                                "reviews_velocity":       result["reviews_velocity"],
+                                "chart_appearances":      result["chart_appearances"],
+                                "markets_count":          result["markets_count"],
+                                "badges":                 result["badges"],
+                                "why_flagged":            result["why_flagged"],
+                                "computed_at":            now,
+                            },
+                        )
+                    )
+                    self.db.execute(stmt)
+                self.db.commit()
+                scored = len(results)
+            except Exception as exc:
+                logger.error("[BlowingUp] batch upsert failed: %s", exc)
+                self.db.rollback()
+
+        elapsed = time.monotonic() - t0
         logger.info(
-            f"[BlowingUp] done: candidates={candidates} scored={scored} "
-            f"skipped={skipped_no_data} failed={failed}"
+            "[BlowingUp] done in %.2fs: candidates=%d scored=%d "
+            "skipped=%d failed=%d",
+            elapsed, candidates, scored, skipped_no_data, failed,
         )
         return scored
 
@@ -471,14 +620,17 @@ class BlowingUpService:
             query = query.filter(App.primary_category.ilike(f"%{category}%"))
 
         if chart_type:
-            cutoff = datetime.utcnow() - timedelta(days=7)
-            query = query.filter(
-                sa_exists().where(
-                    (Ranking.app_id == AppBlowingUpScore.app_id)
-                    & (Ranking.chart_type == chart_type)
-                    & (Ranking.recorded_at >= cutoff)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+            chart_subq = (
+                self.db.query(Ranking.app_id)
+                .filter(
+                    Ranking.chart_type == chart_type,
+                    Ranking.recorded_at >= cutoff,
                 )
+                .distinct()
+                .subquery()
             )
+            query = query.join(chart_subq, AppBlowingUpScore.app_id == chart_subq.c.app_id)
 
         _SORT_MAP = {
             "blowing_up_score": AppBlowingUpScore.blowing_up_score,

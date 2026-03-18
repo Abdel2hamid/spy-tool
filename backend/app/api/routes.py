@@ -490,108 +490,137 @@ def get_blowing_up_apps(
     (refreshed every 15 min) for sub-millisecond response times.
     Pass ?autocompute=true to trigger a fresh compute run before returning.
     """
+    import time as _time
     from app.services.blowing_up_service import BlowingUpService
     from app.models.models import AppBlowingUpScore, Ranking
 
+    t0 = _time.monotonic()
     svc = BlowingUpService(db)
 
-    # Optional synchronous backfill (used on first deploy / manual refresh)
+    # autocompute triggers a background recompute — never blocks the request
     if autocompute:
-        try:
-            svc.compute_for_all_apps(timeframe_days=30)
-        except Exception:
-            pass
+        import threading as _threading
+        from app.database import SessionLocal as _SessionLocal
 
-    # Check if the table has any data at all
-    total_computed = db.query(func.count(AppBlowingUpScore.app_id)).scalar() or 0
+        def _bg_compute():
+            _db = _SessionLocal()
+            try:
+                BlowingUpService(_db).compute_for_all_apps(timeframe_days=7, max_apps=100)
+            except Exception as _exc:
+                logger.warning("[blowing-up] background autocompute error: %s", _exc)
+            finally:
+                _db.close()
 
-    if total_computed == 0:
-        # Gather diagnostic counts to explain WHY it's empty
-        total_rankings = db.query(func.count(Ranking.id)).scalar() or 0
-        from datetime import timedelta as _td
-        cutoff_7d = datetime.utcnow() - _td(days=7)
-        rankings_7d = (
-            db.query(func.count(Ranking.id))
-            .filter(Ranking.recorded_at >= cutoff_7d, Ranking.rank.isnot(None))
-            .scalar()
-        ) or 0
-        if total_rankings == 0:
-            msg = "No ranking data in database yet — top-charts scraping has not run."
-        elif rankings_7d == 0:
-            msg = f"Ranking data exists ({total_rankings} rows) but none in the last 7 days — scraper may be stale."
-        else:
-            msg = (
-                f"Ranking data exists ({rankings_7d} rows in last 7d) but no candidates "
-                "have ≥2 snapshots — charts may have only run once. Will populate on next scheduler run."
+        _threading.Thread(target=_bg_compute, daemon=True).start()
+
+    try:
+        # Check if the table has any data at all
+        total_computed = db.query(func.count(AppBlowingUpScore.app_id)).scalar() or 0
+
+        if total_computed == 0:
+            # Gather diagnostic counts to explain WHY it's empty
+            total_rankings = db.query(func.count(Ranking.id)).scalar() or 0
+            from datetime import timedelta as _td, timezone as _tz
+            cutoff_7d = datetime.now(_tz.utc) - _td(days=7)
+            rankings_7d = (
+                db.query(func.count(Ranking.id))
+                .filter(Ranking.recorded_at >= cutoff_7d, Ranking.rank.isnot(None))
+                .scalar()
+            ) or 0
+            if total_rankings == 0:
+                msg = "No ranking data in database yet — top-charts scraping has not run."
+            elif rankings_7d == 0:
+                msg = f"Ranking data exists ({total_rankings} rows) but none in the last 7 days — scraper may be stale."
+            else:
+                msg = (
+                    f"Ranking data exists ({rankings_7d} rows in last 7d) but no candidates "
+                    "have ≥2 snapshots — charts may have only run once. Will populate on next scheduler run."
+                )
+            logger.info(
+                "[blowing-up] insufficient_data response in %.0fms",
+                ((_time.monotonic() - t0) * 1000),
             )
-        return BlowingUpResponse(
-            status="insufficient_data",
-            message=msg,
-            required_signals=["ranking_history", "rank_velocity"],
-            items=[],
-            total=0,
+            return BlowingUpResponse(
+                status="insufficient_data",
+                message=msg,
+                required_signals=["ranking_history", "rank_velocity"],
+                items=[],
+                total=0,
+            )
+
+        rows, total = svc.get_blowing_up_apps(
+            limit=limit,
+            skip=skip,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            min_confidence=min_confidence,
+            min_reviews_velocity=min_reviews_velocity,
+            category=category,
+            chart_type=chart_type,
         )
 
-    rows, total = svc.get_blowing_up_apps(
-        limit=limit,
-        skip=skip,
-        sort_by=sort_by,
-        sort_order=sort_order,
-        min_confidence=min_confidence,
-        min_reviews_velocity=min_reviews_velocity,
-        category=category,
-        chart_type=chart_type,
-    )
+        if total == 0:
+            return BlowingUpResponse(
+                status="empty",
+                message="No apps match the current filters. Try relaxing confidence or velocity thresholds.",
+                items=[],
+                total=0,
+            )
 
-    if total == 0:
+        items: list[AppBlowingUpItem] = []
+        for score, app in rows:
+            items.append(AppBlowingUpItem(
+                id=app.id,
+                app_id=app.app_id,
+                name=app.name,
+                developer=app.developer,
+                icon_url=app.icon_url,
+                primary_category=app.primary_category,
+                current_rank=app.current_rank,
+                current_rating=app.current_rating,
+                current_reviews=app.current_reviews,
+                blowing_up_score=score.blowing_up_score,
+                rank_velocity_score=score.rank_velocity_score,
+                rank_change_score=score.rank_change_score,
+                reviews_velocity_score=score.reviews_velocity_score,
+                chart_presence_score=score.chart_presence_score,
+                cross_market_score=score.cross_market_score,
+                consistency_score=score.consistency_score,
+                confidence_score=score.confidence_score,
+                rank_change=score.rank_change,
+                rank_velocity=score.rank_velocity,
+                reviews_velocity=score.reviews_velocity,
+                chart_appearances=score.chart_appearances,
+                markets_count=score.markets_count,
+                badges=score.badges or [],
+                why_flagged=score.why_flagged or [],
+                computed_at=score.computed_at,
+            ))
+
+        scores = [item.blowing_up_score for item in items]
+        velocities = [item.rank_velocity for item in items if item.rank_velocity > 0]
+
+        elapsed_ms = round((_time.monotonic() - t0) * 1000)
+        logger.info("[blowing-up] served %d/%d apps in %dms", len(items), total, elapsed_ms)
+
+        return BlowingUpResponse(
+            status="success",
+            items=items,
+            total=total,
+            exploding_count=total,
+            top_score=round(max(scores), 1) if scores else None,
+            avg_rank_velocity=round(sum(velocities) / len(velocities), 1) if velocities else None,
+        )
+
+    except Exception as exc:
+        elapsed_ms = round((_time.monotonic() - t0) * 1000)
+        logger.error("[blowing-up] unexpected error after %dms: %s", elapsed_ms, exc, exc_info=True)
         return BlowingUpResponse(
             status="empty",
-            message="No apps match the current filters. Try relaxing confidence or velocity thresholds.",
+            message="An error occurred while fetching results. Please try again.",
             items=[],
             total=0,
         )
-
-    items: list[AppBlowingUpItem] = []
-    for score, app in rows:
-        items.append(AppBlowingUpItem(
-            id=app.id,
-            app_id=app.app_id,
-            name=app.name,
-            developer=app.developer,
-            icon_url=app.icon_url,
-            primary_category=app.primary_category,
-            current_rank=app.current_rank,
-            current_rating=app.current_rating,
-            current_reviews=app.current_reviews,
-            blowing_up_score=score.blowing_up_score,
-            rank_velocity_score=score.rank_velocity_score,
-            rank_change_score=score.rank_change_score,
-            reviews_velocity_score=score.reviews_velocity_score,
-            chart_presence_score=score.chart_presence_score,
-            cross_market_score=score.cross_market_score,
-            consistency_score=score.consistency_score,
-            confidence_score=score.confidence_score,
-            rank_change=score.rank_change,
-            rank_velocity=score.rank_velocity,
-            reviews_velocity=score.reviews_velocity,
-            chart_appearances=score.chart_appearances,
-            markets_count=score.markets_count,
-            badges=score.badges or [],
-            why_flagged=score.why_flagged or [],
-            computed_at=score.computed_at,
-        ))
-
-    scores = [item.blowing_up_score for item in items]
-    velocities = [item.rank_velocity for item in items if item.rank_velocity > 0]
-
-    return BlowingUpResponse(
-        status="success",
-        items=items,
-        total=total,
-        exploding_count=total,
-        top_score=round(max(scores), 1) if scores else None,
-        avg_rank_velocity=round(sum(velocities) / len(velocities), 1) if velocities else None,
-    )
 
 
 @router.get("/apps/import", response_model=AppImportSearchResponse)
