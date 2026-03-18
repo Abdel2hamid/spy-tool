@@ -590,6 +590,114 @@ def get_blowing_up_apps(
     )
 
 
+@router.get("/apps/import", response_model=AppImportSearchResponse)
+def import_search_apps(
+    q: str = Query(..., min_length=1, description="App name, App Store URL, or Apple trackId"),
+    limit: int = Query(10, ge=1, le=20, description="Max results"),
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Search for apps: first checks local database, then queries iTunes API if needed.
+    Returns top results with source info (database or itunes).
+
+    Accepts plain text, App Store URLs, iTunes URLs, and raw Apple trackIds.
+    URL/ID inputs return direct_lookup=True so the frontend can auto-redirect.
+    """
+    from app.services.app_import_service import AppImportService
+    from app.utils.parse_appstore_query import parse_appstore_query
+
+    service = AppImportService(db)
+
+    # Parse before any validation — URLs and IDs must not fall through to text search
+    try:
+        parsed = parse_appstore_query(q)
+    except Exception:
+        # Parsing failure is safe — treat as text search
+        parsed = None
+
+    if parsed and parsed.type in ("url", "track_id") and parsed.track_id:
+        result = service.lookup_app(parsed.track_id)
+        if "error" not in result:
+            if result.get("is_new") and result.get("id") and background_tasks:
+                background_tasks.add_task(service.trigger_enrichment, result["id"])
+            item = {
+                "id": result.get("id", 0),
+                "app_id": result.get("app_id", ""),
+                "name": result.get("name", ""),
+                "developer": result.get("developer"),
+                "icon_url": result.get("icon_url"),
+                "current_rating": result.get("current_rating"),
+                "current_reviews": result.get("current_reviews"),
+                "primary_category": result.get("primary_category"),
+                "price": result.get("price", 0),
+                "is_free": result.get("is_free", True),
+                "url": result.get("url"),
+                "is_new": result.get("is_new", False),
+                "source": "direct_lookup",
+                "match_score": 1.0,
+                "match_type": "direct",
+            }
+            return {
+                "query": q,
+                "results": [item],
+                "total": 1,
+                "from_cache": 0,
+                "direct_lookup": True,
+                "error_hint": None,
+            }
+        # Direct lookup failed — return structured error (don't fall through to text search)
+        kind = "URL" if (parsed and parsed.type == "url") else "App ID"
+        return {
+            "query": q,
+            "results": [],
+            "total": 0,
+            "from_cache": 0,
+            "direct_lookup": True,
+            "error_hint": f"App not found in the App Store. Check the {kind} and try again.",
+        }
+
+    # Plain text search — query length gate
+    if len(q.strip()) < 2:
+        return {
+            "query": q,
+            "results": [],
+            "total": 0,
+            "from_cache": 0,
+            "direct_lookup": False,
+            "error_hint": None,
+        }
+
+    return service.search_apps(q, limit=limit)
+
+
+@router.get("/apps/lookup/{track_id}", response_model=AppLookupResponse)
+def lookup_app(
+    track_id: str,
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Lookup full app details by trackId from iTunes API.
+    - Fetches full metadata from iTunes Lookup API
+    - Inserts/updates app in database
+    - Returns complete app details
+    - Triggers background enrichment for new imports
+    """
+    from app.services.app_import_service import AppImportService
+
+    service = AppImportService(db)
+    result = service.lookup_app(track_id)
+
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+
+    if result.get("is_new") and result.get("id"):
+        background_tasks.add_task(service.trigger_enrichment, result["id"])
+
+    return result
+
+
 @router.get("/apps/{app_id}", response_model=AppResponse)
 def get_app(app_id: int, db: Session = Depends(get_db)):
     app = db.query(models.App).filter(models.App.id == app_id).first()
@@ -633,96 +741,6 @@ def search_apps_by_keyword(
     return result
 
 
-@router.get("/apps/import", response_model=AppImportSearchResponse)
-def import_search_apps(
-    q: str = Query(..., min_length=2, description="App name, App Store URL, or Apple trackId"),
-    limit: int = Query(10, ge=1, le=20, description="Max results"),
-    background_tasks: BackgroundTasks = None,
-    db: Session = Depends(get_db)
-):
-    """
-    Search for apps: first checks local database, then queries iTunes API if needed.
-    Returns top results with source info (database or itunes).
-
-    Also accepts App Store URLs and raw Apple trackIds — returns direct_lookup=True
-    with a single result so the frontend can auto-redirect to the app detail page.
-    """
-    from app.services.app_import_service import AppImportService
-    from app.utils.parse_appstore_query import parse_appstore_query
-
-    service = AppImportService(db)
-    parsed = parse_appstore_query(q)
-
-    if parsed.type in ("url", "track_id") and parsed.track_id:
-        result = service.lookup_app(parsed.track_id)
-        if "error" not in result:
-            if result.get("is_new") and result.get("id") and background_tasks:
-                background_tasks.add_task(service.trigger_enrichment, result["id"])
-            item = {
-                "id": result.get("id", 0),
-                "app_id": result.get("app_id", ""),
-                "name": result.get("name", ""),
-                "developer": result.get("developer"),
-                "icon_url": result.get("icon_url"),
-                "current_rating": result.get("current_rating"),
-                "current_reviews": result.get("current_reviews"),
-                "primary_category": result.get("primary_category"),
-                "price": result.get("price", 0),
-                "is_free": result.get("is_free", True),
-                "url": result.get("url"),
-                "is_new": result.get("is_new", False),
-                "source": "direct_lookup",
-                "match_score": 1.0,
-                "match_type": "direct",
-            }
-            return {
-                "query": q,
-                "results": [item],
-                "total": 1,
-                "from_cache": 0,
-                "direct_lookup": True,
-                "error_hint": None,
-            }
-        # Direct lookup failed — don't fall through to a confusing text search.
-        # Return a structured error so the frontend can show a useful message.
-        kind = "URL" if parsed.type == "url" else "App ID"
-        return {
-            "query": q,
-            "results": [],
-            "total": 0,
-            "from_cache": 0,
-            "direct_lookup": True,
-            "error_hint": f"App not found in the App Store. Check the {kind} and try again.",
-        }
-
-    return service.search_apps(q, limit=limit)
-
-
-@router.get("/apps/lookup/{track_id}", response_model=AppLookupResponse)
-def lookup_app(
-    track_id: str,
-    background_tasks: BackgroundTasks = None,
-    db: Session = Depends(get_db)
-):
-    """
-    Lookup full app details by trackId from iTunes API.
-    - Fetches full metadata from iTunes Lookup API
-    - Inserts/updates app in database
-    - Returns complete app details
-    - Triggers background enrichment for new imports
-    """
-    from app.services.app_import_service import AppImportService
-    
-    service = AppImportService(db)
-    result = service.lookup_app(track_id)
-    
-    if "error" in result:
-        raise HTTPException(status_code=404, detail=result["error"])
-    
-    if result.get("is_new") and result.get("id"):
-        background_tasks.add_task(service.trigger_enrichment, result["id"])
-    
-    return result
 
 
 @router.patch("/apps/{app_id}", response_model=AppResponse)

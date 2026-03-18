@@ -544,3 +544,101 @@ class TestGetFullAppDetails:
 
         assert any("itunes.apple.com/lookup" in str(c) for c in calls)
         assert any("718043190" in str(c) for c in calls)
+
+
+# ---------------------------------------------------------------------------
+# Route-level tests — confirm /apps/import never returns 422 for URL input
+# ---------------------------------------------------------------------------
+
+class TestImportRouteNever422:
+    """
+    Regression tests for the route ordering bug:
+    GET /apps/import used to be registered AFTER GET /apps/{app_id:int},
+    so FastAPI matched 'import' as app_id, tried int('import') → 422.
+    These tests assert the endpoint always returns 200 regardless of q format.
+    """
+
+    def _make_client(self, mock_items=None, lookup_error=False):
+        """Return a TestClient with urllib.request.urlopen mocked out."""
+        import json
+        from io import BytesIO
+        from unittest.mock import MagicMock, patch
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        if mock_items is None:
+            mock_items = []
+
+        body = json.dumps({"resultCount": len(mock_items), "results": mock_items}).encode()
+
+        cm = MagicMock()
+        cm.__enter__ = MagicMock(return_value=BytesIO(body))
+        cm.__exit__ = MagicMock(return_value=False)
+
+        if lookup_error:
+            # Simulate Apple API being completely unavailable
+            import urllib.error
+            side_effect = urllib.error.URLError("connection refused")
+            patcher = patch("urllib.request.urlopen", side_effect=side_effect)
+        else:
+            patcher = patch("urllib.request.urlopen", return_value=cm)
+
+        return TestClient(app), patcher
+
+    def test_plain_url_returns_200_not_422(self):
+        """Full App Store URL must return 200, never 422."""
+        url = "https://apps.apple.com/us/app/roblox/id431946152"
+        item = _make_itunes_item(431946152, "Roblox")
+        client, patcher = self._make_client(mock_items=[item])
+        with patcher:
+            resp = client.get(f"/api/v1/apps/import?q={url}")
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+
+    def test_plain_url_returns_direct_lookup_true(self):
+        """URL input triggers direct_lookup=True in response."""
+        url = "https://apps.apple.com/us/app/roblox/id431946152"
+        item = _make_itunes_item(431946152, "Roblox")
+        client, patcher = self._make_client(mock_items=[item])
+        with patcher:
+            resp = client.get(f"/api/v1/apps/import?q={url}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["direct_lookup"] is True
+
+    def test_numeric_trackid_returns_200(self):
+        """Bare numeric ID must return 200, never 422."""
+        item = _make_itunes_item(431946152, "Roblox")
+        client, patcher = self._make_client(mock_items=[item])
+        with patcher:
+            resp = client.get("/api/v1/apps/import?q=431946152")
+        assert resp.status_code == 200
+
+    def test_text_search_returns_200(self):
+        """Plain text query returns 200 even when iTunes returns nothing."""
+        client, patcher = self._make_client(mock_items=[])
+        with patcher:
+            resp = client.get("/api/v1/apps/import?q=roblox")
+        assert resp.status_code == 200
+
+    def test_url_with_apple_api_down_returns_200_with_error_hint(self):
+        """Even when Apple API is completely down, URL input returns 200 with error_hint."""
+        url = "https://apps.apple.com/us/app/roblox/id431946152"
+        client, patcher = self._make_client(lookup_error=True)
+        with patcher:
+            resp = client.get(f"/api/v1/apps/import?q={url}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["direct_lookup"] is True
+        assert data["error_hint"] is not None
+        assert data["results"] == []
+
+    def test_response_shape_for_url_input(self):
+        """Response always includes all required fields."""
+        url = "https://apps.apple.com/us/app/roblox/id431946152"
+        item = _make_itunes_item(431946152, "Roblox")
+        client, patcher = self._make_client(mock_items=[item])
+        with patcher:
+            resp = client.get(f"/api/v1/apps/import?q={url}")
+        data = resp.json()
+        for field in ("query", "results", "total", "from_cache", "direct_lookup"):
+            assert field in data, f"Missing field: {field}"

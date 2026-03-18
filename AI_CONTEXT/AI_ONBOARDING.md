@@ -165,6 +165,7 @@ Frontend flow (`SearchDropdown.tsx`):
 ```
 backend/tests/
 ├── test_import_search.py          36 tests — AppImportService search + lookup
+├── test_import_flow.py            37 tests — end-to-end import flow + route 200 regression
 ├── test_download_estimator.py     70 tests — DownloadEstimator + ConfidenceEngine
 ├── test_growth_intelligence.py    41 tests — AdIntelligence + CampaignTracking
 └── (more tests)
@@ -180,7 +181,7 @@ python -m pytest tests/ -v
 
 ## Known Gotchas
 
-1. **`routes.py` is 2800 lines** — use Ctrl+F / search. Route order matters for FastAPI (specific before generic).
+1. **`routes.py` is 2800 lines** — use Ctrl+F / search. **Route order is critical**: specific routes (`/apps/import`, `/apps/lookup/{id}`) MUST be registered before parameterized catch-alls (`/apps/{app_id:int}`). FastAPI matches in registration order — if `{app_id:int}` comes first, it tries to cast `"import"` as `int` → 422.
 2. **Google Trends blocked on Railway** — set `GOOGLE_TRENDS_ENABLED=false`. Keyword pipeline skips Phase A.
 3. **`/apps/import` is read-only** — it never writes to DB. To actually import, call `/apps/lookup/{id}`.
 4. **`_MIGRATIONS` never roll back** — append-only; idempotent SQL only.
