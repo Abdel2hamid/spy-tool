@@ -11,7 +11,7 @@ All backend REST API endpoints extracted from `backend/app/api/routes.py`.
 | Method | Route | Purpose | Key Params |
 |---|---|---|---|
 | GET | `/apps` | Paginated + filtered app list | search, category, developer, min/max rating/reviews/rank, is_free, has_iap, released_after/before, fresh_only, min_freshness_score, min_success_probability, ai_only, weak_market, min_negative_ratio, min_feature_gaps, min/max_estimated_downloads/revenue, confidence_label, sort_by, sort_order, page, skip, limit |
-| GET | `/apps/latest` | Release-based discovery | mode (new_releases\|released_today), limit, offset, category, sort_by |
+| GET | `/apps/latest` | Release-based discovery. `mode=new_releases`: last 30 days. `mode=released_today`: **rolling 24-hour window** (not calendar day — apps released within the last 24h from current moment) | mode (new_releases\|released_today), limit, offset, category, sort_by |
 | GET | `/apps/latest-60-days` | Legacy 60-day release window | limit, offset, category |
 | GET | `/apps/blowing-up` | Momentum-ranked apps from precomputed table | limit, skip, sort_by, sort_order, min_confidence, min_reviews_velocity, category, chart_type, timeframe, autocompute |
 | GET | `/apps/import` | Smart search: detects URL/ID → direct lookup; else text search local DB + iTunes — never writes to DB directly | q (name, App Store URL, or trackId), limit |

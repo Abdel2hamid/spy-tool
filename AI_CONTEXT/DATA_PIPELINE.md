@@ -400,6 +400,47 @@ AdIntelligenceService.scan_candidate_apps(db)
 
 ---
 
+## Released Today — Rolling 24-Hour Window
+
+`GET /apps/latest?mode=released_today` uses a **rolling 24-hour window**, not a calendar-day boundary.
+
+```
+Query: release_date >= datetime.now(UTC) - 24h
+```
+
+**Why rolling, not calendar day:**
+- Calendar-day logic (UTC midnight reset) would drop apps released at 11 PM after only ~1 hour when midnight hits.
+- Rolling window guarantees every app is visible for a full 24 hours after its iTunes `release_date`.
+
+**How newly released apps reach the tab:**
+
+```
+iTunes publishes new app
+        │
+        ▼ (~0–2h)
+discovery_charts job (every 2h) — iTunes RSS feeds for top charts
+        │
+        ▼ (within 30min)
+queue_processor job (every 30min) — full scrape → sets release_date in DB
+        │
+        ▼ (immediately)
+GET /apps/latest?mode=released_today — rolling window picks it up
+```
+
+**Maximum lag:** ~2.5 hours (2h chart discovery cycle + 30min queue processor).
+
+**Self-cleaning:** Apps automatically leave the `released_today` result set when
+`release_date < now() - 24h`. No manual cleanup or scheduled deletion needed.
+
+**Timestamp used:** `App.release_date` — the iTunes API `releaseDate` field, parsed as
+timezone-aware UTC (`DateTime(timezone=True)` / PostgreSQL `TIMESTAMPTZ`). Apps with
+`NULL release_date` are always excluded.
+
+**Hourly ingestion status:** ✅ Covered by existing `queue_processor` (30min) + `discovery_charts` (2h).
+No dedicated "released today" job needed — the general discovery pipeline is sufficient.
+
+---
+
 ## Missing Operational Pieces
 
 1. **Real-time notifications** — no webhook or push when scores spike

@@ -66,7 +66,7 @@ frontend/src/
 │   │                           keywords, market weakness, ads, growth events, autopsy)
 │   ├── trending/page.tsx     — Trending apps (precomputed scores)
 │   ├── blowing-up/page.tsx   — Apps Blowing Up (momentum detection)
-│   ├── latest-apps/page.tsx  — Latest releases (3 tabs: new releases, fresh risers, released today)
+│   ├── latest-apps/page.tsx  — Latest releases (3 tabs: new releases, fresh risers, released today=rolling 24h window)
 │   ├── keywords/page.tsx     — Keyword intelligence explorer
 │   ├── opportunities/page.tsx — Market opportunities list
 │   ├── niche-radar/page.tsx  — Niche radar (3 signal passes)

@@ -2,7 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import exists, func, and_, or_
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import asyncio
 import logging
 import threading
@@ -426,20 +426,23 @@ def get_latest_apps(
     updated_at are never used.  Apps with NULL release_date are always excluded.
 
     mode=new_releases  — release_date within the last 30 days
-    mode=released_today — release_date is today (UTC date)
+    mode=released_today — release_date within the last 24 hours (rolling window)
+
+    The released_today mode uses a ROLLING 24-HOUR window, not a calendar-day
+    boundary.  An app released at 11 PM last night is included at 10 PM tonight
+    but drops out at midnight+1h tonight — exactly 24 hours after release.
+    This makes the tab a true live feed rather than a UTC-midnight reset.
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     if mode == "released_today":
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        today_end   = today_start + timedelta(days=1)
+        cutoff_24h = now - timedelta(hours=24)
         date_filter = (
             models.App.release_date.isnot(None),
-            models.App.release_date >= today_start,
-            models.App.release_date < today_end,
+            models.App.release_date >= cutoff_24h,
         )
     else:
-        # new_releases (default)
+        # new_releases (default — also covers unknown mode values)
         cutoff = now - timedelta(days=30)
         date_filter = (
             models.App.release_date.isnot(None),

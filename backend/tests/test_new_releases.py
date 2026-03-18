@@ -3,7 +3,7 @@ Tests for the New Releases and Released Today discovery endpoints.
 
 Verifies:
 1. mode=new_releases filters by release_date within last 30 days (not created_at)
-2. mode=released_today filters by release_date == today UTC
+2. mode=released_today uses a ROLLING 24-HOUR window (not a calendar-day boundary)
 3. Apps with NULL release_date are always excluded from both modes
 4. AppListResponse has correct pagination fields (apps, total, skip, limit)
 5. DashboardKeywordHighlightsResponse returns sorted keywords with proper schema
@@ -12,7 +12,7 @@ Verifies:
 
 import sys
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -26,16 +26,17 @@ def _apply_mode_filter(apps: list, mode: str, now: Optional[datetime] = None) ->
     """
     Replicates the date-filter logic from GET /apps/latest so that the
     filtering rules can be tested independently of FastAPI / SQLAlchemy.
+
+    mode=released_today uses a ROLLING 24-HOUR window (not a calendar-day boundary).
     """
-    now = now or datetime.utcnow()
+    now = now or datetime.now(timezone.utc)
 
     if mode == "released_today":
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        today_end = today_start + timedelta(days=1)
+        cutoff_24h = now - timedelta(hours=24)
         return [
             a for a in apps
             if a.get("release_date") is not None
-            and today_start <= a["release_date"] < today_end
+            and a["release_date"] >= cutoff_24h
         ]
     else:
         # new_releases (default — also covers unknown mode values)
@@ -113,32 +114,49 @@ class TestNewReleasesMode:
 
 
 class TestReleasedTodayMode:
-    """Tests for mode=released_today."""
+    """
+    Tests for mode=released_today.
+
+    ROLLING 24-HOUR WINDOW: the cutoff is always (now - 24h), not UTC midnight.
+    An app released 2 hours ago always appears; one released 25 hours ago never does.
+    """
 
     def _now(self) -> datetime:
-        return datetime(2026, 3, 17, 14, 30, 0)
+        # Use a fixed timezone-aware reference point.
+        return datetime(2026, 3, 17, 14, 30, 0, tzinfo=timezone.utc)
 
-    def test_includes_app_released_this_morning(self):
+    def test_includes_app_released_2_hours_ago(self):
+        """App released 2 hours ago is within the 24h window."""
         now = self._now()
-        apps = [{"id": 1, "release_date": datetime(2026, 3, 17, 9, 0, 0)}]
+        apps = [{"id": 1, "release_date": now - timedelta(hours=2)}]
         result = _apply_mode_filter(apps, "released_today", now)
         assert len(result) == 1
 
-    def test_includes_app_released_at_midnight(self):
+    def test_includes_app_released_23_hours_ago(self):
+        """App released 23 hours ago is still within the 24h window."""
         now = self._now()
-        apps = [{"id": 2, "release_date": datetime(2026, 3, 17, 0, 0, 0)}]
+        apps = [{"id": 2, "release_date": now - timedelta(hours=23)}]
         result = _apply_mode_filter(apps, "released_today", now)
         assert len(result) == 1
 
-    def test_excludes_app_released_yesterday(self):
+    def test_excludes_app_released_25_hours_ago(self):
+        """App released 25 hours ago is outside the 24h window."""
         now = self._now()
-        apps = [{"id": 3, "release_date": datetime(2026, 3, 16, 23, 59, 59)}]
+        apps = [{"id": 3, "release_date": now - timedelta(hours=25)}]
         result = _apply_mode_filter(apps, "released_today", now)
         assert len(result) == 0
 
-    def test_excludes_app_released_tomorrow(self):
+    def test_boundary_exactly_24h_ago_is_included(self):
+        """Exact boundary: release_date >= cutoff uses >=, so exactly 24h ago IS included."""
         now = self._now()
-        apps = [{"id": 4, "release_date": datetime(2026, 3, 18, 0, 0, 0)}]
+        apps = [{"id": 4, "release_date": now - timedelta(hours=24)}]
+        result = _apply_mode_filter(apps, "released_today", now)
+        assert len(result) == 1  # >= is inclusive
+
+    def test_excludes_app_released_24h_and_1s_ago(self):
+        """One second past the 24h boundary is excluded."""
+        now = self._now()
+        apps = [{"id": 4, "release_date": now - timedelta(hours=24, seconds=1)}]
         result = _apply_mode_filter(apps, "released_today", now)
         assert len(result) == 0
 
@@ -153,12 +171,56 @@ class TestReleasedTodayMode:
         result = _apply_mode_filter([], "released_today", now)
         assert result == []
 
-    def test_today_boundary_is_exclusive_at_midnight_next_day(self):
-        """Midnight of the NEXT day must NOT be included."""
-        now = self._now()
-        apps = [{"id": 6, "release_date": datetime(2026, 3, 18, 0, 0, 0)}]
-        result = _apply_mode_filter(apps, "released_today", now)
-        assert len(result) == 0
+    def test_advancing_clock_removes_stale_apps(self):
+        """
+        An app released at T=0 is visible until T=24h. After 25h it must
+        have dropped out of the rolling window.
+        """
+        base_time = datetime(2026, 3, 17, 10, 0, 0, tzinfo=timezone.utc)
+        app = {"id": 10, "release_date": base_time}
+
+        # At T+2h → inside window
+        now_2h = base_time + timedelta(hours=2)
+        assert len(_apply_mode_filter([app], "released_today", now_2h)) == 1
+
+        # At T+23h → still inside
+        now_23h = base_time + timedelta(hours=23)
+        assert len(_apply_mode_filter([app], "released_today", now_23h)) == 1
+
+        # At T+25h → outside window
+        now_25h = base_time + timedelta(hours=25)
+        assert len(_apply_mode_filter([app], "released_today", now_25h)) == 0
+
+    def test_rolling_window_does_not_reset_at_midnight(self):
+        """
+        The old calendar-day logic would reset at UTC midnight, making an app
+        released at 11 PM disappear at 12:01 AM next day (only 61 minutes later).
+        The rolling window keeps it for the full 24 hours.
+        """
+        # App released at 11 PM UTC
+        release_time = datetime(2026, 3, 17, 23, 0, 0, tzinfo=timezone.utc)
+        app = {"id": 11, "release_date": release_time}
+
+        # 61 minutes later (1:01 AM next day) — old calendar logic would exclude it
+        now_61m = release_time + timedelta(minutes=61)
+        result = _apply_mode_filter([app], "released_today", now_61m)
+        assert len(result) == 1, (
+            "App released 61 minutes ago should still appear under rolling-window logic"
+        )
+
+    def test_hourly_ingestion_newly_discovered_app_appears(self):
+        """
+        Simulate chart discovery finding a new app. After the queue processor
+        writes it to the DB (within ~30 min), it should appear in Released Today
+        if its release_date is within the last 24h.
+        """
+        now = datetime(2026, 3, 17, 15, 0, 0, tzinfo=timezone.utc)
+
+        # App was released 30 minutes ago, discovered by the hourly chart scraper
+        newly_ingested = {"id": 99, "release_date": now - timedelta(minutes=30)}
+
+        result = _apply_mode_filter([newly_ingested], "released_today", now)
+        assert len(result) == 1, "Newly ingested app within last 24h must appear in Released Today"
 
 
 class TestNullReleaseDateExclusion:

@@ -307,7 +307,7 @@ export default function LatestAppsClient() {
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">New Releases</h1>
           </div>
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            Discover newly released apps, today's launches, and new apps already gaining traction.
+            Discover newly released apps, the last 24 hours of launches, and new apps already gaining traction.
           </p>
         </div>
 
@@ -401,7 +401,7 @@ export default function LatestAppsClient() {
                 <Zap className="mx-auto mb-3 h-10 w-10 text-gray-300 dark:text-gray-600" />
                 <p className="text-gray-500 dark:text-gray-400">
                   {activeTab === 'released_today'
-                    ? 'No apps with a release_date of today found.'
+                    ? 'No apps released in the last 24 hours.'
                     : 'No apps released in the last 30 days.'}
                 </p>
                 {category && (
