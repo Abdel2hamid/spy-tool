@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
@@ -1240,8 +1240,8 @@ class ScoringEngine:
         - At least 3 ranking snapshots in last 7 days
         - Valid category_id
         """
-        cutoff_7_days = datetime.utcnow() - timedelta(days=7)
-        cutoff_14_days = datetime.utcnow() - timedelta(days=14)
+        cutoff_7_days = datetime.now(timezone.utc) - timedelta(days=7)
+        cutoff_14_days = datetime.now(timezone.utc) - timedelta(days=14)
         
         base_query = self.db.query(App).filter(
             App.category_id.isnot(None)
@@ -1254,44 +1254,59 @@ class ScoringEngine:
         
         fresh_risers = []
         
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
+
         for app in all_apps:
-            eligibility = self._check_fresh_riser_eligibility(app, cutoff_7_days, cutoff_14_days)
-            
-            if not eligibility["eligible"]:
-                continue
-            
-            scores = self._calculate_fresh_riser_scores(app, eligibility, cutoff_7_days)
-            
-            if mode == "hidden_gems":
-                _hw = FRESH_RISERS_CONFIG["hidden_gems_weights"]
-                final_score = (
-                    scores["momentum_score"]        * _hw["momentum"] +
-                    scores["niche_viability_score"]  * _hw["niche_viability"] +
-                    scores["rank_quality_score"]     * _hw["rank_quality"] +
-                    scores["review_traction_score"]  * _hw["review_traction"]
+            try:
+                eligibility = self._check_fresh_riser_eligibility(app, cutoff_7_days, cutoff_14_days)
+
+                if not eligibility["eligible"]:
+                    continue
+
+                scores = self._calculate_fresh_riser_scores(app, eligibility, cutoff_7_days)
+
+                if mode == "hidden_gems":
+                    _hw = FRESH_RISERS_CONFIG["hidden_gems_weights"]
+                    final_score = (
+                        scores["momentum_score"]        * _hw["momentum"] +
+                        scores["niche_viability_score"]  * _hw["niche_viability"] +
+                        scores["rank_quality_score"]     * _hw["rank_quality"] +
+                        scores["review_traction_score"]  * _hw["review_traction"]
+                    )
+                elif mode == "newest":
+                    final_score = scores["freshness_score"]
+                else:
+                    final_score = scores["fresh_riser_score"]
+
+                try:
+                    category_name = app.category.name if app.category else None
+                except Exception:
+                    category_name = app.primary_category
+
+                fresh_risers.append({
+                    "app_id": app.id,
+                    "app_name": app.name,
+                    "developer": app.developer,
+                    "release_date": app.release_date.isoformat() if app.release_date else None,
+                    "current_rank": app.current_rank,
+                    "current_reviews": app.current_reviews or 0,
+                    "category": category_name,
+                    "fresh_riser_score": round(final_score, 2),
+                    "freshness_score": scores["freshness_score"],
+                    "review_traction_score": scores["review_traction_score"],
+                    "rank_quality_score": scores["rank_quality_score"],
+                    "momentum_score": scores["momentum_score"],
+                    "niche_viability_score": scores["niche_viability_score"],
+                    "ranking_snapshots_count": eligibility["ranking_count"],
+                    "age_days": eligibility["age_days"],
+                })
+            except Exception as exc:
+                _log.warning(
+                    "[fresh_risers] Skipping app id=%s name=%r: %s",
+                    getattr(app, "id", "?"), getattr(app, "name", "?"), exc
                 )
-            elif mode == "newest":
-                final_score = scores["freshness_score"]
-            else:
-                final_score = scores["fresh_riser_score"]
-            
-            fresh_risers.append({
-                "app_id": app.id,
-                "app_name": app.name,
-                "developer": app.developer,
-                "release_date": app.release_date.isoformat() if app.release_date else None,
-                "current_rank": app.current_rank,
-                "current_reviews": app.current_reviews or 0,
-                "category": app.category.name if app.category else None,
-                "fresh_riser_score": round(final_score, 2),
-                "freshness_score": scores["freshness_score"],
-                "review_traction_score": scores["review_traction_score"],
-                "rank_quality_score": scores["rank_quality_score"],
-                "momentum_score": scores["momentum_score"],
-                "niche_viability_score": scores["niche_viability_score"],
-                "ranking_snapshots_count": eligibility["ranking_count"],
-                "age_days": eligibility["age_days"],
-            })
+                continue
         
         fresh_risers.sort(key=lambda x: x["fresh_riser_score"], reverse=True)
         return fresh_risers[:limit]
@@ -1303,11 +1318,19 @@ class ScoringEngine:
         cutoff_14_days: datetime
     ) -> Dict:
         """Check if app is eligible for fresh risers."""
-        now = datetime.utcnow()
-        
-        release_date = app.release_date
-        created_at = app.created_at
-        
+        now = datetime.now(timezone.utc)
+
+        def _to_aware(dt):
+            """Ensure dt is timezone-aware UTC; returns None if dt is None."""
+            if dt is None:
+                return None
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt
+
+        release_date = _to_aware(app.release_date)
+        created_at = _to_aware(app.created_at)
+
         if not release_date:
             if created_at:
                 age = now - created_at

@@ -1050,12 +1050,16 @@ def get_fresh_risers(
     - niche_viability_score (10%): Category competition level
     """
     engine = ScoringEngine(db)
-    fresh_risers = engine.get_fresh_risers(
-        mode=mode,
-        limit=limit,
-        category_id=category_id
-    )
-    
+    try:
+        fresh_risers = engine.get_fresh_risers(
+            mode=mode,
+            limit=limit,
+            category_id=category_id
+        )
+    except Exception as exc:
+        logger.error("fresh-risers endpoint: unexpected error: %s", exc, exc_info=True)
+        fresh_risers = []
+
     if not fresh_risers:
         app_count = db.query(func.count(models.App.id)).scalar() or 0
         

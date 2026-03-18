@@ -303,7 +303,8 @@
       "Bash(python3 -m pytest tests/test_import_flow.py::TestImportRouteNever422 -v 2>&1 | tail -25)",
       "Bash(python -m pytest tests/test_post_import_hydration.py -v 2>&1 | head -80)",
       "Bash(python3 -m pytest tests/test_post_import_hydration.py -v 2>&1 | head -80)",
-      "Bash(python3 -m pytest tests/test_post_import_hydration.py -v 2>&1 | tail -20)"
+      "Bash(python3 -m pytest tests/test_post_import_hydration.py -v 2>&1 | tail -20)",
+      "Bash(python3 -m pytest tests/test_fresh_risers.py -v 2>&1 | tail -35)"
     ]
   }
 }
