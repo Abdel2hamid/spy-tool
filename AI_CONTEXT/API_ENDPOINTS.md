@@ -14,8 +14,8 @@ All backend REST API endpoints extracted from `backend/app/api/routes.py`.
 | GET | `/apps/latest` | Release-based discovery | mode (new_releases\|released_today), limit, offset, category, sort_by |
 | GET | `/apps/latest-60-days` | Legacy 60-day release window | limit, offset, category |
 | GET | `/apps/blowing-up` | Momentum-ranked apps from precomputed table | limit, skip, sort_by, sort_order, min_confidence, min_reviews_velocity, category, chart_type, timeframe, autocompute |
-| GET | `/apps/import` | Search apps (local DB first, then iTunes) — read-only | q, limit |
-| GET | `/apps/lookup/{track_id}` | Import app by iTunes trackId — writes to DB | track_id path |
+| GET | `/apps/import` | Smart search: detects URL/ID → direct lookup; else text search local DB + iTunes — never writes to DB directly | q (name, App Store URL, or trackId), limit |
+| GET | `/apps/lookup/{track_id}` | Import app by iTunes trackId — writes to DB, triggers enrichment | track_id path |
 | GET | `/apps/{app_id}` | Single app by DB integer ID | — |
 | POST | `/apps` | Create app record manually | AppCreate body |
 | PATCH | `/apps/{app_id}` | Update app fields | AppUpdate body |
@@ -28,6 +28,26 @@ All backend REST API endpoints extracted from `backend/app/api/routes.py`.
 | GET | `/apps/{app_id}/market-weakness` | Per-country negative review analysis | — |
 | GET | `/apps/{app_id}/feature-gaps` | Feature requests from reviews | — |
 | POST | `/apps/{app_id}/feature-gaps/analyze` | Force re-run feature gap analysis | — |
+
+**`/apps/import` response shape** (`AppImportSearchResponse`):
+```json
+{
+  "query": "...",
+  "results": [...],
+  "total": 0,
+  "from_cache": 0,
+  "direct_lookup": false,
+  "error_hint": null
+}
+```
+- `direct_lookup=true` + `results[0].id > 0` → frontend auto-navigates to `/apps/{id}`
+- `direct_lookup=true` + `results=[]` + `error_hint` → Apple lookup failed; show error message
+- `direct_lookup=false` → normal text search (may return `source='database'` or `source='app_store'` results)
+
+**`results[]` item `source` values:**
+- `"database"` — already tracked in local DB; frontend shows **Open** button
+- `"app_store"` — found on iTunes, not yet imported; frontend shows **Import** button
+- `"direct_lookup"` — imported via URL/ID; only present when `direct_lookup=true`
 
 **File:** `backend/app/api/routes.py:160`
 

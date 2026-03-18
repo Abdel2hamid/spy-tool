@@ -138,9 +138,10 @@ Frontend flow (`Header.tsx`):
 1. User types in header search → debounced `searchAppsImport(q)` call
 2. If `res.error_hint` set → show error message in dropdown (e.g. "App not found...")
 3. If `res.direct_lookup && results[0].id > 0` → auto-navigate to `/apps/{id}`
-4. Local DB results (`source='database'`) → direct `<Link href="/apps/{id}">` navigation
-5. App Store results (`source='app_store'`) → "Import" button → `lookupApp(track_id)` → redirect
-6. Import failure → `importError` state shown in dropdown
+4. Local DB results (`source='database'`) → whole row is a `<Link>`; shows **"Open"** pill with `ExternalLink` icon
+5. App Store results (`source='app_store'`) → shows **"Import"** button (indigo); clicking calls `lookupApp(track_id)` → writes to DB → redirect to `/apps/{id}`; shows "Importing…" + spinner while loading
+6. Import failure → `importError` state shown below results in dropdown
+7. `searchError` shown in dropdown when lookup/search fails
 
 **Enrichment:** triggered via `background_tasks.add_task(service.trigger_enrichment, id)` only when `is_new=True`. Runs: keyword extraction → competitor mining → keyword intelligence pipeline.
 

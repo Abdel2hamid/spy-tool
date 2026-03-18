@@ -2,13 +2,28 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { Menu, Search, Bell, X, Loader2, Plus, ArrowRight } from 'lucide-react';
+import { Menu, Search, Bell, X, Loader2, Plus, ExternalLink } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { ThemeToggle } from './ThemeToggle';
 import { searchAppsImport, lookupApp, AppImportSearchItem } from '@/lib/api';
 
 interface HeaderProps {
   onMenuClick: () => void;
+}
+
+/** Icon + initials fallback for an app result row. */
+function AppIcon({ app, gradient }: { app: AppImportSearchItem; gradient: string }) {
+  if (app.icon_url) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={app.icon_url} alt={app.name} className="h-8 w-8 flex-shrink-0 rounded-lg object-cover" />
+    );
+  }
+  return (
+    <div className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${gradient}`}>
+      <span className="text-xs font-bold text-white">{app.name[0]?.toUpperCase()}</span>
+    </div>
+  );
 }
 
 export function Header({ onMenuClick }: HeaderProps) {
@@ -74,13 +89,18 @@ export function Header({ onMenuClick }: HeaderProps) {
     return () => clearTimeout(debounceRef.current);
   }, [searchQuery]);
 
+  const closeDropdown = () => {
+    setShowDropdown(false);
+    setSearchQuery('');
+    setImportError(null);
+  };
+
   const handleImport = async (app: AppImportSearchItem) => {
     setImporting(app.app_id);
     setImportError(null);
     try {
       const detail = await lookupApp(app.app_id);
-      setShowDropdown(false);
-      setSearchQuery('');
+      closeDropdown();
       router.push(`/apps/${detail.id}?imported=1`);
     } catch {
       setImportError('Import failed. Please try again.');
@@ -132,7 +152,7 @@ export function Header({ onMenuClick }: HeaderProps) {
             ) : searchQuery ? (
               <button
                 type="button"
-                onClick={() => { setSearchQuery(''); setShowDropdown(false); }}
+                onClick={() => { setSearchQuery(''); setShowDropdown(false); setSearchError(null); }}
                 className="flex-shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
               >
                 <X className="h-3.5 w-3.5" />
@@ -157,7 +177,8 @@ export function Header({ onMenuClick }: HeaderProps) {
                 </div>
               ) : (
                 <div className="max-h-96 overflow-y-auto">
-                  {/* Local / DB results */}
+
+                  {/* ── Already tracked (in DB) ── */}
                   {localResults.length > 0 && (
                     <div>
                       <p className="px-3 pb-1 pt-2.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
@@ -167,28 +188,25 @@ export function Header({ onMenuClick }: HeaderProps) {
                         <Link
                           key={app.id}
                           href={`/apps/${app.id}`}
-                          onClick={() => { setShowDropdown(false); setSearchQuery(''); }}
-                          className="flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800"
+                          onClick={closeDropdown}
+                          className="group flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800"
                         >
-                          {app.icon_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={app.icon_url} alt={app.name} className="h-8 w-8 flex-shrink-0 rounded-lg object-cover" />
-                          ) : (
-                            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-400 to-purple-500">
-                              <span className="text-xs font-bold text-white">{app.name[0]?.toUpperCase()}</span>
-                            </div>
-                          )}
+                          <AppIcon app={app} gradient="from-indigo-400 to-purple-500" />
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{app.name}</p>
                             <p className="truncate text-xs text-gray-500 dark:text-gray-400">{app.developer}</p>
                           </div>
-                          <ArrowRight className="h-3.5 w-3.5 flex-shrink-0 text-gray-300 dark:text-gray-600" />
+                          {/* "Open" pill — inside Link, not a nested button */}
+                          <span className="flex flex-shrink-0 items-center gap-1 rounded-md border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs font-medium text-gray-500 transition-colors group-hover:border-gray-300 group-hover:bg-white dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:group-hover:bg-gray-700">
+                            <ExternalLink className="h-3 w-3" />
+                            Open
+                          </span>
                         </Link>
                       ))}
                     </div>
                   )}
 
-                  {/* App Store results */}
+                  {/* ── From App Store (not yet imported) ── */}
                   {storeResults.length > 0 && (
                     <div>
                       {localResults.length > 0 && (
@@ -202,14 +220,7 @@ export function Header({ onMenuClick }: HeaderProps) {
                           key={app.app_id}
                           className="flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800"
                         >
-                          {app.icon_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={app.icon_url} alt={app.name} className="h-8 w-8 flex-shrink-0 rounded-lg object-cover" />
-                          ) : (
-                            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-400 to-cyan-500">
-                              <span className="text-xs font-bold text-white">{app.name[0]?.toUpperCase()}</span>
-                            </div>
-                          )}
+                          <AppIcon app={app} gradient="from-emerald-400 to-cyan-500" />
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{app.name}</p>
                             <p className="truncate text-xs text-gray-500 dark:text-gray-400">{app.developer}</p>
@@ -217,14 +228,14 @@ export function Header({ onMenuClick }: HeaderProps) {
                           <button
                             onClick={() => handleImport(app)}
                             disabled={importing === app.app_id}
-                            className="flex flex-shrink-0 items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-indigo-700 disabled:opacity-60"
+                            className="flex flex-shrink-0 items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {importing === app.app_id ? (
                               <Loader2 className="h-3 w-3 animate-spin" />
                             ) : (
                               <Plus className="h-3 w-3" />
                             )}
-                            Import
+                            {importing === app.app_id ? 'Importing…' : 'Import'}
                           </button>
                         </div>
                       ))}
@@ -242,12 +253,13 @@ export function Header({ onMenuClick }: HeaderProps) {
                   <div className="border-t border-gray-100 px-3 py-2 dark:border-gray-800">
                     <Link
                       href={`/apps?search=${encodeURIComponent(searchQuery)}`}
-                      onClick={() => { setShowDropdown(false); setSearchQuery(''); }}
+                      onClick={closeDropdown}
                       className="text-xs text-indigo-500 hover:text-indigo-700 dark:text-indigo-400"
                     >
                       Search &ldquo;{searchQuery}&rdquo; in all apps →
                     </Link>
                   </div>
+
                 </div>
               )}
             </div>

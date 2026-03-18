@@ -52,7 +52,9 @@ backend/
 │   │   ├── category_arpu_profiles.py  Revenue ARPU profiles per category (subscription/IAP/ad)
 │   │   └── calibration_profiles.py   Per-category calibration multipliers for download estimation
 │   ├── services/               35 service modules (see list below)
-│   └── utils/                  Utility modules
+│   └── utils/
+│       ├── __init__.py
+│       └── parse_appstore_query.py  ParsedQuery dataclass + parse_appstore_query(q) — detects App Store URLs, iTunes URLs, id-slug, numeric trackIds vs plain text
 ├── tests/
 │   ├── test_import_search.py   36 tests for AppImportService
 │   ├── test_download_estimator.py  70 tests for DownloadEstimator + ConfidenceEngine
