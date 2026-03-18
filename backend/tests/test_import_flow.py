@@ -507,23 +507,26 @@ class TestGetFullAppDetails:
     """Tests for the iTunes Lookup API wrapper."""
 
     def test_returns_none_on_empty_result(self):
-        """Empty results list → None (app not found in App Store)."""
+        """Empty results list → (None, None) — app not found, no error to surface."""
         with patch("urllib.request.urlopen", return_value=_empty_urlopen()):
-            result = _get_full_app_details("999999999")
-        assert result is None
+            item, error = _get_full_app_details("999999999")
+        assert item is None
+        assert error is None  # Not found ≠ API error
 
     def test_returns_none_on_network_error(self):
-        """Network timeout → None, no exception raised."""
+        """Network failure → (None, error_hint) — never raises."""
         with patch("urllib.request.urlopen", side_effect=Exception("timeout")):
-            result = _get_full_app_details("718043190")
-        assert result is None
+            item, error = _get_full_app_details("718043190")
+        assert item is None
+        assert error is not None  # error_hint set so caller can surface it
 
     def test_returns_first_result_on_success(self):
-        """Returns the first item from results list."""
+        """Returns (item_dict, None) from results list on success."""
         item = _make_itunes_item(718043190, "Fantastical")
         with patch("urllib.request.urlopen", return_value=_mock_urlopen([item])):
-            result = _get_full_app_details("718043190")
+            result, error = _get_full_app_details("718043190")
         assert result is not None
+        assert error is None
         assert result["trackId"] == 718043190
         assert result["trackName"] == "Fantastical"
 

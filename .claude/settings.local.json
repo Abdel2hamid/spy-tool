@@ -293,7 +293,10 @@
       "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m pytest tests/test_parse_appstore_query.py -v 2>&1)",
       "Bash(cd /Users/abdelhamid/appstore-spy-tool/frontend && npx tsc --noEmit 2>&1 | head -20)",
       "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m pytest tests/test_import_flow.py -v 2>&1)",
-      "Bash(cd /Users/abdelhamid/appstore-spy-tool/frontend && npx tsc --noEmit 2>&1)"
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/frontend && npx tsc --noEmit 2>&1)",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python -c \"\nfrom app.services.app_import_service import _search_itunes, _get_full_app_details, _TIMEOUT\nprint\\(f'_TIMEOUT = {_TIMEOUT}'\\)\nimport inspect\nsig1 = inspect.signature\\(_search_itunes\\)\nsig2 = inspect.signature\\(_get_full_app_details\\)\nprint\\(f'_search_itunes signature: {sig1}'\\)\nprint\\(f'_get_full_app_details signature: {sig2}'\\)\nprint\\('Import OK'\\)\n\")",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -c \"\nfrom app.services.app_import_service import _search_itunes, _get_full_app_details, _TIMEOUT\nprint\\(f'_TIMEOUT = {_TIMEOUT}'\\)\nimport inspect\nprint\\(f'_search_itunes return annotation: {inspect.signature\\(_search_itunes\\).return_annotation}'\\)\nprint\\(f'_get_full_app_details return annotation: {inspect.signature\\(_get_full_app_details\\).return_annotation}'\\)\nprint\\('Import OK'\\)\n\" 2>&1)",
+      "Bash(python3 -m pytest tests/test_import_search.py tests/test_import_flow.py -q 2>&1)"
     ]
   }
 }

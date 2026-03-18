@@ -105,15 +105,17 @@ class TestSearchITunes:
         from app.services.app_import_service import _search_itunes
         items = [_make_itunes_item(111, "Wavebox"), _make_itunes_item(222, "Spotify")]
         with patch("urllib.request.urlopen", return_value=_mock_urlopen_cm(items)):
-            results = _search_itunes("wavebox", limit=5)
+            results, error = _search_itunes("wavebox", limit=5)
         assert len(results) == 2
         assert results[0]["trackName"] == "Wavebox"
+        assert error is None
 
     def test_returns_empty_on_network_error(self):
         from app.services.app_import_service import _search_itunes
         with patch("urllib.request.urlopen", side_effect=Exception("timeout")):
-            results = _search_itunes("wavebox")
+            results, error = _search_itunes("wavebox")
         assert results == []
+        assert error is not None  # error_hint is set on failure
 
     def test_returns_empty_on_malformed_json(self):
         from app.services.app_import_service import _search_itunes
@@ -121,8 +123,9 @@ class TestSearchITunes:
         cm.__enter__ = MagicMock(return_value=BytesIO(b"not json{{"))
         cm.__exit__ = MagicMock(return_value=False)
         with patch("urllib.request.urlopen", return_value=cm):
-            results = _search_itunes("wavebox")
+            results, error = _search_itunes("wavebox")
         assert results == []
+        assert error is not None  # malformed JSON triggers error_hint
 
 
 # ---------------------------------------------------------------------------

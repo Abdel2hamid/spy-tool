@@ -17,7 +17,9 @@ Improved Search Algorithm:
 import json
 import logging
 import re
+import socket
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -31,7 +33,7 @@ logger = logging.getLogger(__name__)
 _ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
 _ITUNES_LOOKUP_URL = "https://itunes.apple.com/lookup"
 _REQUEST_DELAY = 0.1
-_TIMEOUT = 15
+_TIMEOUT = 4  # Hard cap: Apple API must respond within 4 seconds
 _MIN_LOCAL_RESULTS = 10
 _MAX_RESULTS = 20
 _FUZZY_THRESHOLD = 0.35
@@ -246,8 +248,23 @@ def _search_local_db_advanced(db: Session, query: str, limit: int = 20) -> List[
     return results
 
 
-def _search_itunes(keyword: str, limit: int = 20) -> List[Dict]:
-    """Search iTunes API for apps."""
+def _is_timeout_error(exc: Exception) -> bool:
+    """Return True if the exception represents a network timeout."""
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return True
+    # urllib wraps socket.timeout inside URLError.reason
+    if isinstance(exc, urllib.error.URLError):
+        return isinstance(exc.reason, (TimeoutError, socket.timeout))
+    return False
+
+
+def _search_itunes(keyword: str, limit: int = 20) -> Tuple[List[Dict], Optional[str]]:
+    """Search iTunes API for apps.
+
+    Returns (results, error_hint).
+    error_hint is None on success; a human-readable string on failure.
+    Never raises — always returns within _TIMEOUT seconds.
+    """
     params = urllib.parse.urlencode({
         "term": keyword,
         "country": "us",
@@ -258,13 +275,29 @@ def _search_itunes(keyword: str, limit: int = 20) -> List[Dict]:
     url = f"{_ITUNES_SEARCH_URL}?{params}"
     req = urllib.request.Request(url, headers={"User-Agent": "AppStoreSpy/1.0"})
 
+    logger.info(f"[Search] iTunes search start: '{keyword}' (timeout={_TIMEOUT}s)")
+    t0 = time.time()
     try:
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
             data = json.loads(resp.read())
-            return data.get("results", [])
+            results = data.get("results", [])
+            logger.info(
+                f"[Search] iTunes search success: {len(results)} results "
+                f"in {time.time() - t0:.2f}s for '{keyword}'"
+            )
+            return results, None
     except Exception as e:
-        logger.warning(f"[Search] iTunes search failed for '{keyword}': {e}")
-        return []
+        elapsed = time.time() - t0
+        if _is_timeout_error(e):
+            logger.warning(
+                f"[Search] iTunes search timeout after {elapsed:.1f}s for '{keyword}'"
+            )
+            return [], "Apple API timeout. Try again in a moment."
+        logger.warning(
+            f"[Search] iTunes search failed after {elapsed:.1f}s "
+            f"for '{keyword}': {type(e).__name__}: {e}"
+        )
+        return [], "Apple API unavailable. Showing local results only."
 
 
 def _get_or_create_app(db: Session, item: Dict, update_existing: bool = True) -> tuple:
@@ -370,20 +403,41 @@ def _get_or_create_app(db: Session, item: Dict, update_existing: bool = True) ->
         return None, False
 
 
-def _get_full_app_details(track_id: str) -> Optional[Dict]:
-    """Fetch full app metadata from iTunes Lookup API."""
+def _get_full_app_details(track_id: str) -> Tuple[Optional[Dict], Optional[str]]:
+    """Fetch full app metadata from iTunes Lookup API.
+
+    Returns (item_dict, error_hint).
+    item_dict is the first iTunes result, or None on failure / not found.
+    error_hint is None on success.
+    Never raises — always returns within _TIMEOUT seconds.
+    """
     url = f"{_ITUNES_LOOKUP_URL}?id={track_id}&country=us&entity=software"
     req = urllib.request.Request(url, headers={"User-Agent": "AppStoreSpy/1.0"})
 
+    logger.info(f"[Search] iTunes lookup start: trackId={track_id} (timeout={_TIMEOUT}s)")
+    t0 = time.time()
     try:
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
             data = json.loads(resp.read())
             results = data.get("results", [])
+            elapsed = time.time() - t0
             if results:
-                return results[0]
+                logger.info(f"[Search] iTunes lookup success in {elapsed:.2f}s for {track_id}")
+                return results[0], None
+            logger.info(f"[Search] iTunes lookup: no results in {elapsed:.2f}s for {track_id}")
+            return None, None
     except Exception as e:
-        logger.warning(f"[Search] iTunes lookup failed for '{track_id}': {e}")
-        return None
+        elapsed = time.time() - t0
+        if _is_timeout_error(e):
+            logger.warning(
+                f"[Search] iTunes lookup timeout after {elapsed:.1f}s for {track_id}"
+            )
+            return None, "Apple API timeout. Try again in a moment."
+        logger.warning(
+            f"[Search] iTunes lookup failed after {elapsed:.1f}s "
+            f"for {track_id}: {type(e).__name__}: {e}"
+        )
+        return None, "Apple API unavailable. Try again."
 
 
 def _get_category_id(db: Session, category_name: str) -> Optional[int]:
@@ -428,7 +482,7 @@ class AppImportService:
         db_count = len(db_results)
         logger.info(f"[Search] db_results={db_count}")
 
-        # 2. If enough local results, skip App Store
+        # 2. If enough local results, skip App Store entirely
         if db_count >= _MIN_LOCAL_RESULTS:
             logger.info(f"[Search] returning {db_count} local results (skipping App Store)")
             return {
@@ -440,8 +494,11 @@ class AppImportService:
 
         # 3. Search iTunes (read-only — no DB writes)
         remaining = max(limit - db_count, 5)
-        itunes_results = _search_itunes(original_query, limit=remaining * 2)
-        logger.info(f"[Search] itunes_results={len(itunes_results)}")
+        itunes_results, itunes_error = _search_itunes(original_query, limit=remaining * 2)
+        logger.info(
+            f"[Search] itunes_results={len(itunes_results)}"
+            + (f" error='{itunes_error}'" if itunes_error else "")
+        )
 
         existing_app_ids: Set[str] = {r['app_id'] for r in db_results}
 
@@ -496,20 +553,26 @@ class AppImportService:
             f"(db={db_count}, store={len(store_results)})"
         )
 
+        # Only surface the iTunes error when there are no local results to show.
+        # If DB results exist, the user sees them and the API error is noise.
+        surface_error = itunes_error if (itunes_error and db_count == 0) else None
+
         return {
             "query": original_query,
             "results": final_results[:limit],
             "total": len(final_results[:limit]),
             "from_cache": db_count,
+            "error_hint": surface_error,
         }
 
     def lookup_app(self, track_id: str) -> Dict:
         """Fetch full app details by trackId and insert into database."""
         logger.info(f"[Search] Looking up app: {track_id}")
 
-        itunes_data = _get_full_app_details(track_id)
+        itunes_data, lookup_error = _get_full_app_details(track_id)
         if not itunes_data:
-            return {"error": "App not found in App Store"}
+            error_msg = lookup_error or "App not found in App Store"
+            return {"error": error_msg}
 
         app, is_new = _get_or_create_app(self.db, itunes_data, update_existing=True)
         if not app:
