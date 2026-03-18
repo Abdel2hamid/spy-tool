@@ -17,6 +17,8 @@ export function Header({ onMenuClick }: HeaderProps) {
   const [results, setResults] = useState<AppImportSearchItem[]>([]);
   const [searching, setSearching] = useState(false);
   const [importing, setImporting] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [showDropdown, setShowDropdown] = useState(false);
   const router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -38,16 +40,32 @@ export function Header({ onMenuClick }: HeaderProps) {
     clearTimeout(debounceRef.current);
     if (searchQuery.trim().length < 2) {
       setResults([]);
+      setSearchError(null);
       setShowDropdown(false);
       return;
     }
     debounceRef.current = setTimeout(async () => {
       setSearching(true);
+      setSearchError(null);
       setShowDropdown(true);
       try {
         const res = await searchAppsImport(searchQuery.trim(), 8);
+        // Direct lookup succeeded: URL or trackId pasted → auto-import and navigate
+        if (res.direct_lookup && res.results.length === 1 && res.results[0].id > 0) {
+          setShowDropdown(false);
+          setSearchQuery('');
+          router.push(`/apps/${res.results[0].id}?imported=1`);
+          return;
+        }
+        // Direct lookup failed: backend returned an error hint
+        if (res.error_hint) {
+          setSearchError(res.error_hint);
+          setResults([]);
+          return;
+        }
         setResults(res.results);
       } catch {
+        setSearchError('Search failed. Please try again.');
         setResults([]);
       } finally {
         setSearching(false);
@@ -58,19 +76,20 @@ export function Header({ onMenuClick }: HeaderProps) {
 
   const handleImport = async (app: AppImportSearchItem) => {
     setImporting(app.app_id);
+    setImportError(null);
     try {
       const detail = await lookupApp(app.app_id);
       setShowDropdown(false);
       setSearchQuery('');
       router.push(`/apps/${detail.id}?imported=1`);
     } catch {
-      // ignore
+      setImportError('Import failed. Please try again.');
     } finally {
       setImporting(null);
     }
   };
 
-  const localResults = results.filter(r => r.source !== 'app_store');
+  const localResults = results.filter(r => r.source === 'database');
   const storeResults = results.filter(r => r.source === 'app_store');
   const hasResults = localResults.length > 0 || storeResults.length > 0;
 
@@ -98,7 +117,7 @@ export function Header({ onMenuClick }: HeaderProps) {
             <Search className="h-4 w-4 flex-shrink-0 text-gray-400" />
             <input
               type="text"
-              placeholder="Search or import apps…"
+              placeholder="Search apps or paste App Store URL…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onFocus={() => {
@@ -127,6 +146,10 @@ export function Header({ onMenuClick }: HeaderProps) {
               {searching && !hasResults ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-5 w-5 animate-spin text-indigo-400" />
+                </div>
+              ) : searchError ? (
+                <div className="px-4 py-5 text-center text-sm text-red-500 dark:text-red-400">
+                  {searchError}
                 </div>
               ) : !hasResults ? (
                 <div className="px-4 py-5 text-center text-sm text-gray-500 dark:text-gray-400">
@@ -205,6 +228,13 @@ export function Header({ onMenuClick }: HeaderProps) {
                           </button>
                         </div>
                       ))}
+                    </div>
+                  )}
+
+                  {/* Import error */}
+                  {importError && (
+                    <div className="border-t border-gray-100 px-3 py-2 dark:border-gray-800">
+                      <p className="text-xs text-red-500 dark:text-red-400">{importError}</p>
                     </div>
                   )}
 

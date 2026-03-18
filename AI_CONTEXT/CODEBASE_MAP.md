@@ -10,9 +10,8 @@ Complete map of every important file and directory.
 appstore-spy-tool/
 ├── backend/                    Python FastAPI backend
 ├── frontend/                   Next.js 14 frontend
-├── AI_CONTEXT/                 This folder — AI session memory
-├── PRODUCT_STRATEGY_REPORT.md  Strategic analysis document
-└── README.md                   (if present)
+├── AI_CONTEXT/                 This folder — AI session memory + documentation
+└── PRODUCT_STRATEGY_REPORT.md  Strategic analysis document
 ```
 
 ---
@@ -22,253 +21,202 @@ appstore-spy-tool/
 ```
 backend/
 ├── app/
-│   ├── main.py                 FastAPI app entry point, lifespan, startup
-│   ├── config.py               Pydantic Settings (env vars, DATABASE_URL, MAX_TEST_APPS)
+│   ├── main.py                 FastAPI app entry point, lifespan, _MIGRATIONS list (~40 SQL statements)
+│   ├── config.py               Pydantic Settings (env vars, DATABASE_URL, GOOGLE_TRENDS_ENABLED, etc.)
 │   ├── database/
-│   │   └── __init__.py         SQLAlchemy engine, SessionLocal, Base, get_db()
+│   │   └── __init__.py         SQLAlchemy engine (sync), SessionLocal, Base, get_db()
 │   ├── api/
-│   │   ├── __init__.py         Imports router
-│   │   └── routes.py           ALL 30+ API endpoints (single file, ~1050 lines)
+│   │   └── routes.py           ALL API endpoints — single file, ~2800 lines, 50+ routes
 │   ├── models/
-│   │   ├── models.py           SQLAlchemy ORM models (14 tables)
-│   │   └── schemas.py          Pydantic request/response schemas
+│   │   ├── models.py           All SQLAlchemy ORM models (25+ tables)
+│   │   └── schemas.py          All Pydantic request/response schemas
 │   ├── scrapers/
-│   │   ├── appstore.py         AppStoreScraper — iTunes search + top charts RSS
-│   │   ├── app_details.py      AppStoreAppScraper — metadata + versions + reviews
-│   │   ├── appstore_search_scraper.py  AppStoreSearchScraper — Playwright live search
-│   │   └── appstore_backup.py  Legacy backup (not actively used)
+│   │   ├── app_details.py      AppStoreAppScraper — iTunes Lookup API + RSS reviews + version HTML
+│   │   ├── appstore.py         AppStoreScraper — iTunes Search + iTunes RSS top charts
+│   │   └── appstore_search_scraper.py  AppStoreSearchScraper — Playwright keyword rank tracking
 │   ├── workers/
-│   │   ├── tasks.py            ScraperWorker + ScoringWorker + pipeline functions
-│   │   └── scheduler.py        APScheduler setup, 5 recurring job definitions
+│   │   ├── scheduler.py        APScheduler setup; 20+ recurring jobs
+│   │   ├── tasks.py            ScraperWorker + ScoringWorker + pipeline wrappers
+│   │   └── discovery_engine.py DiscoveryEngine (chart + keyword + developer expansion)
 │   ├── jobs/
-│   │   └── keyword_rank_tracker.py  KeywordRankTracker class + standalone runner
+│   │   └── keyword_rank_tracker.py  KeywordRankTracker (Playwright-based, may not run on Railway)
 │   ├── scoring/
-│   │   ├── engine.py           ScoringEngine — all metrics and scoring formulas
-│   │   ├── feature_gaps.py     FeatureGapAnalyzer — NLP review mining
-│   │   ├── idea_generator.py   IdeaGenerator — 3-pattern idea synthesis
-│   │   └── weights.py          Scoring weight constants and multipliers
-│   └── services/
-│       └── keyword_intelligence.py  KeywordIntelligenceService — per-app keyword scoring
-├── alembic/                    Database migration config (not actively used — app uses create_all)
-├── requirements.txt            Python dependencies
-└── venv/                       Python virtual environment
+│   │   ├── engine.py           ScoringEngine — all scoring formulas (trending, opportunities, weakness)
+│   │   ├── feature_gaps.py     FeatureGapAnalyzer — NLP pattern matching on negative reviews
+│   │   ├── idea_generator.py   IdeaGenerator — 3 patterns → AppIdea records
+│   │   ├── ai_potential.py     AI integration potential scoring
+│   │   └── weights.py          Scoring weight constants
+│   ├── config/
+│   │   ├── scoring_config.py   Central config for all scoring thresholds + algorithm params
+│   │   ├── rank_curves.py      Category-aware rank → daily download bands (8 bands × 9 categories)
+│   │   ├── category_arpu_profiles.py  Revenue ARPU profiles per category (subscription/IAP/ad)
+│   │   └── calibration_profiles.py   Per-category calibration multipliers for download estimation
+│   ├── services/               35 service modules (see list below)
+│   └── utils/                  Utility modules
+├── tests/
+│   ├── test_import_search.py   36 tests for AppImportService
+│   ├── test_download_estimator.py  70 tests for DownloadEstimator + ConfidenceEngine
+│   ├── test_growth_intelligence.py 41 tests for AdIntelligence + CampaignTracking
+│   └── ...
+├── requirements.txt
+└── venv/
 ```
 
 ---
 
-## File-Level Details — Backend
+## All Service Files (`backend/app/services/`)
 
-### `app/main.py`
-- Creates `FastAPI` app with CORS (all origins allowed)
-- `lifespan` context manager: creates DB tables → calls `setup_scheduler()` → `scheduler.start()` → yields → `scheduler.shutdown(wait=False)`
-- Mounts `router` at `/api/v1`
-- **Note:** Startup scrape is commented out. All data collection happens via the scheduler.
-
-### `app/config.py`
-- `Settings` class inherits `pydantic_settings.BaseSettings`
-- Reads from `.env` file in backend root
-- Key vars: `DATABASE_URL`, `MAX_TEST_APPS` (0 = no cap)
-- `settings` singleton imported everywhere
-
-### `app/database/__init__.py`
-- `engine = create_engine(settings.database_url)` (sync engine, not async)
-- `SessionLocal = sessionmaker(bind=engine)`
-- `Base = declarative_base()`
-- `get_db()` — FastAPI dependency generator
-
-### `app/api/routes.py`
-- Single `APIRouter` with prefix=`""` (mounted at `/api/v1` in main.py)
-- ~1050 lines, all routes in one file
-- Groups: Dashboard, Apps, Discovery/Trending, Keywords, Rankings, Categories, Ideas, Scraping, Scheduler, Keyword Tracker
-- Uses `Depends(get_db)` for all DB access
-- Important: `_VALID_SORT_FIELDS` dict at line ~57 maps sort_by strings to SQLAlchemy columns
-
-### `app/models/models.py`
-- 14 SQLAlchemy model classes
-- All inherit from `Base`
-- Uses `func.now()` for server-side default timestamps
-- JSON columns for flexible data (screenshots, signals, reasoning, IAP data)
-- See `DATABASE_SCHEMA.md` for full details
-
-### `app/models/schemas.py`
-- Pydantic v2 schemas with `model_config = ConfigDict(from_attributes=True)`
-- Input schemas: `*Create`, `*Update`
-- Output schemas: `*Response`
-- All list response wrappers: `AppListResponse`, `AppIdeaListResponse`, `KeywordSnapshotListResponse`
-
-### `app/scrapers/appstore.py`
-- `AppStoreScraper` class
-- `get_search_results(keyword, limit=20, country="us")` → list of app dicts
-- `get_top_charts(chart_type, category, limit=200)` → list of ranking dicts
-- `_GENRE_IDS` dict: 21 category slugs → Apple genre IDs
-- Uses `urllib.request` + `json.loads`
-
-### `app/scrapers/app_details.py`
-- `AppStoreAppScraper` class
-- `get_app_details(app_id, country="us")` → metadata dict
-- `get_app_versions(app_id, country="us")` → list of version dicts (see version history scraping in SCRAPERS_INDEX.md for the fragile JSON extraction)
-- `get_app_reviews(app_id, country="us", limit=500)` → list of review dicts
-- `scrape_full_app_data(app_id, country="us")` → combined dict
-- `_find_key(obj, key, depth)` — recursive JSON tree search (critical helper for version extraction)
-
-### `app/scrapers/appstore_search_scraper.py`
-- `AppStoreSearchScraper` class — async context manager
-- `search(keyword, country, max_results, retries)` → result dict with positions + sponsored flags
-- `search_many(keywords, country, max_results, concurrency)` → list of result dicts
-- `_EXTRACT_JS` — inline JavaScript string executed in the Playwright page context
-- `_fetch_icons(app_ids, country)` — synchronous iTunes batch lookup for icon URLs
-- **URL:** `https://apps.apple.com/{country}/search?q={term}` (NOT `?term=`)
-- Called from `KeywordRankTracker` only
-
-### `app/workers/tasks.py`
-- `ScraperWorker` (async class):
-  - `initialize()` / `cleanup()` — no-op (kept for future Playwright init)
-  - `scrape_search_results(keywords)` — discovers apps via iTunes Search
-  - `scrape_top_charts(chart_types, categories)` — pulls chart rankings
-  - `scrape_app_full_details(app_id_str)` — full single-app refresh
-  - `scrape_quick_refresh_all()` — lightweight hourly refresh (metadata + reviews, no version HTML)
-  - `scrape_all_tracked_apps()` — full refresh for all apps in DB
-- `ScoringWorker` (sync class):
-  - `update_opportunities()` — full scoring pipeline: keywords → opportunities → market weakness → feature gaps → ideas
-  - `generate_daily_report()` — writes DailyReport record
-- `run_scrape_task()` — async pipeline: keyword search → top charts → full details
-- `run_scoring_task()` — calls `ScoringWorker` in thread
-
-### `app/workers/scheduler.py`
-- Module-level `scheduler = AsyncIOScheduler(timezone="UTC")`
-- `setup_scheduler()` — registers all 5 jobs with `IntervalTrigger` and `start_date` offsets
-- `_JOB_DEFAULTS` — shared defaults: `max_instances=1, replace_existing=True, coalesce=True, misfire_grace_time=300`
-- 5 async job functions: `job_hourly_reviews_ratings`, `job_hourly_scoring`, `job_full_metadata`, `job_discovery`, `job_keyword_rank_tracker`
-
-### `app/jobs/keyword_rank_tracker.py`
-- `KeywordRankTracker` class:
-  - `run(country, keyword_limit, custom_keywords)` — main entry point
-  - `_get_tracked_keywords(limit)` — queries `Keyword.term` ordered by search_volume desc
-  - `_save_snapshots(search_data)` — creates `KeywordSearchSnapshot` rows
-  - `_update_app_keyword_positions(keyword, results, country)` — upserts `AppKeyword.position`
-- `run_keyword_rank_tracker(country, keyword_limit, custom_keywords)` — standalone async function (called by scheduler + API)
-
-### `app/scoring/engine.py`
-- `ScoringEngine` class
-- Key methods:
-  - `calculate_rank_velocity(app_id, days=7)`
-  - `calculate_review_growth(app_id, days=30)`
-  - `calculate_rating_velocity(app_id, days=30)`
-  - `calculate_keyword_competition(keyword)`
-  - `calculate_category_growth(category_id, days=30)`
-  - `calculate_ai_potential(app_id, name, description)`
-  - `calculate_success_probability(...)` — weighted composite
-  - `score_opportunity(app_id, primary_keyword)` — full opportunity card
-  - `generate_opportunity_of_day()`
-  - `get_top_trending_apps(limit)`
-  - `get_keyword_opportunities(min_difficulty, max_difficulty)`
-  - `update_keyword_metrics()` — derives search_volume and difficulty from app counts
-  - `compute_market_weakness(app_id)` — per-country negative review analysis
-
-### `app/scoring/weights.py`
-- `SCORING_WEIGHTS` dict: `rank_velocity=0.25, review_growth=0.20, competition=0.20, category_growth=0.15, ai_potential=0.20`
-- `CATEGORY_MULTIPLIERS` dict: productivity/business = 1.2x, games = 0.8x
-- Threshold dicts for difficulty and trend
-
-### `app/scoring/feature_gaps.py`
-- `FeatureGapAnalyzer` class
-- `TRIGGER_PATTERNS` list of 18 regex patterns
-- `SYNONYM_MAP` dict of 60+ entries for feature normalization
-- `compute_for_app(app_id)` — deletes old rows, bulk inserts fresh analysis
-- `get_gaps(app_id)` — returns stored gaps sorted by mentions
-
-### `app/scoring/idea_generator.py`
-- `IdeaGenerator` class
-- `generate_all()` → calls all 3 patterns, saves via upsert, returns count
-- `_ideas_from_feature_gaps()`
-- `_ideas_from_weak_markets()`
-- `_ideas_from_keywords()`
-- `_save_ideas(ideas)` → PostgreSQL `insert().on_conflict_do_update(index_elements=["idea_title"])`
-
-### `app/services/keyword_intelligence.py`
-- `KeywordIntelligenceService` class
-- `get_app_intelligence(app_id_str)` → full intelligence dict
-- `get_intelligence_by_db_id(db_id)` → convenience wrapper
-- `_compute_intelligence(app, snapshots)` → scoring engine
-- `_fallback_from_app_keywords(app)` → uses `AppKeyword` when no snapshots
-- `_get_keyword_meta(terms)` → enriches with Keyword table data
-- `compute_traffic_sources_all()` → batch traffic mix for all apps
+| File | Class / Purpose |
+|---|---|
+| `app_import_service.py` | `AppImportService` — on-demand search + import (lookup_app writes to DB; search_apps is read-only) |
+| `download_estimator.py` | `DownloadEstimator` — 4-layer ensemble (rank curve / review velocity / keyword visibility / momentum) |
+| `confidence_engine.py` | `ConfidenceEngine` — Bayesian confidence from 5 multiplicative factors |
+| `revenue_estimator.py` | `RevenueEstimator` — ARPU-based revenue estimation per category |
+| `install_estimator.py` | `InstallEstimator` — legacy L1-only estimator (kept for backward compat) |
+| `metric_snapshot_service.py` | `MetricSnapshotService` — writes `app_metric_snapshots` on each scoring cycle |
+| `trending_compute_service.py` | `TrendingComputeService` — precomputes `app_trending_scores` every 10 min |
+| `blowing_up_service.py` | `BlowingUpService` — precomputes `app_blowing_up_scores` every 15 min |
+| `ad_intelligence_service.py` | `AdIntelligenceService` — Apple Search Ads heuristic + optional Meta Ads |
+| `campaign_tracking_service.py` | `CampaignTrackingService` — classifies growth events (paid_push, organic_breakout, etc.) |
+| `keyword_intelligence_pipeline.py` | `KeywordIntelligencePipeline` — Google Trends + Apple signals + opportunity scoring |
+| `keyword_quality_engine.py` | `KeywordQualityEngine` — quality_score + quality_tier (A/B/C) + canonical dedup |
+| `keyword_extraction_service.py` | `KeywordExtractionService` — extracts keywords from app title/subtitle/description |
+| `keyword_discovery_service.py` | `KeywordDiscoveryService` — autocomplete + prefix/suffix expansion per app |
+| `keyword_discovery_engine.py` | `KeywordDiscoveryEngine` — 3-phase global discovery (alphabet + MZSearchHints + n-gram) |
+| `keyword_intelligence.py` | `KeywordIntelligenceService` — per-app keyword scoring from search snapshots |
+| `keyword_history.py` | `KeywordHistoryService` — rank-over-time from `keyword_search_snapshots` |
+| `keyword_search_service.py` | Keyword search helpers |
+| `keyword_trends_service.py` | `fetch_trend_score(keyword)` via pytrends |
+| `keyword_gap_service.py` | `KeywordGapService` — gap analysis vs. competitors |
+| `alphabet_mining_service.py` | `AlphabetMiningService` — A-Z prefix expansion for keyword discovery |
+| `competitor_keyword_service.py` | `CompetitorKeywordService` — mines competitor apps' keywords |
+| `opportunity_service.py` | `OpportunityService` — keyword opportunity scoring |
+| `apple_autocomplete_service.py` | `fetch_autocomplete(keyword)` — Apple MZSearchHints API |
+| `global_keyword_sink.py` | `GlobalKeywordSink` — unified keyword ingestion + dedup |
+| `niche_radar.py` | `NicheRadarEngine` — 3-pass niche discovery |
+| `review_intelligence.py` | `ReviewIntelligenceService` — Claude Haiku LLM review batch analysis |
+| `review_scraper_service.py` | `ReviewScraperService` — deep review scraping (500 reviews per app) |
+| `review_sentiment_service.py` | `ReviewSentimentService` — rule-based sentiment tagging |
+| `feature_gap_service.py` | Feature gap helpers |
+| `app_autopsy.py` | `AppAutopsyService` — "why is this app winning" narrative |
+| `backfill_keyword_structure.py` | One-time backfill utility |
+| `keyword_quality_backfill.py` | Quality score backfill utility |
 
 ---
 
 ## Frontend Structure
 
 ```
-frontend/
-├── src/
-│   ├── app/
-│   │   ├── layout.tsx              Root layout — Providers wrapper
-│   │   ├── page.tsx                / route — imports DashboardClient
-│   │   ├── DashboardClient.tsx     Dashboard page (all stats, charts, trending)
-│   │   ├── apps/
-│   │   │   ├── page.tsx            /apps route — imports AppsClient
-│   │   │   ├── AppsClient.tsx      App browser with filtering and pagination
-│   │   │   └── [id]/
-│   │   │       └── page.tsx        /apps/[id] route — 8-tab app detail (~1250 lines)
-│   │   ├── trending/
-│   │   │   ├── page.tsx
-│   │   │   └── TrendingClient.tsx
-│   │   ├── opportunities/
-│   │   │   ├── page.tsx
-│   │   │   └── OpportunitiesClient.tsx
-│   │   ├── ideas/
-│   │   │   ├── page.tsx
-│   │   │   └── IdeasClient.tsx     AI ideas page with score rings, pattern filter
-│   │   ├── keywords/
-│   │   │   ├── page.tsx
-│   │   │   └── KeywordsClient.tsx
-│   │   ├── rankings/
-│   │   │   └── page.tsx            App selector + rank history chart
-│   │   └── settings/
-│   │       └── page.tsx            UI-only settings (not wired to backend)
-│   ├── components/
-│   │   ├── AppShell.tsx            REQUIRED wrapper for all pages (sidebar + header)
-│   │   ├── Sidebar.tsx             Left nav — 8 items + mobile slide-in
-│   │   ├── Header.tsx              Top bar — search, notifications, theme toggle
-│   │   ├── Charts.tsx              SimpleChart + RankHistoryChart (Recharts wrappers)
-│   │   ├── StatsCard.tsx           KPI card with trend indicator
-│   │   ├── TrendingAppCard.tsx     Card for trending apps list
-│   │   ├── OpportunityOfDayCard.tsx  Featured opportunity card
-│   │   ├── KeywordOpportunityCard.tsx
-│   │   ├── RankHistoryChart.tsx    Standalone rank chart component
-│   │   ├── ThemeToggle.tsx         Dark/light mode toggle
-│   │   ├── Providers.tsx           Theme provider wrapper
-│   │   ├── Navbar.tsx              Alternative nav (not primary)
-│   │   └── index.ts                Barrel exports
-│   └── lib/
-│       ├── api.ts                  ALL TypeScript types + fetch functions (~500 lines)
-│       └── utils.ts                cn() Tailwind class merger
-├── package.json
-├── tailwind.config.js
-├── tsconfig.json
-└── next.config.js
+frontend/src/
+├── app/                          Next.js App Router pages (17 routes)
+│   ├── layout.tsx                Root layout — Providers wrapper
+│   ├── page.tsx                  / — Dashboard home
+│   ├── apps/
+│   │   ├── page.tsx              /apps — App catalog
+│   │   ├── AppsClient.tsx        Client: filter/sort/paginate app list
+│   │   └── [id]/
+│   │       └── page.tsx          /apps/[id] — 9-tab app detail page
+│   ├── trending/
+│   │   ├── page.tsx
+│   │   └── TrendingClient.tsx
+│   ├── blowing-up/
+│   │   ├── page.tsx
+│   │   └── BlowingUpClient.tsx   Reference design for new pages
+│   ├── latest-apps/
+│   │   ├── page.tsx
+│   │   └── LatestAppsClient.tsx
+│   ├── keywords/
+│   │   ├── page.tsx
+│   │   └── KeywordsClient.tsx
+│   ├── opportunities/
+│   │   ├── page.tsx
+│   │   └── OpportunitiesClient.tsx
+│   ├── niche-radar/
+│   │   ├── page.tsx
+│   │   └── NicheRadarClient.tsx
+│   ├── ideas/
+│   │   ├── page.tsx
+│   │   └── IdeasClient.tsx
+│   ├── campaigns/
+│   │   ├── page.tsx
+│   │   └── CampaignsClient.tsx
+│   ├── ads/
+│   │   ├── page.tsx
+│   │   └── AdsClient.tsx
+│   ├── discover/
+│   │   └── page.tsx              Redirects to /apps
+│   ├── rankings/
+│   │   └── page.tsx
+│   ├── competitors/
+│   │   └── page.tsx              UI stub — no backend
+│   ├── alerts/
+│   │   └── page.tsx              UI stub — no backend
+│   └── settings/
+│       └── page.tsx              UI stub — no backend
+├── components/
+│   ├── AppShell.tsx              REQUIRED wrapper for all pages (Sidebar + Header)
+│   ├── Sidebar.tsx               Left nav with all page links
+│   ├── Header.tsx                Top bar: global search + notifications + theme toggle
+│   ├── Charts.tsx                Recharts wrappers
+│   ├── StatsCard.tsx             KPI card with trend indicator
+│   ├── TrendingAppCard.tsx       Trending app card
+│   ├── OpportunityOfDayCard.tsx  Featured opportunity card
+│   ├── KeywordOpportunityCard.tsx
+│   ├── RankHistoryChart.tsx      Standalone rank chart
+│   ├── ThemeToggle.tsx           Dark/light mode toggle
+│   ├── Providers.tsx             Theme provider
+│   ├── ErrorBoundary.tsx         Client-side error boundary
+│   └── index.ts                  Barrel exports
+└── lib/
+    ├── api.ts                    Typed API client (~1500 lines): all types + fetch functions
+    ├── estimate-format.ts        fmtNum(), fmtRev(), fmtRange(), confidenceLabel()
+    └── utils.ts                  cn() Tailwind class merger
 ```
 
 ---
 
-## Important Patterns
+## Top 12 Most Critical Files
+
+| Priority | File | Why Critical |
+|---|---|---|
+| 1 | `backend/app/api/routes.py` | All API logic — 2800 lines, 50+ endpoints |
+| 2 | `backend/app/models/models.py` | All database schema — 25 ORM models |
+| 3 | `backend/app/main.py` | App startup + _MIGRATIONS list (schema evolution) |
+| 4 | `frontend/src/lib/api.ts` | All TypeScript types + every API call |
+| 5 | `backend/app/services/download_estimator.py` | 4-layer estimation — core intelligence engine |
+| 6 | `backend/app/scoring/engine.py` | Trending + opportunity scoring |
+| 7 | `backend/app/workers/tasks.py` | ScraperWorker + ScoringWorker pipeline |
+| 8 | `backend/app/workers/scheduler.py` | 20+ scheduled jobs |
+| 9 | `frontend/src/components/Header.tsx` | Global search — App Store URL/ID import |
+| 10 | `backend/app/services/app_import_service.py` | On-demand app search + import |
+| 11 | `frontend/src/app/apps/[id]/page.tsx` | 9-tab app detail page (main UX surface) |
+| 12 | `backend/app/models/schemas.py` | All Pydantic schemas for API contracts |
+
+---
+
+## Patterns
 
 ### Adding a new API endpoint
-1. Add route function in `backend/app/api/routes.py`
+1. Add route in `backend/app/api/routes.py`
 2. Add Pydantic schema in `backend/app/models/schemas.py`
-3. Add TypeScript interface + fetch function in `frontend/src/lib/api.ts`
-
-### Adding a new page
-1. Create `frontend/src/app/{route}/page.tsx` (thin server wrapper)
-2. Create `frontend/src/app/{route}/{Name}Client.tsx` with `'use client'` directive
-3. Wrap content in `<AppShell>` (required for sidebar + header)
-4. Add nav item in `frontend/src/components/Sidebar.tsx`
+3. Add TypeScript type + fetch function in `frontend/src/lib/api.ts`
 
 ### Adding a new DB table
 1. Add model class in `backend/app/models/models.py`
-2. Add Pydantic schemas in `backend/app/models/schemas.py`
-3. Restart backend — `Base.metadata.create_all()` creates the table automatically
+2. Add migration SQL to `_MIGRATIONS` list in `backend/app/main.py`
+3. Restart backend — migrations run automatically on startup
 
-### Adding a new scheduled job
-1. Define async function in `backend/app/workers/scheduler.py`
-2. Add `scheduler.add_job(...)` call in `setup_scheduler()`
+### Adding a new page
+1. Create `frontend/src/app/{route}/page.tsx` (thin server component)
+2. Create `frontend/src/app/{route}/{Name}Client.tsx` with `'use client'`
+3. Wrap content in `<AppShell>` (provides sidebar + header)
+4. Add nav item in `frontend/src/components/Sidebar.tsx`
+
+### Adding a new service
+1. Create `backend/app/services/{name}_service.py`
+2. Register in `backend/app/workers/tasks.py` if it's part of the scoring pipeline
+3. Add scheduler job in `backend/app/workers/scheduler.py` if it needs periodic runs
+
+---
+
+*Documentation generated by auditing the current codebase. Last updated: 2026-03-18.*

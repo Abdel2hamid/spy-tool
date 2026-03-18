@@ -259,6 +259,8 @@ class AppImportSearchResponse(BaseModel):
     results: List[AppImportSearchItem]
     total: int
     from_cache: int
+    direct_lookup: bool = False  # True when query was a URL or trackId
+    error_hint: Optional[str] = None  # Human-readable reason when direct lookup failed
 
     class Config:
         from_attributes = True

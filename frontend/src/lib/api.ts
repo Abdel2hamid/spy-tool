@@ -639,6 +639,8 @@ export interface AppImportSearchResponse {
   results: AppImportSearchItem[];
   total: number;
   from_cache: number;
+  direct_lookup: boolean;          // True when query was a URL or trackId
+  error_hint: string | null;       // Set when direct lookup was attempted but failed
 }
 
 export interface AppLookupResponse {

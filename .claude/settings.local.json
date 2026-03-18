@@ -288,7 +288,12 @@
       "Bash(python3 -m pytest tests/ -q --tb=short 2>&1 | tail -10)",
       "Bash(npx tsc --noEmit 2>&1 | grep -v \"node_modules\\\\|\\\\.next\" | head -20)",
       "Bash(./node_modules/.bin/tsc --noEmit 2>&1 | grep -v \"node_modules\\\\|\\\\.next\\\\|\\\\.d\\\\.ts\" | head -20)",
-      "Bash(cd /Users/abdelhamid/appstore-spy-tool/frontend && npx tsc --noEmit 2>&1 | head -30)"
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/frontend && npx tsc --noEmit 2>&1 | head -30)",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python -m pytest tests/test_parse_appstore_query.py -v 2>&1)",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m pytest tests/test_parse_appstore_query.py -v 2>&1)",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/frontend && npx tsc --noEmit 2>&1 | head -20)",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m pytest tests/test_import_flow.py -v 2>&1)",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/frontend && npx tsc --noEmit 2>&1)"
     ]
   }
 }

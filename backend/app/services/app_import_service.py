@@ -358,6 +358,15 @@ def _get_or_create_app(db: Session, item: Dict, update_existing: bool = True) ->
     except Exception as e:
         db.rollback()
         logger.warning(f"[Search] Failed to create app {track_id}: {e}")
+        # Race condition: another concurrent request may have inserted first.
+        # Retry the lookup — if the row now exists, return it as non-new.
+        try:
+            existing = db.query(App).filter(App.app_id == track_id).first()
+            if existing:
+                logger.info(f"[Search] Recovered existing app after rollback: {track_id}")
+                return existing, False
+        except Exception:
+            pass
         return None, False
 
 

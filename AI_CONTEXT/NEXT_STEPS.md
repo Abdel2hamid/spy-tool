@@ -1,179 +1,113 @@
 # Next Steps
 
 Prioritized development roadmap. Items are ordered by impact vs. effort.
+Current date: 2026-03-18.
 
 ---
 
-## Priority 1 — Quick Wins (1–3 days each)
+## P0 — Immediately Valuable (days)
 
-### 1. Keyword History Charts
-**What:** Visualize how an app's rank position for a specific keyword changes over time.
-**Why:** High analyst value. Data already exists in `keyword_search_snapshots` — only needs a new query + chart.
-**Where:** Add to `KeywordIntelligenceTab` in `frontend/src/app/apps/[id]/page.tsx`
-**Implementation:**
-- Query: `SELECT DATE(captured_at) as date, MIN(position) as best_rank FROM keyword_search_snapshots WHERE app_id = ? AND keyword = ? GROUP BY DATE(captured_at) ORDER BY date`
-- Add new API endpoint: `GET /apps/{id}/keyword-history?keyword=focus+timer`
-- Add `KeywordHistoryChart` component (re-use existing `RankHistoryChart` pattern)
+### 1. ✅ Upgrade Global App Search (URL/trackId import)
+**What:** Header search box detects App Store URLs, track IDs, and numeric Apple IDs, then auto-imports and redirects.
+**Files:** `backend/app/utils/parse_appstore_query.py` (new), `backend/app/api/routes.py` (modified `/apps/import`), `frontend/src/components/Header.tsx`
+**Tests:** `backend/tests/test_parse_appstore_query.py` (24 tests)
+**Status:** Complete.
 
----
-
-### 2. Delete `appstore_backup.py`
-**What:** Remove the stale unused scraper file.
-**Why:** Reduces confusion for future developers.
-**File:** `backend/app/scrapers/appstore_backup.py`
-**Risk:** None — file is not imported anywhere.
+### 2. Authentication
+**What:** Add simple API key or JWT auth to protect the API.
+**Why:** The API is fully open. Any caller can read or write everything.
+**Files:** New middleware + `routes.py` dependency injection.
+**Status:** Not started. No auth system exists.
 
 ---
 
-### 3. Version Change Detection
-**What:** Detect when a tracked app publishes a new version and surface it as an alert.
-**Why:** "Competitor shipped a major update" is a high-value signal.
-**Implementation:**
-- Compare `app_versions.version` strings on each scrape
-- If new version detected, write a `notifications` table record
-- Frontend: "Recent Updates" feed on Dashboard
+## P1 — High Value (1–2 weeks)
 
----
-
-### 4. Keyword Rank Tracker — Expand Results Per Keyword
-**What:** Capture top 50 results per keyword instead of top 16.
-**Why:** Apps ranked #17-50 are invisible in current data.
-**Implementation:**
-- Add scroll-based pagination in `AppStoreSearchScraper._scrape_once()`
-- Scroll page, wait for new results to load, re-run `_EXTRACT_JS`
-- Increase `MAX_RESULTS_PER_KEYWORD` to 50 in `keyword_rank_tracker.py`
-
----
-
-## Priority 2 — High Impact Features (1–2 weeks each)
-
-### 5. Install Estimation Model (v1)
-**What:** Estimate monthly downloads per app using review velocity as a proxy.
-**Why:** The single biggest feature gap vs. all competitors.
-**Implementation:**
-- Add `estimated_installs_monthly` FLOAT column to `apps` table
-- Formula: `review_count_last_30d × category_install_to_review_ratio`
-- Category ratios: games ~1000:1, productivity ~300:1, utilities ~200:1 (based on public Apple data points)
-- Display in app overview tab with confidence band: "Estimated: 5K–15K/month"
-- Compute in `ScoringWorker.update_opportunities()`
-
----
-
-### 6. LLM-Powered Review Analysis
-**What:** Replace rule-based feature gap NLP with Claude Haiku batch analysis.
-**Why:** Dramatically improves feature extraction quality. Catches nuanced requests regex misses.
-**Implementation:**
-- Add `anthropic` SDK to requirements
-- Batch 50-100 negative reviews per app per analysis run
-- Prompt: "Extract: (1) unmet feature requests, (2) competitor comparisons, (3) pricing complaints. Return structured JSON."
-- Add `llm_summary` TEXT column to `app_analytics` table
-- Display LLM summary in Analytics tab
-
----
-
-### 7. Apple Search Ads API Integration
-**What:** Get real keyword popularity data from Apple's Search Ads API.
-**Why:** Replaces the `search_volume = app_count × 850` estimate with real data.
-**Implementation:**
-- Register for Apple Search Ads API access
-- Add `apple_popularity_score` INTEGER (0-5) to `keywords` table
-- Fetch weekly via new scheduler job
-- Update all scoring formulas to use Apple's data when available
-
----
-
-### 8. Version Change Alerting (Full)
-**What:** Email/webhook notifications when tracked apps release updates.
-**Why:** Converts the tool from passive dashboard to active competitor monitor.
-**Implementation:**
-- Add `notifications` table: `(app_id, event_type, payload JSON, created_at, is_sent)`
-- Event types: `new_version`, `rank_change`, `new_feature_gap`, `trending_spike`
-- Add `POST /notifications/webhook` endpoint that delivers to configured URL
-- Frontend settings page: configure webhook URL, notification types
-
----
-
-### 9. Competitive Set Comparison
+### 3. Competitor Comparison Page
 **What:** Side-by-side comparison of multiple apps on all key metrics.
-**Why:** Users currently must navigate to each app individually.
-**Implementation:**
-- New frontend page: `/compare?ids=123,456,789`
-- Comparison table: rating, reviews, rank, keyword count, feature gap count, update frequency
-- Radar chart visualization (Recharts RadarChart) for quick visual comparison
-- "Add to comparison" button on app detail page and app browser cards
+**Why:** Frontend stub exists at `/competitors` — needs backend endpoint + data model.
+**Files:** `frontend/src/app/competitors/page.tsx`, new backend endpoint, no new DB tables needed.
+
+### 4. Alerts / Notification System
+**What:** Push alerts when scores spike, an app releases a new version, or rank changes sharply.
+**Why:** Converts the tool from passive dashboard to active monitor. Frontend stub exists at `/alerts`.
+**Files:** New `notifications` table, `POST /notifications/webhook`, settings page wiring.
+
+### 5. Settings Page
+**What:** Persist user preferences: tracked apps, notification config, API tokens.
+**Why:** Frontend stub exists at `/settings` — no backend wiring.
+**Files:** `frontend/src/app/settings/page.tsx`, new settings endpoints.
+
+### 6. Google Trends Alternative
+**What:** Replace Google Trends (blocked on Railway) with Apple Search Ads popularity signals or DataForSEO.
+**Why:** Keyword intelligence pipeline runs without trend data on Railway.
+**Notes:** `GOOGLE_TRENDS_ENABLED=false` env var already skips the blocked phase. Need a replacement.
 
 ---
 
-## Priority 3 — Infrastructure (2–4 weeks each)
+## P2 — Architecture (weeks)
 
-### 10. API Authentication
-**What:** Add JWT-based authentication to all API endpoints.
-**Why:** Required for any public deployment or multi-user setup.
-**Implementation:**
-- Add `users` table (id, email, hashed_password, api_key, plan_tier)
-- FastAPI dependency: `get_current_user` validates Bearer token
-- `/auth/login`, `/auth/register`, `/auth/refresh` endpoints
-- All existing endpoints add `Depends(get_current_user)`
+### 7. Split `routes.py` into Domain Routers
+**What:** Break the 2800-line monolith into `apps_router.py`, `keywords_router.py`, `intelligence_router.py`, `admin_router.py`.
+**Why:** File is too large to navigate or reason about. Hot spot for merge conflicts.
+**Risk:** High — changing route registration can break existing calls if not careful.
 
----
+### 8. Alembic Migrations
+**What:** Replace `_MIGRATIONS` list in `main.py` with proper Alembic migration history.
+**Why:** `_MIGRATIONS` is append-only; cannot roll back; no version tracking.
+**Status:** `backend/alembic/` directory exists but is not actively used.
 
-### 11. Alembic Migrations
-**What:** Replace `create_all()` with proper database migrations.
-**Why:** Current approach cannot alter existing tables — adding columns requires manual SQL.
-**Implementation:**
-- Initialize Alembic: `alembic init alembic`
-- Create initial migration from current models
-- All future model changes → generate migration: `alembic revision --autogenerate -m "add column"`
-- Run: `alembic upgrade head`
+### 9. Distributed Cache
+**What:** Move `_DASHBOARD_CACHE` to Redis (or a DB table with TTL).
+**Why:** In-process cache lost on restart; not distributed across multiple instances.
+
+### 10. Data Retention Policy
+**What:** Add cleanup jobs for `app_metric_snapshots` (keep 90d), old `reviews` (keep 1 year), etc.
+**Why:** Tables grow forever. `app_metric_snapshots` currently has no retention limit.
 
 ---
 
-### 12. Niche Radar — Automated Opportunity Feed
-**What:** Daily digest of emerging App Store micro-niches from anomaly detection.
-**Why:** The product's "killer differentiator." Proactive intelligence vs. reactive dashboard.
-**Implementation:**
-- Anomaly detector: z-score on `rank_velocity` and `review_growth` vs. category baseline
-- Cluster semantically similar keywords (cosine similarity on term embeddings)
-- Generate "niche brief" for each anomalous cluster
-- New frontend widget: "This Week in App Niches" on Dashboard
-- Optional: weekly email digest
+## P3 — Long Term (months)
+
+### 11. Real-Time Notifications
+**What:** Webhook delivery when scores spike. WebSocket stream for live score updates.
+**Why:** No push mechanism exists today. Dashboard refresh is manual.
+
+### 12. Apple Search Ads API (Real)
+**What:** Use Apple's Search Ads API (not heuristic) to get real keyword popularity and ad auction data.
+**Why:** Current ad intelligence is heuristic-only. Apple SA requires app registration + OAuth.
+
+### 13. Multi-Country Chart Coverage
+**What:** Ensure all 20 country chart codes actually run on the discovery scheduler.
+**Why:** Chart discovery supports 20 countries but coverage is not guaranteed.
+
+### 14. Playwright on Railway
+**What:** Make keyword rank tracker (Playwright-based) work on Railway.
+**Why:** `AppStoreSearchScraper` requires a browser; Railway doesn't support it without a Docker layer.
+**Option:** Use BrightData or ScrapingBee instead of Playwright.
+
+### 15. Google Play Coverage
+**Why:** Android market data would double the addressable use case. Major engineering effort.
+
+### 16. Hosted SaaS Version
+**Why:** Multi-tenant architecture, user accounts, Stripe billing. 3+ months of work.
 
 ---
 
-### 13. Multi-Country Keyword Tracking
-**What:** Run keyword rank tracker across US, UK, Germany, Australia, Canada.
-**Why:** International ASO is a major use case. Many indie developers target global markets.
-**Implementation:**
-- Modify `keyword_rank_tracker.py` to accept country list
-- Run `AppStoreSearchScraper` per country (5 countries × N keywords)
-- `keyword_search_snapshots` already has `country` column — no schema change needed
-- Frontend: country selector in Keywords tab
-
----
-
-## Priority 4 — Long-Term (1–3 months each)
-
-### 14. Revenue Estimation Model
-Requires install estimates (Priority 2, item 5) to be built first.
-
-### 15. "Winning App Autopsy" Reports
-AI-generated narrative explanation of why an app is succeeding. Combines all data sources through an LLM.
-
-### 16. Google Play Coverage
-Android market data via Play Store scraping. Major engineering effort.
-
-### 17. Hosted SaaS Version
-Multi-tenant architecture with user accounts, per-user data isolation, Stripe billing.
-
----
-
-## Technical Debt to Clear
+## Technical Debt
 
 | Item | File | Effort |
-|------|------|--------|
-| Delete unused backup scraper | `backend/app/scrapers/appstore_backup.py` | 5 min |
-| Enable Alembic migrations | `backend/alembic/` | 2 days |
-| Add API authentication | `backend/app/api/routes.py` + new auth module | 1 week |
-| Fix settings page to actually persist | `frontend/src/app/settings/page.tsx` | 2 days |
-| Add rate limiting to API | `backend/app/main.py` | 1 day |
-| Add request logging/monitoring | `backend/app/main.py` | 1 day |
+|---|---|---|
+| routes.py monolith | `backend/app/api/routes.py` | 1 week |
+| In-process dashboard cache | `backend/app/api/routes.py` `_DASHBOARD_CACHE` | 1 day |
+| No Alembic | `backend/alembic/` | 2 days |
+| No API auth | `backend/app/api/routes.py` | 1 week |
+| Google Trends blocked | `backend/app/services/keyword_intelligence_pipeline.py` | need alternative |
+| Playwright not deployable | `backend/app/scrapers/appstore_search_scraper.py` | need alternative |
+| Dual estimators (legacy + new) | `install_estimator.py` vs `download_estimator.py` | remove legacy eventually |
+| InstallEstimator legacy | `backend/app/services/install_estimator.py` | deprecate once confirmed stable |
+| No data retention | `app_metric_snapshots`, `reviews` | 1 day |
+
+---
+
+*Documentation generated by auditing the current codebase. Last updated: 2026-03-18.*

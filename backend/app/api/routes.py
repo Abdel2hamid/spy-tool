@@ -635,17 +635,66 @@ def search_apps_by_keyword(
 
 @router.get("/apps/import", response_model=AppImportSearchResponse)
 def import_search_apps(
-    q: str = Query(..., min_length=2, description="App name to search"),
+    q: str = Query(..., min_length=2, description="App name, App Store URL, or Apple trackId"),
     limit: int = Query(10, ge=1, le=20, description="Max results"),
+    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db)
 ):
     """
     Search for apps: first checks local database, then queries iTunes API if needed.
     Returns top results with source info (database or itunes).
+
+    Also accepts App Store URLs and raw Apple trackIds — returns direct_lookup=True
+    with a single result so the frontend can auto-redirect to the app detail page.
     """
     from app.services.app_import_service import AppImportService
-    
+    from app.utils.parse_appstore_query import parse_appstore_query
+
     service = AppImportService(db)
+    parsed = parse_appstore_query(q)
+
+    if parsed.type in ("url", "track_id") and parsed.track_id:
+        result = service.lookup_app(parsed.track_id)
+        if "error" not in result:
+            if result.get("is_new") and result.get("id") and background_tasks:
+                background_tasks.add_task(service.trigger_enrichment, result["id"])
+            item = {
+                "id": result.get("id", 0),
+                "app_id": result.get("app_id", ""),
+                "name": result.get("name", ""),
+                "developer": result.get("developer"),
+                "icon_url": result.get("icon_url"),
+                "current_rating": result.get("current_rating"),
+                "current_reviews": result.get("current_reviews"),
+                "primary_category": result.get("primary_category"),
+                "price": result.get("price", 0),
+                "is_free": result.get("is_free", True),
+                "url": result.get("url"),
+                "is_new": result.get("is_new", False),
+                "source": "direct_lookup",
+                "match_score": 1.0,
+                "match_type": "direct",
+            }
+            return {
+                "query": q,
+                "results": [item],
+                "total": 1,
+                "from_cache": 0,
+                "direct_lookup": True,
+                "error_hint": None,
+            }
+        # Direct lookup failed — don't fall through to a confusing text search.
+        # Return a structured error so the frontend can show a useful message.
+        kind = "URL" if parsed.type == "url" else "App ID"
+        return {
+            "query": q,
+            "results": [],
+            "total": 0,
+            "from_cache": 0,
+            "direct_lookup": True,
+            "error_hint": f"App not found in the App Store. Check the {kind} and try again.",
+        }
+
     return service.search_apps(q, limit=limit)
 
 
