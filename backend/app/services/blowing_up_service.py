@@ -120,25 +120,57 @@ def _consistency(rankings_asc: list) -> float:
     return (improvements / (len(rankings_asc) - 1)) * 100
 
 
-def _confidence(snapshot_count: int) -> float:
+def _stability_score(rankings: list) -> float:
     """
-    Data quality factor 0–1.
-    < 2 snapshots → excluded upstream (candidate query guarantees ≥2).
-    2–4  → penalised (× 0.6 scaling)  → range 0.12–0.24
-    5–9  → scaling without penalty     → range 0.50–0.90
-    10+  → 1.0
+    Fraction of consecutive snapshot pairs where the rank value changed (0–1).
+    High value = rank was actively moving = reliable, informative signal.
+    """
+    if len(rankings) < 2:
+        return 0.0
+    changes = sum(
+        1 for i in range(1, len(rankings))
+        if rankings[i].rank != rankings[i - 1].rank
+    )
+    return changes / (len(rankings) - 1)
 
-    NOTE: There is intentionally no hard floor here — the multiplier already
-    downscores low-data apps naturally.  Removing the old `< 0.2` gate means
-    apps with 2–3 snapshots are scored (with low blowing_up_score ≈ 5–15)
-    rather than silently dropped.
+
+def _confidence(
+    snapshot_count: int,
+    days_tracked: float,
+    stability_score: float,
+    total_reviews: int,
+) -> float:
+    """
+    Multi-signal confidence factor (0–1).
+
+    Components:
+      coverage_score  = min(1, snapshot_count / 10)    — breadth of ranking history
+      time_score      = min(1, days_tracked / 7)       — window spans ≥ 1 week
+      stability_score = fraction of snapshots with rank changes (0–1)
+      reviews_score   = min(1, total_reviews / 100)    — review depth
+
+    Formula:
+      confidence = 0.4 × coverage + 0.3 × time + 0.2 × stability + 0.1 × reviews
+
+    Floor: apps with ≥ 2 snapshots always get at least 0.1 so they are never
+    filtered out by a default min_confidence threshold of 0.
     """
     if snapshot_count < 2:
         return 0.0
-    raw = min(1.0, snapshot_count / 10.0)
-    if snapshot_count < 5:
-        raw *= 0.6
-    return raw
+
+    coverage_score = min(1.0, snapshot_count / 10.0)
+    time_score     = min(1.0, max(0.0, days_tracked) / 7.0)
+    stab_score     = min(1.0, max(0.0, float(stability_score)))
+    reviews_score  = min(1.0, total_reviews / 100.0)
+
+    confidence = (
+        0.4 * coverage_score +
+        0.3 * time_score +
+        0.2 * stab_score +
+        0.1 * reviews_score
+    )
+
+    return max(confidence, 0.1)
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +258,7 @@ class BlowingUpService:
         Compute blowing_up_score for one app over *timeframe_days*.
         Returns None if there is insufficient data.
         """
-        now = datetime.utcnow()
+        now    = datetime.now(timezone.utc)
         cutoff = now - timedelta(days=timeframe_days)
 
         # Ranking snapshots in window (oldest → newest for trajectory)
@@ -285,10 +317,16 @@ class BlowingUpService:
         # Consistency
         consistency_score = _consistency(rankings)
 
-        # Confidence — no hard gate; confidence acts as a natural score multiplier.
-        # Apps with 2–3 snapshots will have low blowing_up_score (e.g. 5–15) which
-        # correctly reflects limited data rather than being silently excluded.
-        confidence_factor = _confidence(len(rankings))
+        # Confidence — 4-signal weighted formula; floor of 0.1 for ≥2 snapshots
+        days_tracked      = (
+            (rankings[-1].recorded_at - rankings[0].recorded_at).total_seconds() / 86400.0
+        )
+        confidence_factor = _confidence(
+            snapshot_count=len(rankings),
+            days_tracked=days_tracked,
+            stability_score=_stability_score(rankings),
+            total_reviews=review_count,
+        )
 
         # Component scores
         rvs  = _norm_rank_velocity(avg_velocity)
@@ -371,7 +409,17 @@ class BlowingUpService:
         markets_count     = len(chart_types) + len(category_ids)
 
         consistency_score = _consistency(rankings)
-        confidence_factor = _confidence(len(rankings))
+
+        # Confidence — 4-signal weighted formula; floor of 0.1 for ≥2 snapshots
+        days_tracked      = (
+            (rankings[-1].recorded_at - rankings[0].recorded_at).total_seconds() / 86400.0
+        )
+        confidence_factor = _confidence(
+            snapshot_count=len(rankings),
+            days_tracked=days_tracked,
+            stability_score=_stability_score(rankings),
+            total_reviews=review_count,
+        )
 
         rvs  = _norm_rank_velocity(avg_velocity)
         rcs  = _norm_rank_change(rank_change, starting_rank)

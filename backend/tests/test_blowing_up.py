@@ -106,6 +106,38 @@ class TestNormHelpers:
 
 
 # ---------------------------------------------------------------------------
+# 1b. Stability score helper
+# ---------------------------------------------------------------------------
+
+class TestStabilityScore:
+
+    def test_all_ranks_changing_is_full_stability(self):
+        from app.services.blowing_up_service import _stability_score
+        rankings = [_make_ranking(r) for r in [100, 80, 60, 40]]  # all different
+        assert _stability_score(rankings) == 1.0
+
+    def test_no_rank_change_is_zero_stability(self):
+        from app.services.blowing_up_service import _stability_score
+        rankings = [_make_ranking(50)] * 4  # all same rank
+        assert _stability_score(rankings) == 0.0
+
+    def test_partial_changes_gives_fractional_stability(self):
+        from app.services.blowing_up_service import _stability_score
+        # ranks: 100 → 100 → 50 → 50 → 25  = 2 changes out of 4 transitions = 0.5
+        rankings = [_make_ranking(r) for r in [100, 100, 50, 50, 25]]
+        score = _stability_score(rankings)
+        assert abs(score - 0.5) < 0.01
+
+    def test_single_snapshot_is_zero(self):
+        from app.services.blowing_up_service import _stability_score
+        assert _stability_score([_make_ranking(50)]) == 0.0
+
+    def test_empty_list_is_zero(self):
+        from app.services.blowing_up_service import _stability_score
+        assert _stability_score([]) == 0.0
+
+
+# ---------------------------------------------------------------------------
 # 2. Rank direction correctness
 # ---------------------------------------------------------------------------
 
@@ -154,23 +186,41 @@ class TestDataQuality:
 
     def test_confidence_two_snapshots_is_penalised(self):
         from app.services.blowing_up_service import _confidence
-        score = _confidence(2)
-        assert score < 0.5, "Two snapshots should give low confidence"
+        # Minimal data: 2 snapshots, same-day, no rank changes, no reviews
+        score = _confidence(snapshot_count=2, days_tracked=0, stability_score=0, total_reviews=0)
+        assert score < 0.5, "Two snapshots with no other signal should give low confidence"
 
-    def test_confidence_ten_snapshots_is_maximum(self):
+    def test_confidence_full_data_is_maximum(self):
         from app.services.blowing_up_service import _confidence
-        assert _confidence(10) == 1.0
+        # All signals saturated: 10 snapshots, 7+ days, all ranks changed, 100+ reviews
+        score = _confidence(snapshot_count=10, days_tracked=7, stability_score=1.0, total_reviews=100)
+        assert abs(score - 1.0) < 1e-9
 
     def test_confidence_zero_snapshots_is_zero(self):
         from app.services.blowing_up_service import _confidence
-        assert _confidence(0) == 0.0
-        assert _confidence(1) == 0.0
+        assert _confidence(0, 7, 1.0, 100) == 0.0
+        assert _confidence(1, 7, 1.0, 100) == 0.0
 
-    def test_confidence_scales_with_count(self):
+    def test_confidence_scales_with_more_signals(self):
         from app.services.blowing_up_service import _confidence
-        c5 = _confidence(5)
-        c8 = _confidence(8)
-        assert c5 < c8, "More snapshots → higher confidence"
+        # Low data
+        c_low  = _confidence(snapshot_count=3, days_tracked=1, stability_score=0.2, total_reviews=5)
+        # Rich data
+        c_high = _confidence(snapshot_count=8, days_tracked=6, stability_score=0.9, total_reviews=80)
+        assert c_low < c_high, "More data across all signals → higher confidence"
+
+    def test_confidence_floor_prevents_zero_for_valid_apps(self):
+        from app.services.blowing_up_service import _confidence
+        # Even with 2 snapshots and no other signal, floor=0.1 applies
+        score = _confidence(snapshot_count=2, days_tracked=0, stability_score=0, total_reviews=0)
+        assert score >= 0.1, "Floor of 0.1 must apply for apps with ≥2 snapshots"
+
+    def test_confidence_never_none(self):
+        from app.services.blowing_up_service import _confidence
+        for n in range(0, 15):
+            result = _confidence(n, days_tracked=float(n), stability_score=0.5, total_reviews=n * 5)
+            assert result is not None
+            assert isinstance(result, float)
 
     def test_compute_for_app_returns_none_when_too_few_snapshots(self):
         """Service must return None when fewer than 2 ranking snapshots exist."""
@@ -183,10 +233,95 @@ class TestDataQuality:
         assert result is None
 
     def test_compute_for_app_returns_none_for_low_confidence(self):
-        """Service must return None when confidence_factor < 0.2."""
+        """Service must return None when there are too few snapshots (< 2)."""
         from app.services.blowing_up_service import BlowingUpService, _confidence
-        # Verify the threshold
-        assert _confidence(2) < 0.2 or True  # depends on formula; just check function exists
+        # Verify: 0 or 1 snapshots → 0.0 (no floor applied below 2)
+        assert _confidence(0, 0, 0, 0) == 0.0
+        assert _confidence(1, 7, 1.0, 100) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# 3b. Confidence formula weights
+# ---------------------------------------------------------------------------
+
+class TestConfidenceFormula:
+    """Verify the weighted formula and each component individually."""
+
+    def test_coverage_weight_dominates(self):
+        from app.services.blowing_up_service import _confidence
+        # Vary only coverage (snapshot_count), hold everything else at 0
+        low  = _confidence(2, 0, 0, 0)   # coverage=0.2
+        high = _confidence(10, 0, 0, 0)  # coverage=1.0
+        assert high > low
+
+    def test_time_score_contributes(self):
+        from app.services.blowing_up_service import _confidence
+        no_time   = _confidence(5, 0, 0, 0)
+        full_time = _confidence(5, 7, 0, 0)
+        assert full_time > no_time
+
+    def test_stability_score_contributes(self):
+        from app.services.blowing_up_service import _confidence
+        no_stab   = _confidence(5, 0, 0.0, 0)
+        full_stab = _confidence(5, 0, 1.0, 0)
+        assert full_stab > no_stab
+
+    def test_reviews_score_contributes(self):
+        from app.services.blowing_up_service import _confidence
+        no_rev   = _confidence(5, 0, 0, 0)
+        full_rev = _confidence(5, 0, 0, 100)
+        assert full_rev > no_rev
+
+    def test_formula_weights_sum_to_one(self):
+        from app.services.blowing_up_service import _confidence
+        # All signals at maximum → confidence = 1.0
+        result = _confidence(10, 7, 1.0, 100)
+        assert abs(result - 1.0) < 1e-9
+
+    def test_confidence_in_zero_to_one_range(self):
+        from app.services.blowing_up_service import _confidence
+        test_cases = [
+            (0, 0, 0, 0), (1, 0, 0, 0), (2, 0, 0, 0),
+            (5, 3.5, 0.5, 50), (10, 7, 1.0, 100),
+            (20, 14, 2.0, 500),  # inputs beyond caps
+        ]
+        for args in test_cases:
+            result = _confidence(*args)
+            assert 0.0 <= result <= 1.0, f"_confidence{args} = {result} out of range"
+
+    def test_floor_is_exactly_0_1_for_minimal_data(self):
+        from app.services.blowing_up_service import _confidence
+        # 2 snapshots, 0 everything else: coverage=0.2, rest=0
+        # raw = 0.4*0.2 = 0.08 → floor → 0.1
+        result = _confidence(2, 0, 0, 0)
+        assert abs(result - 0.1) < 1e-9
+
+    def test_inputs_clamped_above_max(self):
+        from app.services.blowing_up_service import _confidence
+        # Passing values well above scale should not exceed 1.0
+        result = _confidence(100, 100.0, 5.0, 10000)
+        assert abs(result - 1.0) < 1e-9
+
+    def test_stability_score_used_in_compute_from_prefetch(self):
+        """_compute_from_prefetch must call _stability_score and pass it to _confidence."""
+        import inspect
+        from app.services.blowing_up_service import BlowingUpService
+        src = inspect.getsource(BlowingUpService._compute_from_prefetch)
+        assert "_stability_score" in src, (
+            "_compute_from_prefetch must use _stability_score for confidence calculation"
+        )
+        assert "days_tracked" in src, (
+            "_compute_from_prefetch must compute days_tracked for confidence"
+        )
+
+    def test_days_tracked_computed_from_timestamps(self):
+        """days_tracked must be derived from recorded_at timestamps, not timeframe_days."""
+        import inspect
+        from app.services.blowing_up_service import BlowingUpService
+        src = inspect.getsource(BlowingUpService._compute_from_prefetch)
+        assert "recorded_at" in src and "total_seconds" in src, (
+            "days_tracked should be computed from recorded_at delta"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -309,7 +309,9 @@
       "Bash(python3 -m pytest tests/test_new_releases.py -v 2>&1 | tail -25)",
       "Bash(python -m pytest tests/test_blowing_up_performance.py tests/test_blowing_up.py -v 2>&1 | tail -60)",
       "Bash(python3 -m pytest tests/test_blowing_up_performance.py tests/test_blowing_up.py -v 2>&1 | tail -80)",
-      "Bash(python3 -m pytest tests/test_blowing_up_performance.py tests/test_blowing_up.py -v 2>&1 | tail -50)"
+      "Bash(python3 -m pytest tests/test_blowing_up_performance.py tests/test_blowing_up.py -v 2>&1 | tail -50)",
+      "Bash(python3 -m pytest tests/test_blowing_up.py tests/test_blowing_up_performance.py -v 2>&1 | tail -80)",
+      "Bash(python3 -m pytest tests/test_blowing_up.py tests/test_blowing_up_performance.py -v 2>&1 | tail -25)"
     ]
   }
 }
