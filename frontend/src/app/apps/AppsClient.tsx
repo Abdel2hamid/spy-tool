@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components';
-import { App, Category, AppFilters, getFilteredApps, searchAppsImport, lookupApp, AppImportSearchItem } from '@/lib/api';
+import { AppListItem, Category, AppFilters, getFilteredApps, searchAppsImport, lookupApp, AppImportSearchItem } from '@/lib/api';
 import {
   Search, AppWindow, Star, SlidersHorizontal, X,
   RotateCcw, ChevronUp, ChevronDown, Loader2, Plus, Globe,
@@ -212,7 +212,7 @@ function parseAppStoreInput(input: string): string | null {
 
 export default function AppsClient() {
   const router = useRouter();
-  const [apps, setApps] = useState<App[]>([]);
+  const [apps, setApps] = useState<AppListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);

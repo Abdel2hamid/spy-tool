@@ -4,12 +4,12 @@ export const dynamic = 'force-dynamic';
 
 import { useState, useEffect } from 'react';
 import { AppShell } from '@/components';
-import { getRankHistory, RankHistory, getApps, App } from '@/lib/api';
+import { getRankHistory, RankHistory, getApps, AppListItem } from '@/lib/api';
 import { BarChart3, TrendingUp, Search } from 'lucide-react';
 import { RankHistoryChart } from '@/components/Charts';
 
 function RankingsContent() {
-  const [apps, setApps] = useState<App[]>([]);
+  const [apps, setApps] = useState<AppListItem[]>([]);
   const [selectedApp, setSelectedApp] = useState<number | null>(null);
   const [rankHistory, setRankHistory] = useState<RankHistory | null>(null);
   const [loading, setLoading] = useState(true);

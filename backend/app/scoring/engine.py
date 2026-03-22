@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Tuple
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_
+from collections import defaultdict
+from sqlalchemy import func, and_, distinct
 
 from app.models.models import App, Ranking, Review, Keyword, AppKeyword, Opportunity, Category, AppKeywordIntelligence, AppDiscoveredKeyword, KeywordStatus
 from app.scoring.weights import SCORING_WEIGHTS
@@ -349,7 +350,7 @@ class ScoringEngine:
     # ------------------------------------------------------------------
 
     def calculate_feasibility_score(
-        self, app: App, competition_score: float
+        self, app: App, competition_score: float, gap_count: Optional[int] = None
     ) -> Tuple[float, Dict]:
         """
         Score how feasible it is for an indie developer to win in this space.
@@ -360,6 +361,8 @@ class ScoringEngine:
           gap_pts         (20) — feature-gap requests = clear differentiation path
           rating_pts      (15) — lower avg rating = unhappy users to win over
           rank_pts        (15) — rank > 20 = not locked out of charts
+
+        gap_count: pre-loaded count to avoid a DB query; fetched on-demand if None.
         """
         from app.models.models import FeatureGap
 
@@ -390,11 +393,12 @@ class ScoringEngine:
         )
 
         # 3. Feature gap signals
-        gap_count = (
-            self.db.query(FeatureGap)
-            .filter(FeatureGap.app_id == app.id)
-            .count()
-        )
+        if gap_count is None:
+            gap_count = (
+                self.db.query(FeatureGap)
+                .filter(FeatureGap.app_id == app.id)
+                .count()
+            )
         gap_pts = min(gap_count * _wc["feasibility_gap_scale"], _wc["feasibility_gap_max"])
 
         # 4. Rating weakness — lower rating means more room to win
@@ -472,24 +476,230 @@ class ScoringEngine:
         Uses 4-tier keyword selection, brand/incumbent exclusions, attractiveness,
         and feasibility scoring. Shared by generate_opportunity_of_day() and
         get_all_scored_opportunities().
-        """
-        apps = self.db.query(App).filter(App.current_rank.isnot(None)).all()
-        scored = []
 
+        Bulk-loads all data before the scoring loop to avoid N+1 queries.
+        Total DB queries: ~10 fixed regardless of candidate count.
+        """
+        from app.models.models import FeatureGap
+        from app.scoring.ai_potential import calculate_ai_potential_v2
+
+        apps = self.db.query(App).filter(App.current_rank.isnot(None)).all()
+        if not apps:
+            return []
+
+        # --- Filter excluded apps (no DB needed) ---
+        candidates = []
         for app in apps:
             excluded, _ = self._is_excluded_big_brand(app)
             if excluded:
                 continue
-
             dominated, _ = self._is_dominated_market(app)
             if dominated:
                 continue
+            candidates.append(app)
 
-            primary_keyword, _ = self.select_primary_keyword(app.id)
-            competition_score = self.calculate_keyword_competition(primary_keyword)
-            ai_potential = self.calculate_ai_potential(app.id, app.name, app.description or "")
+        if not candidates:
+            return []
 
-            _aw = WINNABILITY_CONFIG["attractiveness_weights"]
+        all_ids = [a.id for a in candidates]
+        cat_ids = list({a.category_id for a in candidates if a.category_id})
+        cutoff_7d  = datetime.now(timezone.utc) - timedelta(days=7)
+        cutoff_30d = datetime.now(timezone.utc) - timedelta(days=30)
+
+        # --- Bulk load 1: Rankings 7d ---
+        rankings_7d_rows = (
+            self.db.query(Ranking.app_id, Ranking.rank, Ranking.recorded_at)
+            .filter(Ranking.app_id.in_(all_ids), Ranking.recorded_at >= cutoff_7d)
+            .order_by(Ranking.app_id, Ranking.recorded_at)
+            .all()
+        )
+        rankings_7d: Dict[int, list] = defaultdict(list)
+        for app_id, rank, recorded_at in rankings_7d_rows:
+            rankings_7d[app_id].append((rank, recorded_at))
+
+        # --- Bulk load 2: Reviews 30d (rating + date) ---
+        reviews_30d_rows = (
+            self.db.query(Review.app_id, Review.rating, Review.date)
+            .filter(Review.app_id.in_(all_ids), Review.date >= cutoff_30d)
+            .all()
+        )
+        reviews_30d: Dict[int, list] = defaultdict(list)
+        for app_id, rating, date in reviews_30d_rows:
+            reviews_30d[app_id].append((rating, date))
+
+        # --- Bulk load 3: Categories ---
+        cat_name_map: Dict[int, str] = {}
+        if cat_ids:
+            cat_rows = self.db.query(Category.id, Category.name).filter(Category.id.in_(cat_ids)).all()
+            cat_name_map = {cid: (name or "general") for cid, name in cat_rows}
+
+        # --- Bulk load 4: Category growth (distinct apps per category, 30d) ---
+        cat_growth_map: Dict[int, float] = {}
+        if cat_ids:
+            cat_growth_rows = (
+                self.db.query(
+                    Ranking.category_id,
+                    func.count(distinct(Ranking.app_id)).label("cnt"),
+                )
+                .filter(Ranking.category_id.in_(cat_ids), Ranking.recorded_at >= cutoff_30d)
+                .group_by(Ranking.category_id)
+                .all()
+            )
+            for cid, cnt in cat_growth_rows:
+                cat_growth_map[cid] = min(cnt * ENGINE_CONFIG["category_growth_scale"], 100.0)
+
+        # --- Bulk load 5: Feature gap counts (for feasibility) ---
+        gap_count_rows = (
+            self.db.query(FeatureGap.app_id, func.count(FeatureGap.id).label("cnt"))
+            .filter(FeatureGap.app_id.in_(all_ids))
+            .group_by(FeatureGap.app_id)
+            .all()
+        )
+        gap_count_map: Dict[int, int] = {app_id: cnt for app_id, cnt in gap_count_rows}
+
+        # --- Bulk load 6: Feature gap objects (for AI potential) ---
+        feature_gap_rows = (
+            self.db.query(FeatureGap)
+            .filter(FeatureGap.app_id.in_(all_ids))
+            .all()
+        )
+        feature_gaps_by_app: Dict[int, list] = defaultdict(list)
+        for fg in feature_gap_rows:
+            feature_gaps_by_app[fg.app_id].append(fg)
+
+        # --- Bulk load 7: Best AppKeywordIntelligence per app (Tier 1) ---
+        intel_rows = (
+            self.db.query(AppKeywordIntelligence.app_id, Keyword.term, AppKeywordIntelligence.traffic_score)
+            .join(Keyword, Keyword.id == AppKeywordIntelligence.keyword_id)
+            .filter(AppKeywordIntelligence.app_id.in_(all_ids))
+            .order_by(AppKeywordIntelligence.app_id, AppKeywordIntelligence.traffic_score.desc())
+            .all()
+        )
+        best_intel_by_app: Dict[int, str] = {}
+        for app_id, term, _ in intel_rows:
+            if app_id not in best_intel_by_app and term and not self._is_weak_keyword(term):
+                best_intel_by_app[app_id] = term
+
+        # --- Bulk load 8: AppDiscoveredKeywords (Tier 2 + AI potential) ---
+        disc_rows = (
+            self.db.query(AppDiscoveredKeyword)
+            .filter(AppDiscoveredKeyword.app_id.in_(all_ids))
+            .order_by(AppDiscoveredKeyword.app_id, AppDiscoveredKeyword.opportunity_score.desc())
+            .all()
+        )
+        best_disc_by_app: Dict[int, str] = {}
+        disc_all_by_app: Dict[int, list] = defaultdict(list)
+        for dkw in disc_rows:
+            disc_all_by_app[dkw.app_id].append(dkw)
+            if (
+                dkw.app_id not in best_disc_by_app
+                and dkw.keyword
+                and dkw.opportunity_score
+                and dkw.opportunity_score > 0
+                and not self._is_weak_keyword(dkw.keyword)
+            ):
+                best_disc_by_app[dkw.app_id] = dkw.keyword
+
+        # --- Phase 1: Keyword selection in-memory; collect Tier-3 phrases ---
+        primary_kws: Dict[int, object] = {}
+        phrases_to_lookup: set = set()
+
+        for app in candidates:
+            if app.id in best_intel_by_app:
+                primary_kws[app.id] = best_intel_by_app[app.id]
+                continue
+            if app.id in best_disc_by_app:
+                primary_kws[app.id] = best_disc_by_app[app.id]
+                continue
+            app_text = f"{app.name or ''} {app.subtitle or ''}".strip()
+            phrases = self._extract_phrases(app_text, min_words=2, max_words=3)
+            if phrases:
+                phrases_to_lookup.update(phrases)
+                primary_kws[app.id] = ("__phrases__", phrases)
+            else:
+                words = app_text.split()
+                valid_words = [w for w in words if not self._is_weak_keyword(w)]
+                if len(valid_words) >= 2:
+                    primary_kws[app.id] = f"{valid_words[0]} {valid_words[1]}".lower()
+                elif valid_words:
+                    primary_kws[app.id] = valid_words[0].lower()
+                else:
+                    primary_kws[app.id] = "app"
+
+        # --- Bulk load 9: Keyword rows for Tier-3 phrases ---
+        phrase_kw_map: Dict[str, float] = {}
+        if phrases_to_lookup:
+            kw_phrase_rows = (
+                self.db.query(Keyword.term, Keyword.opportunity_score)
+                .filter(Keyword.term.in_(list(phrases_to_lookup)))
+                .all()
+            )
+            for term, opp_score in kw_phrase_rows:
+                phrase_kw_map[term] = opp_score or 10.0
+
+        # Resolve Tier-3 placeholders
+        for app in candidates:
+            kw = primary_kws.get(app.id)
+            if isinstance(kw, tuple) and kw[0] == "__phrases__":
+                phrases = kw[1]
+                scored_phrases = sorted(
+                    [(p, phrase_kw_map.get(p, 10.0)) for p in phrases],
+                    key=lambda x: x[1],
+                    reverse=True,
+                )
+                primary_kws[app.id] = scored_phrases[0][0] if scored_phrases else "app"
+
+        # --- Bulk load 10: Keyword difficulty + AppKeyword counts for all primary kws ---
+        unique_kws = list({kw for kw in primary_kws.values() if isinstance(kw, str)})
+        kw_diff_map: Dict[str, float] = {}
+        kw_app_count_map: Dict[str, int] = {}
+        if unique_kws:
+            kw_diff_rows = (
+                self.db.query(Keyword.term, Keyword.difficulty)
+                .filter(Keyword.term.in_(unique_kws))
+                .all()
+            )
+            for term, diff in kw_diff_rows:
+                kw_diff_map[term] = diff if diff and diff > 0 else 50.0
+
+            kw_count_rows = (
+                self.db.query(Keyword.term, func.count(AppKeyword.id).label("cnt"))
+                .join(AppKeyword, AppKeyword.keyword_id == Keyword.id)
+                .filter(Keyword.term.in_(unique_kws))
+                .group_by(Keyword.term)
+                .all()
+            )
+            for term, cnt in kw_count_rows:
+                kw_app_count_map[term] = cnt
+
+        # --- Phase 2: Score each candidate in-memory (no DB queries) ---
+        _aw = WINNABILITY_CONFIG["attractiveness_weights"]
+        _cw = WINNABILITY_CONFIG["combined_weights"]
+        scored = []
+
+        for app in candidates:
+            primary_keyword = primary_kws.get(app.id, "app")
+            if not isinstance(primary_keyword, str):
+                primary_keyword = "app"
+
+            # Competition score
+            base_diff = kw_diff_map.get(primary_keyword, 50.0)
+            app_count = kw_app_count_map.get(primary_keyword, 0)
+            competition_boost = min(
+                app_count * ENGINE_CONFIG["competition_per_app_boost"],
+                ENGINE_CONFIG["competition_max_boost"],
+            )
+            competition_score = min(base_diff + competition_boost, 100.0)
+
+            # AI potential (preloaded objects, no DB)
+            ai_result = calculate_ai_potential_v2(
+                app,
+                feature_gaps_by_app.get(app.id, []),
+                disc_all_by_app.get(app.id, []),
+            )
+            ai_potential = ai_result.get("ai_potential_score", 0.0) if isinstance(ai_result, dict) else float(ai_result)
+
+            # Attractiveness
             rank_score = max(0.0, 100.0 - (app.current_rank * 2)) if app.current_rank else 0.0
             rating_score = (app.current_rating or 0.0) * 20.0
             attractiveness = min(
@@ -500,16 +710,20 @@ class ScoringEngine:
                 100.0,
             )
 
-            feasibility, feasibility_details = self.calculate_feasibility_score(app, competition_score)
+            # Feasibility (gap_count pre-loaded)
+            gap_count = gap_count_map.get(app.id, 0)
+            feasibility, feasibility_details = self.calculate_feasibility_score(
+                app, competition_score, gap_count=gap_count
+            )
 
-            _cw = WINNABILITY_CONFIG["combined_weights"]
             combined = attractiveness * _cw["attractiveness"] + feasibility * _cw["feasibility"]
 
-            category_name = "general"
-            if app.category_id:
-                category_obj = self.db.query(Category).filter(Category.id == app.category_id).first()
-                if category_obj and category_obj.name:
-                    category_name = category_obj.name
+            # In-memory signals
+            rank_velocity    = self._rank_velocity_from_prefetch(rankings_7d.get(app.id, []))
+            review_growth    = self._review_growth_from_prefetch(reviews_30d.get(app.id, []), app.current_reviews)
+            rating_velocity  = self._rating_velocity_from_prefetch(reviews_30d.get(app.id, []), app.current_rating)
+            category_growth  = cat_growth_map.get(app.category_id, 0.0) if app.category_id else 0.0
+            category_name    = cat_name_map.get(app.category_id, "general") if app.category_id else "general"
 
             scored.append({
                 "app_id": app.id,
@@ -522,10 +736,10 @@ class ScoringEngine:
                 "feasibility_score": round(feasibility, 2),
                 "feasibility_details": feasibility_details,
                 "ai_integration_potential": round(ai_potential, 2),
-                "rank_velocity": round(self.calculate_rank_velocity(app.id), 2),
-                "review_growth": round(self.calculate_review_growth(app.id), 2),
-                "rating_velocity": round(self.calculate_rating_velocity(app.id), 2),
-                "category_growth": round(self.calculate_category_growth(app.category_id), 2) if app.category_id else 0.0,
+                "rank_velocity": round(rank_velocity, 2),
+                "review_growth": round(review_growth, 2),
+                "rating_velocity": round(rating_velocity, 2),
+                "category_growth": round(category_growth, 2),
                 "category": category_name,
                 "recommendation": self._generate_winnability_recommendation(
                     app.name,
@@ -537,6 +751,37 @@ class ScoringEngine:
 
         scored.sort(key=lambda x: x["success_probability"], reverse=True)
         return scored
+
+    # ------------------------------------------------------------------
+    # In-memory signal helpers (used by _build_scored_opportunities)
+    # ------------------------------------------------------------------
+
+    def _rank_velocity_from_prefetch(self, rankings: list) -> float:
+        """Compute rank velocity from preloaded (rank, recorded_at) tuples."""
+        ranks = [r for r, _ in rankings if r is not None]
+        if len(ranks) < 2:
+            return 0.0
+        return float((ranks[0] - ranks[-1]) / len(ranks))
+
+    def _review_growth_from_prefetch(
+        self, reviews_30d: list, current_reviews: Optional[int]
+    ) -> float:
+        """Compute review growth rate from preloaded (rating, date) tuples."""
+        if not current_reviews or current_reviews == 0:
+            return 0.0
+        return min(len(reviews_30d) / current_reviews * 100, 100.0)
+
+    def _rating_velocity_from_prefetch(
+        self, reviews_30d: list, current_rating: Optional[float]
+    ) -> float:
+        """Compute rating velocity from preloaded (rating, date) tuples."""
+        if not reviews_30d or current_rating is None:
+            return 0.0
+        ratings = [r for r, _ in reviews_30d if r is not None]
+        if not ratings:
+            return 0.0
+        recent_avg = sum(ratings) / len(ratings)
+        return float(recent_avg - current_rating)
 
     def generate_opportunity_of_day(self) -> Optional[Dict]:
         """
@@ -643,9 +888,17 @@ class ScoringEngine:
             momentum_14d: 14-day momentum
             momentum_weighted: Weighted combination favoring sustained trends
         """
-        history_3d = self._get_ranking_history(app_id, days=3)
-        history_7d = self._get_ranking_history(app_id, days=7)
         history_14d = self._get_ranking_history(app_id, days=14)
+        # Slice in Python — avoids 2 extra DB round-trips
+        if history_14d:
+            latest_ts = history_14d[-1]["recorded_at"]
+            history_7d = [h for h in history_14d
+                          if (latest_ts - h["recorded_at"]).total_seconds() <= 7 * 86400]
+            history_3d = [h for h in history_14d
+                          if (latest_ts - h["recorded_at"]).total_seconds() <= 3 * 86400]
+        else:
+            history_7d = []
+            history_3d = []
 
         def calc_momentum(history):
             if len(history) < 2:

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components';
 import {
-  App,
+  AppListItem,
   AppListResponse,
   FreshRiserItem,
   FreshRisersResponse,
@@ -53,7 +53,7 @@ function SkeletonCard() {
 // New Releases card
 // ---------------------------------------------------------------------------
 
-function AppCard({ app }: { app: App }) {
+function AppCard({ app }: { app: AppListItem }) {
   const releaseDate = app.release_date
     ? new Date(app.release_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     : null;
@@ -209,7 +209,7 @@ export default function LatestAppsClient() {
   const [activeTab, setActiveTab] = useState<Tab>('new_releases');
 
   // New Releases state
-  const [apps, setApps] = useState<App[]>([]);
+  const [apps, setApps] = useState<AppListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loadingNR, setLoadingNR] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);

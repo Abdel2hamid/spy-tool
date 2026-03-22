@@ -320,7 +320,18 @@
       "Bash(python3 -m pytest --tb=no -q 2>&1 | tail -10)",
       "Bash(python -m pytest tests/test_download_estimator.py -v 2>&1 | tail -60)",
       "Bash(python3 -m pytest tests/test_download_estimator.py -v 2>&1 | tail -70)",
-      "Bash(python3 -m pytest tests/test_download_estimator.py -q 2>&1 | tail -5)"
+      "Bash(python3 -m pytest tests/test_download_estimator.py -q 2>&1 | tail -5)",
+      "Bash(python -m pytest tests/ -x -q 2>&1 | tail -20)",
+      "Bash(python3 -m pytest tests/ -x -q 2>&1 | tail -20)",
+      "Bash(npx tsc --noEmit 2>&1 | head -30)",
+      "Bash(npx tsc --noEmit 2>&1 | grep -v \"validator.ts\" | head -20)",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m pytest tests/ -x -q 2>&1 | tail -5)",
+      "Bash(python -m pytest tests/test_weekly_opportunities.py tests/test_opportunity_of_day.py -x -q 2>&1 | tail -30)",
+      "Bash(python3 -m pytest tests/test_weekly_opportunities.py tests/test_opportunity_of_day.py -x -q 2>&1 | tail -30)",
+      "Bash(python3 -m pytest -x -q 2>&1 | tail -10)",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool && grep -rn \"for.*in.*:\" backend/app/services/*.py backend/app/scoring/*.py backend/app/workers/tasks.py | grep -A2 \"db\\\\.query\\\\|self\\\\.db\\\\.query\" | head -50)",
+      "Bash(grep -n \"useEffect\\\\|fetch\\\\|getApp\\\\|getMarket\\\\|getFeature\\\\|getKeyword\\\\|getRank\" /Users/abdelhamid/appstore-spy-tool/frontend/src/app/apps/\\\\[id\\\\]/page.tsx | head -50)",
+      "Bash(grep -n \"function\\\\|export.*function\\\\|const.*=.*\\(\" /Users/abdelhamid/appstore-spy-tool/frontend/src/app/apps/\\\\[id\\\\]/page.tsx | grep -E \"function\\\\s+\\\\w+Tab|function\\\\s+\\\\w+Card|export\\\\s+default\" | head -40)"
     ]
   }
 }

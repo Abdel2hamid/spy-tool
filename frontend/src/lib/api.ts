@@ -435,8 +435,27 @@ export interface AppFilters {
   limit?: number;
 }
 
+export interface AppListItem {
+  id: number;
+  app_id: string;
+  name: string;
+  icon_url: string | null;
+  developer: string | null;
+  primary_category: string | null;
+  current_rating: number | null;
+  current_reviews: number;
+  current_rank: number | null;
+  is_free: boolean;
+  price: number;
+  estimated_installs_min: number | null;
+  estimated_installs_max: number | null;
+  estimated_revenue_monthly_min: number | null;
+  install_confidence: number | null;
+  release_date: string | null;
+}
+
 export interface AppListResponse {
-  apps: App[];
+  apps: AppListItem[];
   total: number;
   skip: number;
   limit: number;
@@ -643,7 +662,7 @@ export async function getRankHistory(
   return fetchApi<RankHistory>(`/apps/${appId}/rank-history?days=${days}`);
 }
 
-export async function getApps(limit: number = 50): Promise<App[]> {
+export async function getApps(limit: number = 50): Promise<AppListItem[]> {
   const result = await fetchApi<AppListResponse>(`/apps?limit=${limit}`);
   return result.apps ?? [];
 }

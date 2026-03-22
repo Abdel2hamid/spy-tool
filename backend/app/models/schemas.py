@@ -182,9 +182,32 @@ class AppDetailResponse(AppResponse):
         from_attributes = True
 
 
+class AppListItem(BaseModel):
+    """Slim app record for list/card views — excludes heavy fields."""
+    id: int
+    app_id: str
+    name: str
+    icon_url: Optional[str] = None
+    developer: Optional[str] = None
+    primary_category: Optional[str] = None
+    current_rating: Optional[float] = None
+    current_reviews: Optional[int] = None
+    current_rank: Optional[int] = None
+    is_free: bool = True
+    price: float = 0
+    estimated_installs_min: Optional[int] = None
+    estimated_installs_max: Optional[int] = None
+    estimated_revenue_monthly_min: Optional[float] = None
+    install_confidence: Optional[float] = None
+    release_date: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 class AppListResponse(BaseModel):
     """Paginated apps list returned by GET /apps."""
-    apps: List[AppResponse]
+    apps: List[AppListItem]
     total: int
     skip: int
     limit: int

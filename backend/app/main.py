@@ -313,6 +313,19 @@ _MIGRATIONS = [
         UNIQUE(week_start_date, rank)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_weekly_opp_week ON weekly_opportunities (week_start_date DESC)",
+
+    # Phase 1 performance — fast ILIKE search via pg_trgm GIN indexes
+    "CREATE EXTENSION IF NOT EXISTS pg_trgm",
+    "CREATE INDEX IF NOT EXISTS idx_apps_name_trgm        ON apps USING GIN (name gin_trgm_ops)",
+    "CREATE INDEX IF NOT EXISTS idx_apps_developer_trgm   ON apps USING GIN (developer gin_trgm_ops)",
+    "CREATE INDEX IF NOT EXISTS idx_apps_subtitle_trgm    ON apps USING GIN (subtitle gin_trgm_ops)",
+    "CREATE INDEX IF NOT EXISTS idx_apps_description_trgm ON apps USING GIN (description gin_trgm_ops)",
+    # Phase 1 performance — category_id index for ranking queries
+    "CREATE INDEX IF NOT EXISTS idx_rankings_category_id  ON rankings (category_id)",
+    # Phase 4 performance — high-impact indexes for scoring/compute hot paths
+    "CREATE INDEX IF NOT EXISTS idx_rankings_app_recorded ON rankings (app_id, recorded_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_reviews_app_date      ON reviews (app_id, date DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_feature_gaps_app_id   ON feature_gaps (app_id)",
 ]
 
 

@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useState, useEffect } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components';
-import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, DownloadEstimate, getAppDetail, getAppVersions, getAppReviews, getAppAnalytics, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, getDownloadEstimate, RankHistory } from '@/lib/api';
+import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, DownloadEstimate, getAppDetail, getAppReviews, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, getDownloadEstimate, RankHistory } from '@/lib/api';
 import { fmtNum, fmtRev, fmtRange, fmtRevRange, confidenceLabel, CONFIDENCE_BADGE } from '@/lib/estimate-format';
 import {
   ArrowLeft, Star, Download, Calendar, Globe, MessageSquare,
@@ -1345,21 +1345,19 @@ function FeatureGapsTab({ appId }: { appId: number }) {
 // KeywordOpportunitiesHighlight — top 3 keyword opportunities for this app
 // ---------------------------------------------------------------------------
 
-function KeywordOpportunitiesHighlight({ appId }: { appId: number }) {
+function KeywordOpportunitiesHighlight({ appId, discoveredInitial }: { appId: number; discoveredInitial: DiscoveredKeywordsResponse | null | undefined }) {
   const [extracted, setExtracted] = useState<ExtractedKeyword[]>([]);
-  const [discovered, setDiscovered] = useState<DiscoveredKeyword[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([
-      getExtractedKeywords(appId).catch(() => null),
-      getDiscoveredKeywords(appId).catch(() => null),
-    ]).then(([ext, disc]) => {
-      setExtracted(ext?.keywords ?? []);
-      setDiscovered(disc?.keywords ?? []);
-      setLoading(false);
-    });
-  }, [appId]);
+    if (discoveredInitial === undefined) return;
+    getExtractedKeywords(appId)
+      .catch(() => null)
+      .then(ext => {
+        setExtracted(ext?.keywords ?? []);
+        setLoading(false);
+      });
+  }, [appId, discoveredInitial]);
 
   if (loading) {
     return (
@@ -1381,7 +1379,7 @@ function KeywordOpportunitiesHighlight({ appId }: { appId: number }) {
       rank: k.app_rank,
       trend: null as string | null,
     })),
-    ...discovered.map(k => ({
+    ...(discoveredInitial?.keywords ?? []).map(k => ({
       keyword: k.keyword,
       opportunity: k.opportunity_score,
       volume: k.search_volume,
@@ -1945,9 +1943,9 @@ const TREND_BADGE: Record<string, string> = {
 };
 const TREND_ICON: Record<string, string> = { rising: '↑', stable: '→', declining: '↓' };
 
-function DiscoveredKeywordsTable({ appId }: { appId: number }) {
-  const [data, setData] = useState<DiscoveredKeywordsResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+function DiscoveredKeywordsTable({ appId, initialData }: { appId: number; initialData: DiscoveredKeywordsResponse | null }) {
+  const [data, setData] = useState<DiscoveredKeywordsResponse | null>(initialData);
+  const [loading, setLoading] = useState(false);
   const [discovering, setDiscovering] = useState(false);
   const [sortKey, setSortKey] = useState<keyof DiscoveredKeyword>('opportunity_score');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
@@ -1968,7 +1966,7 @@ function DiscoveredKeywordsTable({ appId }: { appId: number }) {
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, [appId]);
+  // no auto-fetch: initialData is provided by KeywordsTabContent
 
   const handleDiscover = async () => {
     setDiscovering(true);
@@ -2220,18 +2218,12 @@ function DiscoveredKeywordsTable({ appId }: { appId: number }) {
 // KeywordIntelligenceTab
 // ---------------------------------------------------------------------------
 
-function KeywordIntelligenceTab({ appId }: { appId: number }) {
-  const [data, setData] = useState<KeywordIntelligence | null>(null);
-  const [loading, setLoading] = useState(true);
+function KeywordIntelligenceTab({ appId, initialData }: { appId: number; initialData: KeywordIntelligence | null }) {
+  const [data, setData] = useState<KeywordIntelligence | null>(initialData);
+  const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanKeyword, setScanKeyword] = useState('');
-
-  useEffect(() => {
-    getKeywordIntelligence(appId)
-      .then(setData)
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [appId]);
+  // no auto-fetch: initialData is provided by KeywordsTabContent
 
   const handleScan = async () => {
     if (!scanKeyword.trim()) return;
@@ -2629,6 +2621,85 @@ function AppAutopsyTab({ appId }: { appId: number }) {
 }
 
 
+function KeywordsTabContent({ appId }: { appId: number }) {
+  const [discoveredData, setDiscoveredData] = useState<DiscoveredKeywordsResponse | null | undefined>(undefined);
+  const [kwIntelData, setKwIntelData] = useState<KeywordIntelligence | null | undefined>(undefined);
+
+  useEffect(() => {
+    setDiscoveredData(undefined);
+    setKwIntelData(undefined);
+    getDiscoveredKeywords(appId).catch(() => null).then(setDiscoveredData);
+    getKeywordIntelligence(appId).catch(() => null).then(setKwIntelData);
+  }, [appId]);
+
+  return (
+    <div className="space-y-8">
+      {/* ── Best Opportunities highlight ── */}
+      <KeywordOpportunitiesHighlight appId={appId} discoveredInitial={discoveredData} />
+
+      {/* ── 0. Top Opportunities (Phase-1) ── */}
+      <div>
+        <div className="mb-3 flex items-baseline justify-between">
+          <div>
+            <h3 className="section-heading">Top Opportunities</h3>
+            <p className="mt-0.5 text-xs text-gray-400">
+              Best keywords to target — sorted by opportunity score.
+            </p>
+          </div>
+        </div>
+        <TopKeywordOpportunitiesTable appId={appId} />
+      </div>
+
+      {/* ── 1. Extracted Keywords ── */}
+      <div>
+        <div className="mb-3 flex items-baseline justify-between">
+          <div>
+            <h3 className="section-heading">Extracted Keywords</h3>
+            <p className="mt-0.5 text-xs text-gray-400">
+              From this app&apos;s title, subtitle, and description — enriched with volume, difficulty, and traffic.
+            </p>
+          </div>
+        </div>
+        <ExtractedKeywordsTable appId={appId} />
+      </div>
+
+      {/* ── 2. Discovered Keywords ── */}
+      <div>
+        <div className="mb-3">
+          <h3 className="section-heading">Discovered Keywords</h3>
+          <p className="mt-0.5 text-xs text-gray-400">
+            Found via Apple autocomplete + prefix/suffix expansions — scored by ASO opportunity.
+          </p>
+        </div>
+        {discoveredData !== undefined
+          ? <DiscoveredKeywordsTable appId={appId} initialData={discoveredData} />
+          : <div className="space-y-2">{[...Array(4)].map((_, i) => <div key={i} className="h-10 animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />)}</div>
+        }
+      </div>
+
+      {/* ── 3. Keyword Intelligence ── */}
+      <div>
+        <h3 className="section-heading mb-4">Keyword Intelligence</h3>
+        {kwIntelData !== undefined
+          ? <KeywordIntelligenceTab appId={appId} initialData={kwIntelData} />
+          : <div className="rounded-xl border border-gray-200 bg-white p-8 dark:border-gray-800 dark:bg-gray-900">
+              <div className="animate-pulse space-y-3">
+                {[...Array(4)].map((_, i) => <div key={i} className="h-12 rounded-lg bg-gray-200 dark:bg-gray-800" />)}
+              </div>
+            </div>
+        }
+      </div>
+
+      {/* ── 4. Rank History ── */}
+      <div>
+        <h3 className="section-heading mb-4">Rank History</h3>
+        <KeywordHistoryPanel appId={appId} />
+      </div>
+    </div>
+  );
+}
+
+
 export default function AppDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -2642,20 +2713,15 @@ export default function AppDetailPage() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [showSyncBanner, setShowSyncBanner] = useState(searchParams.get('imported') === '1');
+  const [reviewsLoaded, setReviewsLoaded] = useState(false);
 
   useEffect(() => {
     async function fetchData() {
       try {
-        const [appData, versionsData, reviewsData, analyticsData] = await Promise.all([
-          getAppDetail(appId),
-          getAppVersions(appId),
-          getAppReviews(appId, undefined, 20),
-          getAppAnalytics(appId).catch(() => null),
-        ]);
+        const appData = await getAppDetail(appId);
         setApp(appData);
-        setVersions(versionsData);
-        setReviews(reviewsData);
-        setAnalytics(analyticsData);
+        setVersions(appData.versions ?? []);
+        setAnalytics(appData.analytics ?? null);
       } catch (error) {
         console.error('Failed to fetch app data:', error);
       } finally {
@@ -2664,6 +2730,12 @@ export default function AppDetailPage() {
     }
     fetchData();
   }, [appId]);
+
+  useEffect(() => {
+    if (activeTab !== 'reviews' || reviewsLoaded) return;
+    setReviewsLoaded(true);
+    getAppReviews(appId, undefined, 20).then(setReviews).catch(console.error);
+  }, [activeTab, reviewsLoaded, appId]);
 
   if (loading) {
     return (
@@ -2807,61 +2879,7 @@ export default function AppDetailPage() {
           {activeTab === 'analytics' && <AnalyticsTab analytics={analytics} />}
           {activeTab === 'market' && <MarketWeaknessTab appId={appId} />}
           {activeTab === 'gaps' && <FeatureGapsTab appId={appId} />}
-          {activeTab === 'keywords' && (
-            <div className="space-y-8">
-              {/* ── Best Opportunities highlight ── */}
-              <KeywordOpportunitiesHighlight appId={appId} />
-
-              {/* ── 0. Top Opportunities (Phase-1) ── */}
-              <div>
-                <div className="mb-3 flex items-baseline justify-between">
-                  <div>
-                    <h3 className="section-heading">Top Opportunities</h3>
-                    <p className="mt-0.5 text-xs text-gray-400">
-                      Best keywords to target — sorted by opportunity score.
-                    </p>
-                  </div>
-                </div>
-                <TopKeywordOpportunitiesTable appId={appId} />
-              </div>
-
-              {/* ── 1. Extracted Keywords ── */}
-              <div>
-                <div className="mb-3 flex items-baseline justify-between">
-                  <div>
-                    <h3 className="section-heading">Extracted Keywords</h3>
-                    <p className="mt-0.5 text-xs text-gray-400">
-                      From this app&apos;s title, subtitle, and description — enriched with volume, difficulty, and traffic.
-                    </p>
-                  </div>
-                </div>
-                <ExtractedKeywordsTable appId={appId} />
-              </div>
-
-              {/* ── 2. Discovered Keywords ── */}
-              <div>
-                <div className="mb-3">
-                  <h3 className="section-heading">Discovered Keywords</h3>
-                  <p className="mt-0.5 text-xs text-gray-400">
-                    Found via Apple autocomplete + prefix/suffix expansions — scored by ASO opportunity.
-                  </p>
-                </div>
-                <DiscoveredKeywordsTable appId={appId} />
-              </div>
-
-              {/* ── 3. Keyword Intelligence ── */}
-              <div>
-                <h3 className="section-heading mb-4">Keyword Intelligence</h3>
-                <KeywordIntelligenceTab appId={appId} />
-              </div>
-
-              {/* ── 4. Rank History ── */}
-              <div>
-                <h3 className="section-heading mb-4">Rank History</h3>
-                <KeywordHistoryPanel appId={appId} />
-              </div>
-            </div>
-          )}
+          {activeTab === 'keywords' && <KeywordsTabContent appId={appId} />}
           {activeTab === 'autopsy' && <AppAutopsyTab appId={appId} />}
         </div>
       </div>
