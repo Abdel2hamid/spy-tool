@@ -4,15 +4,15 @@ test_opportunity_of_day.py
 Tests for the Opportunity of the Day engine.
 
 Verifies:
-1. Same-day caching: get_or_generate() returns cached result on second call
-2. No DB row → _generate_and_store() is called (generation path)
-3. _get_related_apps(): returns empty list when niche is empty
-4. _get_related_apps(): returns empty when category not found
-5. _get_related_apps(): returns list of dicts with required keys
-6. _get_related_apps(): swallows DB exception, returns empty list
-7. _build_ai_summary(): returns non-empty string for valid opportunity
-8. _build_ai_summary(): high success_probability yields "Strong opportunity"
-9. _build_ai_summary(): moderate success_probability yields "Solid opportunity"
+1.  Same-day caching (fresh): get_or_generate() returns cached result when row is recent
+2.  No DB row → _generate_and_store() is called (generation path)
+3.  _get_related_apps(): returns empty list when niche is empty
+4.  _get_related_apps(): returns empty when category not found AND primary_category has no match
+5.  _get_related_apps(): returns list of dicts with required keys
+6.  _get_related_apps(): swallows DB exception, returns empty list
+7.  _build_ai_summary(): returns non-empty string for valid opportunity
+8.  _build_ai_summary(): high success_probability yields "Strong opportunity"
+9.  _build_ai_summary(): moderate success_probability yields "Solid opportunity"
 10. _build_ai_summary(): low success_probability yields "Emerging opportunity"
 11. _build_ai_summary(): low competition yields low-competition phrase
 12. _build_ai_summary(): gap_count ≥ 2 yields gap mention
@@ -29,14 +29,23 @@ Verifies:
 23. Scheduler job does not call ScoringEngine directly
 24. Scheduler job calls get_or_generate()
 25. _generate_and_store() adds ai_summary and related_apps to result
-26. _generate_and_store() returns None when engine returns None
+26. _generate_and_store() returns None when engine returns no candidates
 27. _generate_and_store() commits exactly once on success
 28. get_or_generate() returns None when ScoringEngine has no opportunity
+29. [NEW] get_or_generate() regenerates when cached row is stale (TTL exceeded)
+30. [NEW] get_or_generate() does NOT regenerate when cached row is fresh
+31. [NEW] get_or_generate() regenerates when generated_at is None
+32. [NEW] _select_daily_pick() avoids app shown recently
+33. [NEW] _select_daily_pick() falls back to pool when all candidates are recent
+34. [NEW] _select_daily_pick() is deterministic for the same date
+35. [NEW] _select_daily_pick() returns None for empty scored list
+36. [NEW] _get_related_apps() returns apps without current_rank
+37. [NEW] _get_related_apps() falls back to primary_category when Category not found
 """
 
 import sys
 import os
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -74,20 +83,24 @@ def _make_opportunity(**kwargs):
     return defaults
 
 
-def _make_cached_row(full_data: dict):
+def _make_cached_row(full_data: dict, generated_at=None):
+    """Build a mock DailyOpportunity row with a valid generated_at (fresh by default)."""
     row = MagicMock()
     row.full_data = full_data
+    row.generated_at = generated_at if generated_at is not None else (
+        datetime.now(timezone.utc) - timedelta(minutes=30)
+    )
     return row
 
 
 # ---------------------------------------------------------------------------
-# 1–3. get_or_generate — caching and generation paths
+# 1–2. get_or_generate — caching and generation paths
 # ---------------------------------------------------------------------------
 
 class TestGetOrGenerate:
 
-    def test_returns_cached_result_when_row_exists(self):
-        """If daily_opportunities row exists for today, return its full_data directly."""
+    def test_returns_cached_result_when_row_is_fresh(self):
+        """Fresh row (< TTL) → return its full_data directly without regenerating."""
         from app.services.opportunity_of_day_service import OpportunityOfDayService
 
         cached = {**_make_opportunity(), "ai_summary": "Cached.", "related_apps": []}
@@ -113,7 +126,7 @@ class TestGetOrGenerate:
             mock_gen.assert_called_once_with(date.today())
 
     def test_returns_none_when_engine_has_no_opportunity(self):
-        """ScoringEngine returning None propagates as None."""
+        """ScoringEngine returning [] propagates as None."""
         from app.services.opportunity_of_day_service import OpportunityOfDayService
 
         db = MagicMock()
@@ -121,14 +134,183 @@ class TestGetOrGenerate:
 
         svc = OpportunityOfDayService(db)
         with patch("app.services.opportunity_of_day_service.ScoringEngine") as MockEngine:
-            MockEngine.return_value.generate_opportunity_of_day.return_value = None
+            MockEngine.return_value.get_all_scored_opportunities.return_value = []
             result = svc.get_or_generate()
 
         assert result is None
 
 
 # ---------------------------------------------------------------------------
-# 4–7. _get_related_apps
+# 29–31. TTL-based cache refresh
+# ---------------------------------------------------------------------------
+
+class TestCacheTTL:
+
+    def test_stale_cache_triggers_regeneration(self):
+        """Row older than TTL → must regenerate even if same-day."""
+        from app.services.opportunity_of_day_service import OpportunityOfDayService, _DAILY_TTL_HOURS
+
+        stale_time = datetime.now(timezone.utc) - timedelta(hours=_DAILY_TTL_HOURS + 1)
+        cached = {**_make_opportunity(), "ai_summary": "Old.", "related_apps": []}
+
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = _make_cached_row(
+            cached, generated_at=stale_time
+        )
+
+        svc = OpportunityOfDayService(db)
+        with patch.object(svc, "_generate_and_store", return_value={"app_id": 99}) as mock_gen:
+            result = svc.get_or_generate()
+            mock_gen.assert_called_once()
+        assert result == {"app_id": 99}
+
+    def test_fresh_cache_not_regenerated(self):
+        """Row younger than TTL → return cached without regenerating."""
+        from app.services.opportunity_of_day_service import OpportunityOfDayService, _DAILY_TTL_HOURS
+
+        fresh_time = datetime.now(timezone.utc) - timedelta(hours=_DAILY_TTL_HOURS - 1)
+        cached = {**_make_opportunity(), "ai_summary": "Fresh.", "related_apps": []}
+
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = _make_cached_row(
+            cached, generated_at=fresh_time
+        )
+
+        svc = OpportunityOfDayService(db)
+        with patch.object(svc, "_generate_and_store") as mock_gen:
+            result = svc.get_or_generate()
+            mock_gen.assert_not_called()
+        assert result == cached
+
+    def test_none_generated_at_treated_as_stale(self):
+        """Row with generated_at=None → treated as stale, must regenerate."""
+        from app.services.opportunity_of_day_service import OpportunityOfDayService
+
+        cached = {**_make_opportunity(), "ai_summary": "No ts.", "related_apps": []}
+
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = _make_cached_row(
+            cached, generated_at=None
+        )
+        # Override the auto-set generated_at with actual None
+        row = db.query.return_value.filter.return_value.first.return_value
+        row.generated_at = None
+
+        svc = OpportunityOfDayService(db)
+        with patch.object(svc, "_generate_and_store", return_value={"app_id": 1}) as mock_gen:
+            svc.get_or_generate()
+            mock_gen.assert_called_once()
+
+    def test_is_stale_returns_true_for_old_timestamp(self):
+        from app.services.opportunity_of_day_service import OpportunityOfDayService
+        old = datetime.now(timezone.utc) - timedelta(hours=5)
+        assert OpportunityOfDayService._is_stale(old, ttl_hours=4) is True
+
+    def test_is_stale_returns_false_for_fresh_timestamp(self):
+        from app.services.opportunity_of_day_service import OpportunityOfDayService
+        fresh = datetime.now(timezone.utc) - timedelta(hours=1)
+        assert OpportunityOfDayService._is_stale(fresh, ttl_hours=4) is False
+
+    def test_is_stale_returns_true_for_none(self):
+        from app.services.opportunity_of_day_service import OpportunityOfDayService
+        assert OpportunityOfDayService._is_stale(None, ttl_hours=4) is True
+
+    def test_is_stale_handles_naive_datetime(self):
+        from app.services.opportunity_of_day_service import OpportunityOfDayService
+        from datetime import datetime
+        naive_old = datetime.utcnow() - timedelta(hours=6)
+        assert OpportunityOfDayService._is_stale(naive_old, ttl_hours=4) is True
+
+
+# ---------------------------------------------------------------------------
+# 32–35. Diversity logic (_select_daily_pick)
+# ---------------------------------------------------------------------------
+
+class TestDiversityLogic:
+
+    def _two_candidates(self):
+        return [
+            _make_opportunity(app_id=1, app_name="TopApp", success_probability=80.0),
+            _make_opportunity(app_id=2, app_name="SecondApp", success_probability=76.0),
+        ]
+
+    def test_avoids_recently_shown_app(self):
+        """If the top candidate was shown recently, pick the next one."""
+        from app.services.opportunity_of_day_service import OpportunityOfDayService
+
+        db = MagicMock()
+        # Recent row: app_id=1 was shown yesterday
+        recent_row = MagicMock()
+        recent_row.full_data = {"app_id": 1}
+        db.query.return_value.filter.return_value.all.return_value = [recent_row]
+
+        svc = OpportunityOfDayService(db)
+        scored = self._two_candidates()
+        result = svc._select_daily_pick(scored, date.today())
+
+        # app_id=1 is recent; pool of fresh = [app_id=2]
+        assert result["app_id"] == 2
+
+    def test_falls_back_to_pool_when_all_are_recent(self):
+        """If all pool candidates were recent, fall back to the full pool (no None)."""
+        from app.services.opportunity_of_day_service import OpportunityOfDayService
+
+        db = MagicMock()
+        recent_rows = [MagicMock(), MagicMock()]
+        recent_rows[0].full_data = {"app_id": 1}
+        recent_rows[1].full_data = {"app_id": 2}
+        db.query.return_value.filter.return_value.all.return_value = recent_rows
+
+        svc = OpportunityOfDayService(db)
+        scored = self._two_candidates()
+        result = svc._select_daily_pick(scored, date.today())
+
+        assert result is not None
+        assert result["app_id"] in (1, 2)
+
+    def test_deterministic_for_same_date(self):
+        """Same date always produces the same pick."""
+        from app.services.opportunity_of_day_service import OpportunityOfDayService
+
+        db = MagicMock()
+        db.query.return_value.filter.return_value.all.return_value = []
+
+        svc = OpportunityOfDayService(db)
+        scored = self._two_candidates()
+        today = date.today()
+
+        result1 = svc._select_daily_pick(scored, today)
+        result2 = svc._select_daily_pick(scored, today)
+        assert result1["app_id"] == result2["app_id"]
+
+    def test_returns_none_for_empty_scored(self):
+        """Empty scored list → None."""
+        from app.services.opportunity_of_day_service import OpportunityOfDayService
+
+        svc = OpportunityOfDayService(MagicMock())
+        assert svc._select_daily_pick([], date.today()) is None
+
+    def test_pool_excludes_candidates_outside_score_threshold(self):
+        """Candidates below 80% of top score are excluded from pool."""
+        from app.services.opportunity_of_day_service import OpportunityOfDayService
+
+        db = MagicMock()
+        db.query.return_value.filter.return_value.all.return_value = []
+
+        svc = OpportunityOfDayService(db)
+        scored = [
+            _make_opportunity(app_id=1, success_probability=100.0),
+            _make_opportunity(app_id=2, success_probability=85.0),   # within 80%
+            _make_opportunity(app_id=3, success_probability=50.0),   # below 80%
+        ]
+        # With no recent history, pool = [app_id=1, app_id=2] (app_id=3 excluded)
+        # Pick is deterministic; whichever it picks, it should NOT be app_id=3
+        result = svc._select_daily_pick(scored, date.today())
+        assert result["app_id"] != 3
+
+
+# ---------------------------------------------------------------------------
+# 36–37. _get_related_apps improvements
 # ---------------------------------------------------------------------------
 
 class TestGetRelatedApps:
@@ -138,15 +320,32 @@ class TestGetRelatedApps:
         svc = OpportunityOfDayService(MagicMock())
         assert svc._get_related_apps(niche="", exclude_app_id=1, limit=8) == []
 
-    def test_returns_empty_when_category_not_found(self):
+    def test_returns_empty_when_no_category_or_primary_category_match(self):
+        """No Category row AND no App.primary_category match → empty list."""
         from app.services.opportunity_of_day_service import OpportunityOfDayService
+        from app.models.models import App, Category
+
         db = MagicMock()
-        db.query.return_value.filter.return_value.first.return_value = None
+        category_q = MagicMock()
+        category_q.filter.return_value.first.return_value = None  # prefix + contains both fail
+
+        app_q = MagicMock()
+        # primary_category fallback also yields no results
+        app_q.filter.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = []
+
+        def side_effect(model):
+            if model is Category:
+                return category_q
+            return app_q
+
+        db.query.side_effect = side_effect
         svc = OpportunityOfDayService(db)
         assert svc._get_related_apps(niche="nonexistent", exclude_app_id=1, limit=8) == []
 
     def test_returns_list_with_required_keys(self):
+        """When category found and apps exist, result contains required keys."""
         from app.services.opportunity_of_day_service import OpportunityOfDayService
+        from app.models.models import App, Category
 
         category = MagicMock()
         category.id = 7
@@ -160,22 +359,25 @@ class TestGetRelatedApps:
         app1.icon_url = "https://example.com/icon.png"
 
         db = MagicMock()
-        db.query.return_value.filter.return_value.first.return_value = category
-        (db.query.return_value
-            .filter.return_value
-            .filter.return_value
-            .order_by.return_value
-            .order_by.return_value
-            .limit.return_value
-            .all.return_value) = [app1]
+        category_q = MagicMock()
+        category_q.filter.return_value.first.return_value = category
 
+        app_q = MagicMock()
+        app_q.filter.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = [app1]
+
+        def side_effect(model):
+            if model is Category:
+                return category_q
+            return app_q
+
+        db.query.side_effect = side_effect
         svc = OpportunityOfDayService(db)
         result = svc._get_related_apps(niche="productivity", exclude_app_id=42, limit=8)
 
-        if result:
-            item = result[0]
-            for key in ("id", "name", "rating", "reviews", "rank"):
-                assert key in item, f"Missing key: {key}"
+        assert len(result) == 1
+        item = result[0]
+        for key in ("id", "name", "rating", "reviews", "rank"):
+            assert key in item, f"Missing key: {key}"
 
     def test_swallows_db_exception(self):
         from app.services.opportunity_of_day_service import OpportunityOfDayService
@@ -185,9 +387,77 @@ class TestGetRelatedApps:
         result = svc._get_related_apps(niche="productivity", exclude_app_id=1, limit=8)
         assert result == []
 
+    def test_returns_apps_without_current_rank(self):
+        """Apps with current_rank=None are included (no hard filter on rank)."""
+        from app.services.opportunity_of_day_service import OpportunityOfDayService
+        from app.models.models import App, Category
+
+        category = MagicMock()
+        category.id = 7
+
+        unranked_app = MagicMock()
+        unranked_app.id = 20
+        unranked_app.name = "Unranked App"
+        unranked_app.current_rating = 4.0
+        unranked_app.current_reviews = 200
+        unranked_app.current_rank = None  # no rank
+        unranked_app.icon_url = None
+
+        db = MagicMock()
+        category_q = MagicMock()
+        category_q.filter.return_value.first.return_value = category
+
+        app_q = MagicMock()
+        app_q.filter.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = [unranked_app]
+
+        def side_effect(model):
+            if model is Category:
+                return category_q
+            return app_q
+
+        db.query.side_effect = side_effect
+        svc = OpportunityOfDayService(db)
+        result = svc._get_related_apps(niche="productivity", exclude_app_id=99, limit=8)
+
+        assert len(result) == 1
+        assert result[0]["id"] == 20
+        assert result[0]["rank"] is None  # included despite no rank
+
+    def test_falls_back_to_primary_category_when_category_not_found(self):
+        """When no Category row is found, query uses App.primary_category."""
+        from app.services.opportunity_of_day_service import OpportunityOfDayService
+        from app.models.models import App, Category
+
+        fallback_app = MagicMock()
+        fallback_app.id = 30
+        fallback_app.name = "Fallback App"
+        fallback_app.current_rating = 3.8
+        fallback_app.current_reviews = 100
+        fallback_app.current_rank = None
+        fallback_app.icon_url = None
+
+        db = MagicMock()
+        category_q = MagicMock()
+        category_q.filter.return_value.first.return_value = None  # no category found
+
+        app_q = MagicMock()
+        app_q.filter.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = [fallback_app]
+
+        def side_effect(model):
+            if model is Category:
+                return category_q
+            return app_q
+
+        db.query.side_effect = side_effect
+        svc = OpportunityOfDayService(db)
+        result = svc._get_related_apps(niche="weather", exclude_app_id=99, limit=8)
+
+        assert len(result) == 1
+        assert result[0]["id"] == 30
+
 
 # ---------------------------------------------------------------------------
-# 8–16. _build_ai_summary
+# 7–16. _build_ai_summary
 # ---------------------------------------------------------------------------
 
 class TestBuildAiSummary:
@@ -349,23 +619,24 @@ class TestGenerateAndStore:
         svc = OpportunityOfDayService(db)
 
         with patch("app.services.opportunity_of_day_service.ScoringEngine") as MockEngine:
-            MockEngine.return_value.generate_opportunity_of_day.return_value = opp
-            with patch.object(svc, "_get_related_apps", return_value=[{"id": 7, "name": "Rival"}]):
-                result = svc._generate_and_store(date.today())
+            MockEngine.return_value.get_all_scored_opportunities.return_value = [opp]
+            with patch.object(svc, "_select_daily_pick", return_value=opp):
+                with patch.object(svc, "_get_related_apps", return_value=[{"id": 7, "name": "Rival"}]):
+                    result = svc._generate_and_store(date.today())
 
         assert result is not None
         assert "ai_summary" in result
         assert "related_apps" in result
         assert result["related_apps"] == [{"id": 7, "name": "Rival"}]
 
-    def test_returns_none_when_engine_returns_none(self):
+    def test_returns_none_when_engine_returns_no_candidates(self):
         from app.services.opportunity_of_day_service import OpportunityOfDayService
 
         db = MagicMock()
         svc = OpportunityOfDayService(db)
 
         with patch("app.services.opportunity_of_day_service.ScoringEngine") as MockEngine:
-            MockEngine.return_value.generate_opportunity_of_day.return_value = None
+            MockEngine.return_value.get_all_scored_opportunities.return_value = []
             result = svc._generate_and_store(date.today())
 
         assert result is None
@@ -379,8 +650,25 @@ class TestGenerateAndStore:
         svc = OpportunityOfDayService(db)
 
         with patch("app.services.opportunity_of_day_service.ScoringEngine") as MockEngine:
-            MockEngine.return_value.generate_opportunity_of_day.return_value = opp
-            with patch.object(svc, "_get_related_apps", return_value=[]):
-                svc._generate_and_store(date.today())
+            MockEngine.return_value.get_all_scored_opportunities.return_value = [opp]
+            with patch.object(svc, "_select_daily_pick", return_value=opp):
+                with patch.object(svc, "_get_related_apps", return_value=[]):
+                    svc._generate_and_store(date.today())
 
         db.commit.assert_called_once()
+
+    def test_returns_none_when_select_daily_pick_returns_none(self):
+        """If _select_daily_pick returns None (e.g. empty pool), _generate_and_store returns None."""
+        from app.services.opportunity_of_day_service import OpportunityOfDayService
+
+        db = MagicMock()
+        svc = OpportunityOfDayService(db)
+        opp = _make_opportunity()
+
+        with patch("app.services.opportunity_of_day_service.ScoringEngine") as MockEngine:
+            MockEngine.return_value.get_all_scored_opportunities.return_value = [opp]
+            with patch.object(svc, "_select_daily_pick", return_value=None):
+                result = svc._generate_and_store(date.today())
+
+        assert result is None
+        db.commit.assert_not_called()

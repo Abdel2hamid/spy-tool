@@ -133,18 +133,22 @@ export function OpportunityOfDayCard({ opportunity }: OpportunityOfDayCardProps)
         )}
 
         {/* Related Apps */}
-        {hasRelatedApps && (
-          <div className="mb-4">
-            <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wide mb-2">
-              Competing Apps in this Niche
-            </p>
+        <div className="mb-4">
+          <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wide mb-2">
+            Competing Apps in this Niche
+          </p>
+          {hasRelatedApps ? (
             <div className="space-y-1.5">
               {opportunity.related_apps!.slice(0, 6).map((app) => (
                 <RelatedAppRow key={app.id} app={app} />
               ))}
             </div>
-          </div>
-        )}
+          ) : (
+            <p className="text-xs text-indigo-300 italic rounded-xl bg-white/10 px-3 py-2">
+              No competitor data available for this niche yet.
+            </p>
+          )}
+        </div>
 
         {/* Footer stats */}
         <div className="mt-4 flex items-center justify-between text-xs text-indigo-300">

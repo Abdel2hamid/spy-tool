@@ -1,11 +1,12 @@
 """
 weekly_opportunities_service.py
 ================================
-Top-5 Opportunities This Week — same-week caching, regenerate on new week.
+Top-5 Opportunities This Week — TTL-based caching (12-hour refresh within the same week).
 
 Caching strategy:
   - Week key = Monday's date (ISO week start).
-  - If 5 rows already exist for this week_start_date, return them immediately.
+  - If 5 rows already exist for this week_start_date AND none is older than
+    _WEEKLY_TTL_HOURS, return them immediately (cache hit).
   - Otherwise call _generate_and_store() which:
       1. Fetches all scored candidates from ScoringEngine.get_all_scored_opportunities().
       2. Applies the weekly scoring formula:
@@ -18,11 +19,10 @@ Caching strategy:
       5. For each enriches with related_apps + ai_summary.
       6. Upserts all 5 rows via pg_insert ON CONFLICT DO UPDATE.
 
-Related apps: reuses OpportunityOfDayService._get_related_apps() (same niche,
-prefer weak competitors).
+Related apps: improved _get_related_apps() — no current_rank requirement,
+primary_category fallback when Category lookup fails.
 
-AI summary: new _build_weekly_ai_summary() that frames the opportunity
-in a "this week" context.
+AI summary: _build_weekly_ai_summary() frames the opportunity in a "this week" context.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from typing import Optional
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.models.models import Category, WeeklyOpportunity
+from app.models.models import App, Category, WeeklyOpportunity
 from app.scoring.engine import ScoringEngine
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,9 @@ logger = logging.getLogger(__name__)
 _W_TREND = 0.5
 _W_COMPETITION = 0.3
 _W_SUCCESS = 0.2
+
+# Cache TTL: regenerate within the same week if rows are older than this
+_WEEKLY_TTL_HOURS = 12
 
 
 def _week_start(d: date) -> date:
@@ -70,7 +73,8 @@ class WeeklyOpportunitiesService:
     def get_or_generate(self) -> list[dict]:
         """
         Return this week's top-5 opportunities.
-        Reads from DB if already computed for this ISO week; generates + stores otherwise.
+        Reads from DB if already computed within _WEEKLY_TTL_HOURS for this ISO week;
+        generates + stores otherwise.
         """
         week_start = _week_start(date.today())
 
@@ -81,8 +85,26 @@ class WeeklyOpportunitiesService:
             .all()
         )
         if len(existing) >= 5:
-            logger.debug("[weekly-opp] cache hit for week %s", week_start)
-            return [row.full_data for row in existing if row.full_data]
+            # Check TTL against the oldest generated_at among the 5 rows
+            stale = True
+            try:
+                gen_ats = [
+                    r.generated_at for r in existing
+                    if r.generated_at is not None
+                ]
+                if gen_ats:
+                    oldest = min(gen_ats)
+                    if oldest.tzinfo is None:
+                        oldest = oldest.replace(tzinfo=timezone.utc)
+                    age_hours = (datetime.now(timezone.utc) - oldest).total_seconds() / 3600
+                    stale = age_hours >= _WEEKLY_TTL_HOURS
+            except (TypeError, AttributeError):
+                stale = True  # treat as stale if timestamps are invalid
+
+            if not stale:
+                logger.debug("[weekly-opp] cache hit for week %s", week_start)
+                return [row.full_data for row in existing if row.full_data]
+            logger.info("[weekly-opp] cache stale for week %s, regenerating", week_start)
 
         logger.info("[weekly-opp] generating for week %s", week_start)
         return self._generate_and_store(week_start)
@@ -197,6 +219,7 @@ class WeeklyOpportunitiesService:
 
     # ------------------------------------------------------------------
     # Related apps: same niche, prefer weaker competitors
+    # No current_rank requirement — falls back to primary_category text match
     # ------------------------------------------------------------------
 
     def _get_related_apps(
@@ -205,28 +228,52 @@ class WeeklyOpportunitiesService:
         exclude_app_id: Optional[int],
         limit: int = 6,
     ) -> list:
+        """
+        Return up to `limit` apps in the same category as the opportunity.
+
+        Lookup strategy:
+          1. Category.name prefix match (case-insensitive)
+          2. Category.name contains match (if prefix fails)
+          3. App.primary_category text match (if no Category row found)
+
+        Ranking: ranked apps first (nullslast), then low rating, then low reviews.
+        Does NOT require current_rank to be non-null.
+        """
         if not niche:
             return []
         try:
-            from app.models.models import App
+            # Step 1: prefix match
             category = (
                 self.db.query(Category)
                 .filter(Category.name.ilike(f"{niche}%"))
                 .first()
             )
+            # Step 2: broader contains match
             if not category:
-                return []
+                category = (
+                    self.db.query(Category)
+                    .filter(Category.name.ilike(f"%{niche}%"))
+                    .first()
+                )
 
-            query = (
-                self.db.query(App)
-                .filter(App.category_id == category.id, App.current_rank.isnot(None))
-            )
+            # Step 3: build base query
+            if category:
+                query = self.db.query(App).filter(App.category_id == category.id)
+            else:
+                query = self.db.query(App).filter(
+                    App.primary_category.ilike(f"%{niche}%")
+                )
+
             if exclude_app_id:
                 query = query.filter(App.id != exclude_app_id)
 
             apps = (
                 query
-                .order_by(App.current_rating.asc().nullslast(), App.current_reviews.asc().nullslast())
+                .order_by(
+                    App.current_rank.asc().nullslast(),
+                    App.current_rating.asc().nullslast(),
+                    App.current_reviews.asc().nullslast(),
+                )
                 .limit(limit)
                 .all()
             )

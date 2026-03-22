@@ -36,7 +36,7 @@ Verifies:
 
 import sys
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -80,10 +80,14 @@ def _make_five_candidates():
             for i, n in enumerate(niches)]
 
 
-def _make_weekly_row(rank: int, full_data: dict):
+def _make_weekly_row(rank: int, full_data: dict, generated_at=None):
+    """Build a mock WeeklyOpportunity row with a valid generated_at (fresh by default)."""
     row = MagicMock()
     row.rank = rank
     row.full_data = full_data
+    row.generated_at = generated_at if generated_at is not None else (
+        datetime.now(timezone.utc) - timedelta(minutes=30)
+    )
     return row
 
 
@@ -539,3 +543,164 @@ class TestRankingOrder:
 
         rank1 = next(item for item in result if item["rank"] == 1)
         assert rank1["app_id"] == 3  # app_id=3 has highest opp score
+
+
+# ---------------------------------------------------------------------------
+# [NEW] 29–32. Weekly cache TTL refresh
+# ---------------------------------------------------------------------------
+
+class TestWeeklyCacheTTL:
+
+    def _five_rows(self, generated_at=None):
+        return [_make_weekly_row(i, {"rank": i}, generated_at=generated_at) for i in range(1, 6)]
+
+    def test_fresh_cache_not_regenerated(self):
+        """5 rows younger than TTL → return cached list without regenerating."""
+        from app.services.weekly_opportunities_service import WeeklyOpportunitiesService, _WEEKLY_TTL_HOURS
+
+        fresh_time = datetime.now(timezone.utc) - timedelta(hours=_WEEKLY_TTL_HOURS - 1)
+        rows = self._five_rows(generated_at=fresh_time)
+
+        db = MagicMock()
+        (db.query.return_value.filter.return_value.order_by.return_value.all.return_value) = rows
+
+        svc = WeeklyOpportunitiesService(db)
+        with patch.object(svc, "_generate_and_store") as mock_gen:
+            result = svc.get_or_generate()
+            mock_gen.assert_not_called()
+
+        assert len(result) == 5
+
+    def test_stale_cache_triggers_regeneration(self):
+        """5 rows older than TTL → must regenerate even within the same week."""
+        from app.services.weekly_opportunities_service import WeeklyOpportunitiesService, _WEEKLY_TTL_HOURS
+
+        stale_time = datetime.now(timezone.utc) - timedelta(hours=_WEEKLY_TTL_HOURS + 1)
+        rows = self._five_rows(generated_at=stale_time)
+
+        db = MagicMock()
+        (db.query.return_value.filter.return_value.order_by.return_value.all.return_value) = rows
+
+        svc = WeeklyOpportunitiesService(db)
+        with patch.object(svc, "_generate_and_store", return_value=[{"rank": 1}]) as mock_gen:
+            svc.get_or_generate()
+            mock_gen.assert_called_once()
+
+    def test_none_generated_at_treated_as_stale(self):
+        """Rows with generated_at=None → treated as stale, must regenerate."""
+        from app.services.weekly_opportunities_service import WeeklyOpportunitiesService
+
+        rows = self._five_rows(generated_at=None)
+        # Override to actual None (not the default fresh value)
+        for r in rows:
+            r.generated_at = None
+
+        db = MagicMock()
+        (db.query.return_value.filter.return_value.order_by.return_value.all.return_value) = rows
+
+        svc = WeeklyOpportunitiesService(db)
+        with patch.object(svc, "_generate_and_store", return_value=[]) as mock_gen:
+            svc.get_or_generate()
+            mock_gen.assert_called_once()
+
+    def test_fewer_than_5_rows_always_regenerates(self):
+        """< 5 rows → always regenerate regardless of TTL."""
+        from app.services.weekly_opportunities_service import WeeklyOpportunitiesService
+
+        fresh_time = datetime.now(timezone.utc) - timedelta(minutes=5)
+        rows = [_make_weekly_row(i, {"rank": i}, generated_at=fresh_time) for i in range(1, 4)]
+
+        db = MagicMock()
+        (db.query.return_value.filter.return_value.order_by.return_value.all.return_value) = rows
+
+        svc = WeeklyOpportunitiesService(db)
+        with patch.object(svc, "_generate_and_store", return_value=[]) as mock_gen:
+            svc.get_or_generate()
+            mock_gen.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# [NEW] 33–36. _get_related_apps improvements (weekly)
+# ---------------------------------------------------------------------------
+
+class TestWeeklyGetRelatedApps:
+
+    def test_returns_apps_without_current_rank(self):
+        """Apps with current_rank=None are included (no hard filter on rank)."""
+        from app.services.weekly_opportunities_service import WeeklyOpportunitiesService
+        from app.models.models import App, Category
+
+        category = MagicMock()
+        category.id = 5
+
+        unranked_app = MagicMock()
+        unranked_app.id = 77
+        unranked_app.name = "Unranked Competitor"
+        unranked_app.current_rating = 3.5
+        unranked_app.current_reviews = 80
+        unranked_app.current_rank = None
+        unranked_app.icon_url = None
+
+        db = MagicMock()
+        category_q = MagicMock()
+        category_q.filter.return_value.first.return_value = category
+
+        app_q = MagicMock()
+        app_q.filter.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = [unranked_app]
+
+        def side_effect(model):
+            if model is Category:
+                return category_q
+            return app_q
+
+        db.query.side_effect = side_effect
+        svc = WeeklyOpportunitiesService(db)
+        result = svc._get_related_apps(niche="finance", exclude_app_id=1, limit=6)
+
+        assert len(result) == 1
+        assert result[0]["id"] == 77
+        assert result[0]["rank"] is None
+
+    def test_falls_back_to_primary_category_when_category_not_found(self):
+        """When no Category row matches, uses App.primary_category text filter."""
+        from app.services.weekly_opportunities_service import WeeklyOpportunitiesService
+        from app.models.models import App, Category
+
+        fallback_app = MagicMock()
+        fallback_app.id = 88
+        fallback_app.name = "Fallback Weekly App"
+        fallback_app.current_rating = 4.1
+        fallback_app.current_reviews = 300
+        fallback_app.current_rank = None
+        fallback_app.icon_url = None
+
+        db = MagicMock()
+        category_q = MagicMock()
+        category_q.filter.return_value.first.return_value = None  # no category found
+
+        app_q = MagicMock()
+        app_q.filter.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = [fallback_app]
+
+        def side_effect(model):
+            if model is Category:
+                return category_q
+            return app_q
+
+        db.query.side_effect = side_effect
+        svc = WeeklyOpportunitiesService(db)
+        result = svc._get_related_apps(niche="weather", exclude_app_id=1, limit=6)
+
+        assert len(result) == 1
+        assert result[0]["id"] == 88
+
+    def test_returns_empty_for_empty_niche(self):
+        from app.services.weekly_opportunities_service import WeeklyOpportunitiesService
+        svc = WeeklyOpportunitiesService(MagicMock())
+        assert svc._get_related_apps(niche="", exclude_app_id=1, limit=6) == []
+
+    def test_swallows_db_exception(self):
+        from app.services.weekly_opportunities_service import WeeklyOpportunitiesService
+        db = MagicMock()
+        db.query.side_effect = Exception("DB error")
+        svc = WeeklyOpportunitiesService(db)
+        assert svc._get_related_apps(niche="productivity", exclude_app_id=1, limit=6) == []

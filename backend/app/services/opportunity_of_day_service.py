@@ -1,23 +1,31 @@
 """
 opportunity_of_day_service.py
 ==============================
-get_or_generate() — same-day caching pattern:
+get_or_generate() — TTL-based caching pattern (4-hour refresh):
   1. Check daily_opportunities table for today's date.
-  2. If found, return immediately (read-only, <1ms).
-  3. If not found, run _generate_and_store() which:
-     a. Calls ScoringEngine.generate_opportunity_of_day() for the best app.
-     b. Enriches with _get_related_apps() (5–10 same-niche apps, weak competitors first).
-     c. Generates _build_ai_summary() (rule-based, no LLM).
-     d. Persists to daily_opportunities via pg_insert ON CONFLICT DO UPDATE.
+  2. If found AND generated_at is within _DAILY_TTL_HOURS, return immediately (cache hit).
+  3. If not found OR stale, run _generate_and_store() which:
+     a. Calls ScoringEngine.get_all_scored_opportunities(n=10) for the candidate pool.
+     b. Uses _select_daily_pick() for controlled diversity (avoids repeating recent apps).
+     c. Enriches with _get_related_apps() (same-niche apps; no current_rank requirement).
+     d. Generates _build_ai_summary() (rule-based, no LLM).
+     e. Persists to daily_opportunities via pg_insert ON CONFLICT DO UPDATE.
   4. Returns the enriched dict.
 
 Also writes to DailyReport (legacy) so existing endpoint is unaffected.
+
+Diversity logic:
+  - Pool = top 5 candidates within 80% of the top success_probability score.
+  - Exclude apps shown in the last 7 days (from daily_opportunities history).
+  - Use day-ordinal % pool_size for deterministic rotation (same result within a day,
+    different across days).
+  - Falls back to full pool if all candidates were recently shown.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -27,6 +35,9 @@ from app.models.models import App, AppBlowingUpScore, Category, DailyOpportunity
 from app.scoring.engine import ScoringEngine
 
 logger = logging.getLogger(__name__)
+
+# Cache TTL: regenerate if the stored row is older than this many hours
+_DAILY_TTL_HOURS = 4
 
 
 class OpportunityOfDayService:
@@ -40,24 +51,23 @@ class OpportunityOfDayService:
     def get_or_generate(self) -> Optional[dict]:
         """
         Return today's Opportunity of the Day.
-        Reads from DB if already computed today; otherwise generates, stores, and returns.
+        Reads from DB if computed within _DAILY_TTL_HOURS; otherwise regenerates.
         """
         today = date.today()
 
-        # Fast path: already computed today
         existing = (
             self.db.query(DailyOpportunity)
             .filter(DailyOpportunity.date == today)
             .first()
         )
         if existing and existing.full_data:
-            logger.debug("[opp-of-day] cache hit for %s", today)
-            return existing.full_data
+            if not self._is_stale(existing.generated_at, _DAILY_TTL_HOURS):
+                logger.debug("[opp-of-day] cache hit for %s", today)
+                return existing.full_data
+            logger.info("[opp-of-day] cache stale for %s, regenerating", today)
 
-        # Slow path: generate and persist
         logger.info("[opp-of-day] generating for %s", today)
-        result = self._generate_and_store(today)
-        return result
+        return self._generate_and_store(today)
 
     # ------------------------------------------------------------------
     # Internal: generate + persist
@@ -65,9 +75,14 @@ class OpportunityOfDayService:
 
     def _generate_and_store(self, today: date) -> Optional[dict]:
         engine = ScoringEngine(self.db)
-        opportunity = engine.generate_opportunity_of_day()
+        # Fetch top-N candidates for diversity selection
+        scored = engine.get_all_scored_opportunities(n=10)
+        if not scored:
+            logger.warning("[opp-of-day] ScoringEngine returned no candidates")
+            return None
+
+        opportunity = self._select_daily_pick(scored, today)
         if not opportunity:
-            logger.warning("[opp-of-day] ScoringEngine returned no opportunity")
             return None
 
         related_apps = self._get_related_apps(
@@ -127,7 +142,52 @@ class OpportunityOfDayService:
         return full_data
 
     # ------------------------------------------------------------------
+    # Diversity: rotate among top candidates, avoid repeating recent picks
+    # ------------------------------------------------------------------
+
+    def _select_daily_pick(self, scored: list, today: date) -> Optional[dict]:
+        """
+        Pick today's opportunity with controlled diversity.
+
+        Pool = up to 5 candidates within 80% of the top success_probability score.
+        - Exclude apps shown in daily_opportunities over the last 7 days.
+        - If all pool candidates were recently shown, fall back to the full pool.
+        - Use today.toordinal() % pool_size as a deterministic index so the same
+          day always returns the same pick, but different days rotate through the pool.
+        """
+        if not scored:
+            return None
+
+        # Build pool: candidates within 80% of the top score, capped at 5
+        top_score = scored[0]["success_probability"]
+        min_score = top_score * 0.80
+        pool = [c for c in scored[:10] if c["success_probability"] >= min_score][:5]
+
+        # Fetch recent history to avoid repetition
+        cutoff = today - timedelta(days=7)
+        try:
+            recent_rows = (
+                self.db.query(DailyOpportunity)
+                .filter(DailyOpportunity.date >= cutoff, DailyOpportunity.date < today)
+                .all()
+            )
+            recent_app_ids = {
+                row.full_data["app_id"]
+                for row in recent_rows
+                if row.full_data and row.full_data.get("app_id")
+            }
+        except Exception:
+            recent_app_ids = set()
+
+        fresh = [c for c in pool if c["app_id"] not in recent_app_ids]
+        candidates = fresh if fresh else pool
+
+        idx = today.toordinal() % len(candidates)
+        return candidates[idx]
+
+    # ------------------------------------------------------------------
     # Related apps: same niche, prefer weaker competitors
+    # No current_rank requirement — fall back to primary_category if needed
     # ------------------------------------------------------------------
 
     def _get_related_apps(
@@ -138,39 +198,50 @@ class OpportunityOfDayService:
     ) -> list:
         """
         Return up to `limit` apps in the same category as the opportunity app.
-        Preference order:
-          1. Apps with low rating (< 3.8) — quality gap
-          2. Apps with low review count — early-mover opportunity
-          3. Apps currently ranked (has chart presence)
-        Excludes the opportunity app itself.
+
+        Lookup strategy:
+          1. Category.name prefix match (case-insensitive)
+          2. Category.name contains match (if prefix fails)
+          3. App.primary_category text match (if no Category row found)
+
+        Ranking: ranked apps first (nullslast), then low rating, then low review count.
+        Does NOT require current_rank to be non-null.
         """
         if not niche:
             return []
 
         try:
-            # Find category by name (case-insensitive prefix match)
+            # Step 1: prefix match
             category = (
                 self.db.query(Category)
                 .filter(Category.name.ilike(f"{niche}%"))
                 .first()
             )
+            # Step 2: broader contains match
             if not category:
-                return []
-
-            query = (
-                self.db.query(App)
-                .filter(
-                    App.category_id == category.id,
-                    App.current_rank.isnot(None),
+                category = (
+                    self.db.query(Category)
+                    .filter(Category.name.ilike(f"%{niche}%"))
+                    .first()
                 )
-            )
+
+            # Step 3: build base query
+            if category:
+                query = self.db.query(App).filter(App.category_id == category.id)
+            else:
+                # Fallback: match against stored primary_category text
+                query = self.db.query(App).filter(
+                    App.primary_category.ilike(f"%{niche}%")
+                )
+
             if exclude_app_id:
                 query = query.filter(App.id != exclude_app_id)
 
-            # Sort: low rating first (weaker competitors), then by low review count
+            # Ranked apps first (nullslast), then weak competitors
             apps = (
                 query
                 .order_by(
+                    App.current_rank.asc().nullslast(),
                     App.current_rating.asc().nullslast(),
                     App.current_reviews.asc().nullslast(),
                 )
@@ -193,6 +264,23 @@ class OpportunityOfDayService:
         except Exception as exc:
             logger.warning("[opp-of-day] _get_related_apps error: %s", exc)
             return []
+
+    # ------------------------------------------------------------------
+    # Cache freshness check
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_stale(generated_at: Optional[datetime], ttl_hours: float) -> bool:
+        """Return True if generated_at is None, unparseable, or older than ttl_hours."""
+        if generated_at is None:
+            return True
+        try:
+            if generated_at.tzinfo is None:
+                generated_at = generated_at.replace(tzinfo=timezone.utc)
+            age_hours = (datetime.now(timezone.utc) - generated_at).total_seconds() / 3600
+            return age_hours >= ttl_hours
+        except (TypeError, AttributeError):
+            return True  # treat as stale if timestamp is invalid
 
     # ------------------------------------------------------------------
     # Rule-based AI summary (no LLM dependency)

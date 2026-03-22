@@ -148,18 +148,22 @@ function OpportunityRow({ item }: { item: WeeklyOpportunityItem }) {
           )}
 
           {/* Related apps */}
-          {hasRelated && (
-            <div>
-              <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wide mb-2">
-                Competitors in this niche
-              </p>
+          <div>
+            <p className="text-xs font-semibold text-indigo-200 uppercase tracking-wide mb-2">
+              Competitors in this niche
+            </p>
+            {hasRelated ? (
               <div className="space-y-1">
                 {item.related_apps!.slice(0, 5).map((app) => (
                   <RelatedAppRow key={app.id} app={app} />
                 ))}
               </div>
-            </div>
-          )}
+            ) : (
+              <p className="text-xs text-white/40 italic">
+                No competitor data for this niche yet.
+              </p>
+            )}
+          </div>
         </div>
       )}
     </div>
