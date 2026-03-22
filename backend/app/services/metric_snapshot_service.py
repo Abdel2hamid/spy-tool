@@ -119,11 +119,15 @@ class MetricSnapshotService:
         for app in apps:
             try:
                 self.compute_for_app(app)
+                self.db.commit()
                 count += 1
             except Exception as exc:
                 logger.warning(f"[metric_snapshot] Failed for app {app.app_id}: {exc}")
+                try:
+                    self.db.rollback()
+                except Exception:
+                    pass
 
-        self.db.commit()
         self._prune_old_snapshots()
         logger.info(f"[metric_snapshot] Wrote {count} snapshots")
         return count

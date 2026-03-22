@@ -333,7 +333,10 @@
       "Bash(grep -n \"useEffect\\\\|fetch\\\\|getApp\\\\|getMarket\\\\|getFeature\\\\|getKeyword\\\\|getRank\" /Users/abdelhamid/appstore-spy-tool/frontend/src/app/apps/\\\\[id\\\\]/page.tsx | head -50)",
       "Bash(grep -n \"function\\\\|export.*function\\\\|const.*=.*\\(\" /Users/abdelhamid/appstore-spy-tool/frontend/src/app/apps/\\\\[id\\\\]/page.tsx | grep -E \"function\\\\s+\\\\w+Tab|function\\\\s+\\\\w+Card|export\\\\s+default\" | head -40)",
       "Bash(cd /Users/abdelhamid/appstore-spy-tool/frontend && npx tsc --noEmit --project tsconfig.json 2>&1 | head -30)",
-      "Bash(cd /Users/abdelhamid/appstore-spy-tool/frontend && npx tsc --noEmit --project tsconfig.json 2>&1 | grep \"AppsClient\")"
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/frontend && npx tsc --noEmit --project tsconfig.json 2>&1 | grep \"AppsClient\")",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python -m pytest tests/test_growth_intelligence.py -q 2>&1 | tail -5)",
+      "Bash(python3 -m pytest tests/test_growth_intelligence.py -q 2>&1 | tail -5)",
+      "Bash(python3 -m pytest tests/test_growth_intelligence.py::TestMetricSnapshotService::test_compute_all_calls_commit -v 2>&1 | tail -20)"
     ]
   }
 }

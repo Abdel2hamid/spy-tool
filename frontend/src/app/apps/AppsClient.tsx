@@ -8,6 +8,7 @@ import { AppListItem, Category, AppFilters, getFilteredApps, searchAppsImport, l
 import {
   Search, AppWindow, Star, SlidersHorizontal, X,
   RotateCcw, ChevronUp, ChevronDown, Loader2, Plus, Globe,
+  MessageCircle, Download,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { fmtNum, fmtRev, confidenceLabel, CONFIDENCE_BADGE, getDailyDownloads } from '@/lib/estimate-format';
@@ -557,9 +558,13 @@ export default function AppsClient() {
                       </div>
                       {app.current_reviews != null && (
                         <div className="flex items-center gap-1.5 flex-wrap text-xs text-gray-500 dark:text-gray-400">
-                          <span>{app.current_reviews.toLocaleString()} reviews</span>
+                          <span className="flex items-center gap-0.5">
+                            <MessageCircle className="w-3 h-3" />
+                            {app.current_reviews.toLocaleString()} reviews
+                          </span>
                           <span>•</span>
-                          <span>
+                          <span className="flex items-center gap-0.5">
+                            <Download className="w-3 h-3" />
                             {daily != null ? `${Math.max(1, Math.round(daily))}/day` : '—/day'}
                           </span>
                         </div>

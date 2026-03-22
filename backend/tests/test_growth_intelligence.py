@@ -222,11 +222,13 @@ class TestMetricSnapshotService:
         assert snap.source_signals["review_count"] == 1234
         assert snap.source_signals["current_rank"] == 15
 
-    def test_compute_all_calls_commit(self):
+    def test_compute_all_commits_per_app(self):
         from app.services.metric_snapshot_service import MetricSnapshotService
         db = _make_db()
-        db.query.return_value.all.return_value = []
-        with patch.object(MetricSnapshotService, "_prune_old_snapshots"):
+        mock_app = _make_app()
+        db.query.return_value.all.return_value = [mock_app]
+        with patch.object(MetricSnapshotService, "compute_for_app"), \
+             patch.object(MetricSnapshotService, "_prune_old_snapshots"):
             svc = MetricSnapshotService(db)
             svc.compute_all()
         db.commit.assert_called()
