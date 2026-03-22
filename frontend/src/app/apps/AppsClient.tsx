@@ -10,7 +10,7 @@ import {
   RotateCcw, ChevronUp, ChevronDown, Loader2, Plus, Globe,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { fmtNum, fmtRev, confidenceLabel, CONFIDENCE_BADGE } from '@/lib/estimate-format';
+import { fmtNum, fmtRev, confidenceLabel, CONFIDENCE_BADGE, getDailyDownloads } from '@/lib/estimate-format';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
 
@@ -432,7 +432,9 @@ export default function AppsClient() {
         ) : apps.length > 0 ? (
           <>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {apps.map(app => (
+              {apps.map(app => {
+                const daily = getDailyDownloads(app);
+                return (
                 <Link key={app.id} href={`/apps/${app.id}`}>
                   <div className="group cursor-pointer rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition-all duration-200 hover:border-indigo-200 hover:shadow-md dark:border-gray-800 dark:bg-gray-900">
                     <div className="flex items-start gap-3">
@@ -481,17 +483,7 @@ export default function AppsClient() {
                           <span>{app.current_reviews.toLocaleString()} reviews</span>
                           <span>•</span>
                           <span>
-                            {(() => {
-                              const min = app.estimated_installs_min;
-                              const max = app.estimated_installs_max;
-                              const daily =
-                                min != null && max != null
-                                  ? (min + max) / 2 / 30
-                                  : min != null
-                                  ? min / 30
-                                  : null;
-                              return daily != null ? `${Math.round(daily)}/day` : '—/day';
-                            })()}
+                            {daily != null ? `${Math.max(1, Math.round(daily))}/day` : '—/day'}
                           </span>
                         </div>
                       )}
@@ -529,7 +521,8 @@ export default function AppsClient() {
                     )}
                   </div>
                 </Link>
-              ))}
+                );
+              })}
             </div>
 
             {/* ── Pagination ───────────────────────────────────────────── */}

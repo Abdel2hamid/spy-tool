@@ -41,6 +41,17 @@ export function confidenceLabel(score: number | null | undefined): 'high' | 'med
   return 'low';
 }
 
+/** Compute daily downloads midpoint from monthly range columns. Returns null when no data. */
+export function getDailyDownloads(
+  app: { estimated_installs_min?: number | null; estimated_installs_max?: number | null },
+): number | null {
+  const min = app.estimated_installs_min ?? null;
+  const max = app.estimated_installs_max ?? null;
+  if (min != null && max != null) return (min + max) / 2 / 30;
+  if (min != null) return min / 30;
+  return null;
+}
+
 /** Tailwind class-name strings for a given confidence label. */
 export const CONFIDENCE_BADGE: Record<'high' | 'medium' | 'low', string> = {
   high:   'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400',
