@@ -317,7 +317,10 @@
       "Bash(python3 -m pytest tests/test_weekly_opportunities.py -v 2>&1 | tail -20)",
       "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python -m pytest tests/test_opportunity_of_day.py tests/test_weekly_opportunities.py -v 2>&1 | tail -80)",
       "Bash(python3 -m pytest tests/test_opportunity_of_day.py tests/test_weekly_opportunities.py -v 2>&1 | tail -100)",
-      "Bash(python3 -m pytest --tb=no -q 2>&1 | tail -10)"
+      "Bash(python3 -m pytest --tb=no -q 2>&1 | tail -10)",
+      "Bash(python -m pytest tests/test_download_estimator.py -v 2>&1 | tail -60)",
+      "Bash(python3 -m pytest tests/test_download_estimator.py -v 2>&1 | tail -70)",
+      "Bash(python3 -m pytest tests/test_download_estimator.py -q 2>&1 | tail -5)"
     ]
   }
 }

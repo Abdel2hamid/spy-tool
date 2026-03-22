@@ -477,9 +477,23 @@ export default function AppsClient() {
                         )}
                       </div>
                       {app.current_reviews != null && (
-                        <span className="text-xs text-gray-500 dark:text-gray-400">
-                          {app.current_reviews.toLocaleString()} reviews
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap text-xs text-gray-500 dark:text-gray-400">
+                          <span>{app.current_reviews.toLocaleString()} reviews</span>
+                          <span>•</span>
+                          <span>
+                            {(() => {
+                              const min = app.estimated_installs_min;
+                              const max = app.estimated_installs_max;
+                              const daily =
+                                min != null && max != null
+                                  ? (min + max) / 2 / 30
+                                  : min != null
+                                  ? min / 30
+                                  : null;
+                              return daily != null ? `${Math.round(daily)}/day` : '—/day';
+                            })()}
+                          </span>
+                        </div>
                       )}
                     </div>
                     {(app.estimated_installs_min != null || app.estimated_revenue_monthly_min != null) && (

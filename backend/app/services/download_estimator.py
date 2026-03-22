@@ -92,6 +92,14 @@ _MAX_DAILY_BY_CATEGORY: Dict[str, int] = {
 }
 _MAX_REVIEW_VELOCITY = 500.0  # reviews/day ceiling (anti-spam)
 
+# Shrinkage / conservative-baseline constants
+_VISIBILITY_FOOTPRINT_SCALE = 1.5      # daily downloads per unit of keyword footprint (no base boost)
+_IR_SCALING_REVIEWS = 100              # review_count where IR ratio reaches full strength
+_MIN_BLEND_WEIGHT_WITH_RANK = 0.35     # minimum shrinkage blend when a chart rank is available
+_FLOOR_WITH_RANK = 5.0                 # minimum daily downloads when app has a chart rank
+_FLOOR_NO_RANK = 1.0                   # minimum daily downloads when app has no chart rank
+_RANK_BASELINE_FRACTION = 0.30         # fraction of lo_band used as conservative ranked baseline
+
 
 def _get_ir_ratio(category: Optional[str]) -> float:
     if not category:
@@ -184,30 +192,43 @@ class DownloadEstimator:
         weights = self._compute_weights(signals)
 
         # Weighted blend of the three additive layers
-        daily_base = (
+        daily_raw = (
             weights["rank"] * l1
             + weights["review"] * l2
             + weights["visibility"] * l3
         )
 
         # Momentum as a multiplicative adjustment
-        daily_base = daily_base * (1.0 + l4)
+        daily_raw = daily_raw * (1.0 + l4)
 
         # Apply calibration factor
         category = signals.get("category", "")
         calib = get_calibration(category)
-        daily_base *= calib["rank_curve_factor"]
+        daily_raw *= calib["rank_curve_factor"]
 
         # Anti-manipulation cap
         max_daily = _max_plausible_daily(category)
-        daily_base = min(daily_base, max_daily)
+        daily_raw = min(daily_raw, max_daily)
 
-        # Floor: at least 10 downloads/day
-        daily_base = max(daily_base, 10.0)
-
-        # Confidence and uncertainty
+        # --- Confidence-weighted shrinkage ---
+        # Confidence is computed BEFORE the final estimate so it numerically affects it.
+        # Low confidence pulls the estimate toward a conservative baseline rather than
+        # letting weak signals produce large numbers.
         confidence_result = self._confidence.compute(signals)
         conf_score = confidence_result["confidence_score"]
+
+        has_rank = signals.get("has_rank", False)
+        blend_weight = math.sqrt(conf_score)
+        if has_rank:
+            blend_weight = max(blend_weight, _MIN_BLEND_WEIGHT_WITH_RANK)
+
+        conservative = self._conservative_daily_baseline(signals)
+        daily_base = blend_weight * daily_raw + (1.0 - blend_weight) * conservative
+
+        # Dynamic floor: ranked apps get a higher floor (more reliable signal)
+        floor = _FLOOR_WITH_RANK if has_rank else _FLOOR_NO_RANK
+        daily_base = max(daily_base, floor)
+
         uncertainty = self._confidence._uncertainty_factor(conf_score, signals)
 
         daily_rounded = round(daily_base)
@@ -230,7 +251,7 @@ class DownloadEstimator:
                 "weights_used": weights,
                 "confidence_factors": confidence_result["factors"],
             },
-            "estimation_notes": self._build_notes(signals, confidence_result),
+            "estimation_notes": self._build_notes(signals, confidence_result, blend_weight),
             # Revenue fields — populated externally by RevenueEstimator via routes.py
             "estimated_revenue_monthly": None,
             "revenue_range_low": None,
@@ -380,11 +401,17 @@ class DownloadEstimator:
         calib = get_calibration(category)
         review_factor = calib.get("review_ratio_factor", 1.0)
 
-        # velocity (reviews/day) × IR ratio × calibration = daily downloads
-        return velocity * ir_ratio * review_factor
+        # Scale IR ratio by total review count: apps with very few reviews produce
+        # noisy velocity signals — a single review/month should not extrapolate to
+        # hundreds of daily downloads.
+        review_count = signals.get("review_count", 0)
+        review_scale = min(1.0, math.log(review_count + 1) / math.log(_IR_SCALING_REVIEWS + 1))
+
+        # velocity (reviews/day) × IR ratio × calibration × review_scale = daily downloads
+        return velocity * ir_ratio * review_factor * review_scale
 
     def _layer3_visibility(self, signals: dict) -> float:
-        """Keyword visibility → organic discovery floor."""
+        """Keyword visibility → organic discovery estimate."""
         keyword_count = signals.get("keyword_count", 0)
         avg_traffic = signals.get("avg_traffic_score", 0.0)
 
@@ -392,12 +419,11 @@ class DownloadEstimator:
             return 0.0
 
         # Organic footprint = keyword_count × avg_traffic_score / 100
-        # avg_traffic is typically 0–100 (heuristic score)
         footprint = keyword_count * avg_traffic / 100.0
 
-        # Each unit of footprint ≈ 1.5 daily organic downloads
-        base = 100.0 + footprint * 1.5
-        return base
+        # Each unit of footprint ≈ 1.5 daily organic downloads.
+        # No additive base — zero footprint should produce zero output.
+        return footprint * _VISIBILITY_FOOTPRINT_SCALE
 
     def _layer4_momentum(self, signals: dict) -> float:
         """
@@ -459,7 +485,27 @@ class DownloadEstimator:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _build_notes(self, signals: dict, confidence: dict) -> str:
+    def _conservative_daily_baseline(self, signals: dict) -> float:
+        """
+        Conservative daily download baseline used for shrinkage.
+
+        For ranked apps: fraction of the rank-curve lower band (so the baseline
+        is anchored to real App Store data for that position).
+        For unranked apps: log-scaled from total review count (more reviews = more
+        evidence of actual usage, but grows slowly to stay conservative).
+        """
+        has_rank = signals.get("has_rank", False)
+        review_count = signals.get("review_count", 0)
+
+        if has_rank:
+            rank = signals.get("rank")
+            category = signals.get("category", "")
+            lo, _ = interpolate_rank_downloads(rank, category)
+            return max(lo * _RANK_BASELINE_FRACTION, _FLOOR_WITH_RANK)
+        else:
+            return min(0.5 + math.log(review_count + 1) * 0.8, 5.0)
+
+    def _build_notes(self, signals: dict, confidence: dict, blend_weight: float = 1.0) -> str:
         """Human-readable explanation of key estimation drivers."""
         parts = []
 
@@ -480,6 +526,12 @@ class DownloadEstimator:
         label = confidence.get("confidence_label", "low")
         conf_score = confidence.get("confidence_score", 0.0)
         parts.append(f"Confidence: {label} ({conf_score:.0%})")
+
+        if blend_weight < 0.50:
+            parts.append(
+                f"Shrinkage applied ({blend_weight:.0%} blend) — "
+                "low-signal estimate pulled toward conservative baseline"
+            )
 
         if signals.get("has_momentum"):
             adj = signals.get("momentum_3d", 0.0)

@@ -67,6 +67,7 @@ _DEFAULT_ARPU = 2.00
 _ACTIVE_FRACTION = 0.15
 _IAP_CONVERSION = 0.03
 _APPLE_CUT = 0.30
+_MIN_MONTHLY_INSTALLS_FOR_AD_REVENUE = 100  # below this, ad revenue rounds to $0
 
 
 def _get_arpu(category: Optional[str]) -> float:
@@ -164,8 +165,17 @@ class RevenueEstimator:
             ad_rev_per_1k_mau = 0.50  # $0.50 CPM
             mau_min = installs_min * active_fraction
             mau_max = installs_max * active_fraction
-            rev_min = (mau_min / 1000) * ad_rev_per_1k_mau * 30
-            rev_max = (mau_max / 1000) * ad_rev_per_1k_mau * 30
+            # Guard: too few installs → ad revenue rounds to $0 (not meaningful)
+            rev_min = (
+                (mau_min / 1000) * ad_rev_per_1k_mau * 30
+                if installs_min >= _MIN_MONTHLY_INSTALLS_FOR_AD_REVENUE
+                else 0.0
+            )
+            rev_max = (
+                (mau_max / 1000) * ad_rev_per_1k_mau * 30
+                if installs_max >= _MIN_MONTHLY_INSTALLS_FOR_AD_REVENUE
+                else 0.0
+            )
             model = "free_ads_only"
 
         rev_min = max(rev_min, 0)

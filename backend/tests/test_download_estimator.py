@@ -511,17 +511,19 @@ class TestDownloadEstimatorCompute:
         assert result["downloads_range_low"] <= result["estimated_downloads_monthly"]
         assert result["estimated_downloads_monthly"] <= result["downloads_range_high"]
 
-    def test_floor_is_at_least_10_daily(self):
-        """App with no rank, no velocity, no keywords → still gets floor."""
+    def test_floor_is_at_least_1_daily(self):
+        """App with no rank, no velocity, no keywords, no reviews → still gets conservative floor."""
         est = self._make_estimator_with_signals({
             "rank": None, "has_rank": False,
             "velocity": 0.0, "has_velocity": False,
             "keyword_count": 0, "has_keywords": False,
             "has_momentum": False,
+            "review_count": 0,
+            "ranking_history_days": 0,
         })
         app = _make_app()
         result = est._compute(app)
-        assert result["estimated_downloads_daily"] >= 10, "Floor should be 10 downloads/day"
+        assert result["estimated_downloads_daily"] >= 1, "Floor should be at least 1 download/day"
 
     def test_higher_rank_more_monthly_downloads(self):
         est_rank10 = self._make_estimator_with_signals({"rank": 10, "has_rank": True})
@@ -703,3 +705,104 @@ class TestDownloadEstimateResponseSchema:
         response = DownloadEstimateResponse(**data)
         assert response.estimated_revenue_monthly is None
         assert response.monetization_model_hint is None
+
+
+# ===========================================================================
+# 10. Realistic Estimates — shrinkage, conservative floors, overestimation guards
+# ===========================================================================
+
+class TestRealisticEstimates:
+    """Verify that the shrinkage pipeline prevents gross overestimation for
+    low-signal apps, and that confidence numerically affects the estimate."""
+
+    def _make_estimator_with_signals(self, signals_override=None):
+        from app.services.download_estimator import DownloadEstimator
+        db = MagicMock()
+        est = DownloadEstimator(db)
+        base_signals = _make_signals()
+        if signals_override:
+            base_signals.update(signals_override)
+        est._gather_signals = MagicMock(return_value=base_signals)
+        return est
+
+    def test_low_signal_app_estimates_conservatively(self):
+        """No rank, few reviews, minimal keywords → daily estimate ≤ 30."""
+        est = self._make_estimator_with_signals({
+            "rank": None, "has_rank": False,
+            "velocity": 0.033,       # ~1 review/month
+            "review_count": 30,
+            "keyword_count": 10, "avg_traffic_score": 30.0, "has_keywords": True,
+            "has_momentum": False,
+            "ranking_history_days": 0,
+            "data_age_days": 5,
+        })
+        result = est._compute(_make_app(primary_category="utilities"))
+        assert result["estimated_downloads_daily"] <= 30, (
+            f"Low-signal app should estimate ≤30/day, got {result['estimated_downloads_daily']}"
+        )
+
+    def test_confidence_shrinkage_reduces_estimate(self):
+        """Same raw signals; lower data quality (confidence) → lower or equal estimate."""
+        base = {
+            "rank": None, "has_rank": False,
+            "velocity": 2.0, "review_count": 200,
+            "keyword_count": 30, "avg_traffic_score": 60.0,
+            "has_keywords": True, "has_momentum": False,
+        }
+        high_conf = dict(base)
+        high_conf.update({"ranking_history_days": 14, "data_age_days": 1})
+        low_conf = dict(base)
+        low_conf.update({"ranking_history_days": 0, "data_age_days": 90, "review_count": 2})
+
+        est_high = self._make_estimator_with_signals(high_conf)
+        est_low = self._make_estimator_with_signals(low_conf)
+        app = _make_app()
+
+        result_high = est_high._compute(app)
+        result_low = est_low._compute(app)
+
+        assert result_high["estimated_downloads_daily"] >= result_low["estimated_downloads_daily"], (
+            "Lower data quality (confidence) should not produce a higher estimate"
+        )
+
+    def test_revenue_zero_for_low_install_free_app(self):
+        """Free app with no IAP and < 100 monthly installs → $0 ad revenue."""
+        from app.services.revenue_estimator import RevenueEstimator
+        est = RevenueEstimator(MagicMock())
+        app = _make_app(primary_category="News", is_free=True, in_app_purchases=None)
+        result = est._compute_from_installs(app, 20, 50)
+        assert result["model"] == "free_ads_only"
+        assert result["estimated_revenue_monthly_min"] == 0.0, (
+            f"Low-install free app should have $0 ad revenue, got {result['estimated_revenue_monthly_min']}"
+        )
+
+    def test_visibility_l3_no_base_boost(self):
+        """L3 with very few keywords should produce a small estimate (no 100/day additive base)."""
+        from app.services.download_estimator import DownloadEstimator
+        est = DownloadEstimator.__new__(DownloadEstimator)
+        from app.services.confidence_engine import ConfidenceEngine
+        est._confidence = ConfidenceEngine()
+
+        signals = _make_signals(keyword_count=3, avg_traffic_score=10.0)
+        result = est._layer3_visibility(signals)
+        assert result < 10.0, (
+            f"L3 with 3 low-traffic keywords should produce < 10/day, got {result}"
+        )
+
+    def test_review_scaling_reduces_l2_for_low_review_count(self):
+        """L2 should be meaningfully smaller for apps with few total reviews."""
+        from app.services.download_estimator import DownloadEstimator
+        est = DownloadEstimator.__new__(DownloadEstimator)
+        from app.services.confidence_engine import ConfidenceEngine
+        est._confidence = ConfidenceEngine()
+
+        low_reviews = _make_signals(velocity=1.0, review_count=5)
+        high_reviews = _make_signals(velocity=1.0, review_count=500)
+
+        l2_low = est._layer2_review_velocity(low_reviews)
+        l2_high = est._layer2_review_velocity(high_reviews)
+
+        assert l2_high > l2_low * 2, (
+            f"L2 should be at least 2× larger at review_count=500 vs 5. "
+            f"Low: {l2_low:.1f}, High: {l2_high:.1f}"
+        )
