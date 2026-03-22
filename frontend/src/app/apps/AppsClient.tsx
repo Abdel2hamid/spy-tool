@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components';
 import { AppListItem, Category, AppFilters, getFilteredApps, searchAppsImport, lookupApp, AppImportSearchItem } from '@/lib/api';
 import {
@@ -207,11 +207,79 @@ function parseAppStoreInput(input: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// URL ↔ AppFilters serialization
+// ---------------------------------------------------------------------------
+
+function filtersToSearchParams(filters: AppFilters): URLSearchParams {
+  const p = new URLSearchParams();
+  const s = (key: keyof AppFilters) => {
+    const v = filters[key];
+    if (v !== undefined && v !== null && v !== '') p.set(key, String(v));
+  };
+  s('search'); s('category'); s('developer'); s('sort_by');
+  if (filters.sort_order && filters.sort_order !== 'desc') p.set('sort_order', filters.sort_order);
+  s('updated_after'); s('updated_before'); s('released_after'); s('released_before');
+  s('confidence_label');
+  s('min_rating'); s('max_rating');
+  s('min_reviews'); s('max_reviews');
+  s('min_rank'); s('max_rank');
+  s('min_success_probability'); s('min_feature_gaps');
+  s('min_estimated_downloads'); s('max_estimated_downloads');
+  s('min_estimated_revenue'); s('max_estimated_revenue');
+  if (filters.is_free === true)  p.set('is_free', '1');
+  if (filters.is_free === false) p.set('is_free', '0');
+  if (filters.has_in_app_purchases === true)  p.set('has_in_app_purchases', '1');
+  if (filters.has_in_app_purchases === false) p.set('has_in_app_purchases', '0');
+  if (filters.ai_only) p.set('ai_only', '1');
+  const limit = filters.limit ?? 50;
+  const skip  = filters.skip  ?? 0;
+  if (skip > 0) p.set('page', String(Math.floor(skip / limit) + 1));
+  if (limit !== 50) p.set('limit', String(limit));
+  return p;
+}
+
+function filtersFromSearchParams(params: { get(key: string): string | null }): AppFilters {
+  const str = (k: string) => params.get(k) ?? '';
+  const num = (k: string): number | '' => {
+    const v = params.get(k); if (!v) return '';
+    const n = Number(v); return isNaN(n) ? '' : n;
+  };
+  const bool3 = (k: string): boolean | '' => {
+    const v = params.get(k);
+    return v === '1' ? true : v === '0' ? false : '';
+  };
+  const limit = Number(params.get('limit') ?? '50') || 50;
+  const page  = Math.max(1, Number(params.get('page') ?? '1') || 1);
+  return {
+    ...DEFAULT_FILTERS,
+    search: str('search'), category: str('category'), developer: str('developer'),
+    sort_by: str('sort_by'),
+    sort_order: (params.get('sort_order') as 'asc' | 'desc') ?? 'desc',
+    updated_after: str('updated_after'), updated_before: str('updated_before'),
+    released_after: str('released_after'), released_before: str('released_before'),
+    confidence_label: str('confidence_label') as 'low' | 'medium' | 'high' | '',
+    min_rating: num('min_rating'), max_rating: num('max_rating'),
+    min_reviews: num('min_reviews'), max_reviews: num('max_reviews'),
+    min_rank: num('min_rank'), max_rank: num('max_rank'),
+    min_success_probability: num('min_success_probability'),
+    min_feature_gaps: num('min_feature_gaps'),
+    min_estimated_downloads: num('min_estimated_downloads'),
+    max_estimated_downloads: num('max_estimated_downloads'),
+    min_estimated_revenue: num('min_estimated_revenue'),
+    max_estimated_revenue: num('max_estimated_revenue'),
+    is_free: bool3('is_free'), has_in_app_purchases: bool3('has_in_app_purchases'),
+    ai_only: params.get('ai_only') === '1',
+    limit, skip: page > 1 ? (page - 1) * limit : 0,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
 export default function AppsClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [apps, setApps] = useState<AppListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -219,10 +287,12 @@ export default function AppsClient() {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   // appliedFilters drives API calls; draftFilters lives in the drawer until Apply
-  const [appliedFilters, setAppliedFilters] = useState<AppFilters>(DEFAULT_FILTERS);
-  const [draftFilters, setDraftFilters] = useState<AppFilters>(DEFAULT_FILTERS);
-  const [searchInput, setSearchInput] = useState('');
+  // Both are initialized from URL search params so state survives back navigation.
+  const [appliedFilters, setAppliedFilters] = useState<AppFilters>(() => filtersFromSearchParams(searchParams));
+  const [draftFilters, setDraftFilters] = useState<AppFilters>(() => filtersFromSearchParams(searchParams));
+  const [searchInput, setSearchInput] = useState(() => searchParams.get('search') ?? '');
   const searchTimer = useRef<ReturnType<typeof setTimeout>>();
+  const isMounted = useRef(false);
 
   // App Store search state
   const [storeResults, setStoreResults] = useState<AppImportSearchItem[]>([]);
@@ -256,6 +326,13 @@ export default function AppsClient() {
   useEffect(() => {
     fetchApps(appliedFilters);
   }, [appliedFilters, fetchApps]);
+
+  // Keep URL in sync with applied filters (skip on first render — URL already correct)
+  useEffect(() => {
+    if (!isMounted.current) { isMounted.current = true; return; }
+    const qs = filtersToSearchParams(appliedFilters).toString();
+    router.replace(qs ? `/apps?${qs}` : '/apps', { scroll: false });
+  }, [appliedFilters, router]);
 
   // Debounce search bar — also triggers App Store search
   const handleSearchChange = (value: string) => {

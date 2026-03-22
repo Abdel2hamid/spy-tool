@@ -1,7 +1,12 @@
 export const dynamic = 'force-dynamic';
 
+import { Suspense } from 'react';
 import AppsClient from './AppsClient';
 
 export default function Page() {
-  return <AppsClient />;
+  return (
+    <Suspense>
+      <AppsClient />
+    </Suspense>
+  );
 }
