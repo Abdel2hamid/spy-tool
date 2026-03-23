@@ -17,12 +17,16 @@ import string
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import logging
+
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.models import Membership, Subscription, User, Workspace
+
+logger = logging.getLogger(__name__)
 
 _pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -104,6 +108,7 @@ def register_user(
     Raises EmailAlreadyRegistered if email is taken.
     """
     email = email.lower().strip()
+    logger.info("register_user: attempting registration for %s", email)
 
     if db.query(User).filter(User.email == email).first():
         raise EmailAlreadyRegistered(f"Email already registered: {email}")
@@ -140,10 +145,16 @@ def register_user(
     )
     db.add(subscription)
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        logger.exception("register_user: DB commit failed for %s", email)
+        db.rollback()
+        raise
     db.refresh(user)
     db.refresh(workspace)
 
+    logger.info("register_user: registration successful for %s (user_id=%s)", email, user.id)
     token = create_access_token(user.id, workspace.id)
     return user, workspace, token
 
