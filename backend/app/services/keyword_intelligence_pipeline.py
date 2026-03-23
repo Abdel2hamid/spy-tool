@@ -895,7 +895,9 @@ class KeywordIntelligencePipeline:
         logger.info("keyword_pipeline: [PHASE 2] Google Trends enrichment — start")
         t0 = _time.monotonic()
         try:
-            summary["trends_updated"] = self.enrich_with_trends(keywords)
+            # enrich_with_trends is synchronous and calls time.sleep() per batch —
+            # run in a thread so the event loop stays free for API requests.
+            summary["trends_updated"] = await asyncio.to_thread(self.enrich_with_trends, keywords)
         except Exception as e:
             logger.error(f"keyword_pipeline: [PHASE 2] Google Trends failed — {e}", exc_info=True)
         logger.info(f"keyword_pipeline: [PHASE 2] done in {_time.monotonic()-t0:.1f}s, updated={summary['trends_updated']}")
@@ -925,7 +927,7 @@ class KeywordIntelligencePipeline:
         logger.info("keyword_pipeline: [PHASE 5] score recompute — start")
         t0 = _time.monotonic()
         try:
-            summary["scored"] = self.recompute_scores(keywords)
+            summary["scored"] = await asyncio.to_thread(self.recompute_scores, keywords)
         except Exception as e:
             logger.error(f"keyword_pipeline: [PHASE 5] scoring failed — {e}", exc_info=True)
         logger.info(f"keyword_pipeline: [PHASE 5] done in {_time.monotonic()-t0:.1f}s, scored={summary['scored']}")
@@ -937,7 +939,7 @@ class KeywordIntelligencePipeline:
     async def run_trends_only(self, max_keywords: int = 200) -> int:
         """Quick job: only refresh Google Trends data (no Apple/SEO calls)."""
         keywords = self.db.query(Keyword).limit(max_keywords).all()
-        return self.enrich_with_trends(keywords)
+        return await asyncio.to_thread(self.enrich_with_trends, keywords)
 
     async def run_apple_signals_only(self, max_keywords: int = 300) -> int:
         """Quick job: only refresh Apple App Store signals."""
@@ -947,7 +949,7 @@ class KeywordIntelligencePipeline:
     async def run_scoring_only(self) -> int:
         """Quick job: only recompute scores (no external API calls)."""
         keywords = self.db.query(Keyword).all()
-        return self.recompute_scores(keywords)
+        return await asyncio.to_thread(self.recompute_scores, keywords)
 
     def get_trending_keywords(self, limit: int = 20) -> List[Keyword]:
         """

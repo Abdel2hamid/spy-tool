@@ -501,7 +501,9 @@ async def job_keyword_discovery_daily():
                     batch_db = SessionLocal()
                     try:
                         svc = KeywordDiscoveryService(batch_db)
-                        count = svc.discover_for_app(app_id)
+                        # discover_for_app is synchronous (DB + HTTP); run in a thread
+                        # so the event loop stays free to serve API requests.
+                        count = await asyncio.to_thread(svc.discover_for_app, app_id)
                         total_discovered += count
                     except Exception as exc:
                         logger.warning(f"[{job_id}] app {app_id} failed: {exc}")
@@ -562,25 +564,28 @@ async def job_keyword_discovery_phase1_daily():
                 try:
                     logger.info(f"[{job_id}] Running Phase-1 discovery for app {app_id}")
 
+                    # Each service call is synchronous (DB + HTTP); run in a thread
+                    # so the event loop stays free to serve API requests.
+
                     # 1. Alphabet mining
                     alpha_svc = AlphabetMiningService(batch_db)
-                    alpha_count = alpha_svc.mine_for_app(app_id)
+                    alpha_count = await asyncio.to_thread(alpha_svc.mine_for_app, app_id)
                     total_alpha += alpha_count
 
                     # 2. Competitor mining
                     comp_svc = CompetitorKeywordService(batch_db)
-                    comp_count = comp_svc.mine_for_app(app_id)
+                    comp_count = await asyncio.to_thread(comp_svc.mine_for_app, app_id)
                     total_comp += comp_count
 
                     # 3. Gap analysis
                     gap_svc = KeywordGapService(batch_db)
-                    gap_count = gap_svc.analyze_for_app(app_id)
+                    gap_count = await asyncio.to_thread(gap_svc.analyze_for_app, app_id)
                     total_gaps += gap_count
                     logger.info(f"[{job_id}] Found {gap_count} gap keywords for app {app_id}")
 
                     # 4. Opportunity scoring
                     opp_svc = OpportunityScoreService(batch_db)
-                    opp_svc.score_for_app(app_id)
+                    await asyncio.to_thread(opp_svc.score_for_app, app_id)
 
                 except Exception as exc:
                     logger.warning(f"[{job_id}] app {app_id} failed: {exc}")

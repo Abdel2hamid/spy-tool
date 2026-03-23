@@ -343,7 +343,8 @@
       "Bash(python3 -m pytest tests/test_blowing_up.py -v --tb=short 2>&1 | tail -15)",
       "Bash(python3 -m pytest tests/test_blowing_up.py -v --tb=short 2>&1 | tail -10)",
       "Bash(python3 -m pytest --tb=short -q 2>&1 | tail -15)",
-      "Bash(python3 -m pytest --tb=short -q 2>&1 | tail -8)"
+      "Bash(python3 -m pytest --tb=short -q 2>&1 | tail -8)",
+      "Bash(python3 -m pytest --tb=short -q 2>&1 | tail -10)"
     ]
   }
 }
