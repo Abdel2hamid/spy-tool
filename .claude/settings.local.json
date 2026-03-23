@@ -336,7 +336,8 @@
       "Bash(cd /Users/abdelhamid/appstore-spy-tool/frontend && npx tsc --noEmit --project tsconfig.json 2>&1 | grep \"AppsClient\")",
       "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python -m pytest tests/test_growth_intelligence.py -q 2>&1 | tail -5)",
       "Bash(python3 -m pytest tests/test_growth_intelligence.py -q 2>&1 | tail -5)",
-      "Bash(python3 -m pytest tests/test_growth_intelligence.py::TestMetricSnapshotService::test_compute_all_calls_commit -v 2>&1 | tail -20)"
+      "Bash(python3 -m pytest tests/test_growth_intelligence.py::TestMetricSnapshotService::test_compute_all_calls_commit -v 2>&1 | tail -20)",
+      "Bash(python3 -m pytest tests/ -q --tb=no 2>&1 | tail -8)"
     ]
   }
 }

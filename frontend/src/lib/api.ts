@@ -498,9 +498,18 @@ export async function getFilteredApps(filters: AppFilters = {}): Promise<AppList
   params.set('skip', String(filters.skip ?? 0));
   params.set('limit', String(filters.limit ?? 50));
 
-  const res = await fetch(`${API_BASE}/apps?${params.toString()}`, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
-  return res.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const res = await fetch(`${API_BASE}/apps?${params.toString()}`, {
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ---------------------------------------------------------------------------

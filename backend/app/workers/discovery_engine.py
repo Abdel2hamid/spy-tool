@@ -347,54 +347,86 @@ class DiscoveryEngine:
     # Discovery phases
     # -----------------------------------------------------------------------
 
+    def _process_chart_sync(
+        self, chart: str, genre_id: Optional[str], country: str
+    ) -> tuple:
+        """
+        All DB + HTTP work for one chart combo.
+        Returns (key, ids_found, new_queued, did_work).
+        did_work=False means already ran today — caller should skip sleep/counter.
+        Safe to call via asyncio.to_thread — keeps self.db access off event loop.
+        """
+        key = f"chart:{chart}:{country}:{'all' if genre_id is None else genre_id}"
+        if self._ran_today(key):
+            return key, 0, 0, False
+        ids = self._fetch_chart(chart, genre_id, country)
+        new = self.enqueue(ids, source=key, priority=1)
+        self._mark_progress(key, new)
+        return key, len(ids), new, True
+
     async def run_chart_discovery_batch(self, batch_size: int = 10) -> int:
         """
         Fetch the next `batch_size` (chart × genre × country) combinations
         not yet run today, enqueue discovered app IDs.
         Returns total new IDs enqueued.
         """
-        today = datetime.now(timezone.utc).date()
         total_new = 0
         processed = 0
 
         for chart in ALL_CHART_SLUGS:
             for country in DISCOVERY_COUNTRIES:
                 # All-genres chart for this country
-                key_all = f"chart:{chart}:{country}:all"
-                if not self._ran_today(key_all):
-                    ids = await asyncio.to_thread(
-                        self._fetch_chart, chart, None, country
-                    )
-                    new = self.enqueue(ids, source=key_all, priority=1)
-                    self._mark_progress(key_all, new)
+                key, found, new, did_work = await asyncio.to_thread(
+                    self._process_chart_sync, chart, None, country
+                )
+                if did_work:
                     total_new += new
                     processed += 1
-                    logger.info(
-                        f"[DISC] {key_all}: {len(ids)} found, {new} queued"
-                    )
+                    logger.info(f"[DISC] {key}: {found} found, {new} queued")
                     await asyncio.sleep(0.3)
                     if processed >= batch_size:
                         return total_new
 
                 # Per-genre charts
                 for slug, genre_id in ALL_GENRE_IDS.items():
-                    key = f"chart:{chart}:{country}:{genre_id}"
-                    if not self._ran_today(key):
-                        ids = await asyncio.to_thread(
-                            self._fetch_chart, chart, genre_id, country
-                        )
-                        new = self.enqueue(ids, source=key, priority=1)
-                        self._mark_progress(key, new)
+                    key, found, new, did_work = await asyncio.to_thread(
+                        self._process_chart_sync, chart, genre_id, country
+                    )
+                    if did_work:
                         total_new += new
                         processed += 1
-                        logger.info(
-                            f"[DISC] {key}: {len(ids)} found, {new} queued"
-                        )
+                        logger.info(f"[DISC] {key}: {found} found, {new} queued")
                         await asyncio.sleep(0.3)
                         if processed >= batch_size:
                             return total_new
 
         return total_new
+
+    def _process_keyword_sync(self, kw: str) -> int:
+        """
+        All DB + HTTP work for one keyword.
+        Returns count of new app IDs queued, or 0 if already ran today.
+        Safe to call via asyncio.to_thread — keeps self.db access off event loop.
+        """
+        key = f"keyword:{kw}"
+        if self._ran_today(key):
+            return 0
+        app_infos = self._fetch_keyword_with_dates(kw)
+        new = 0
+        for info in app_infos:
+            prio = self._freshness_priority(info["release_date"])
+            new += self.enqueue([info["app_id"]], source=key, priority=prio)
+        self._mark_progress(key, new)
+        fresh_count = sum(
+            1 for i in app_infos
+            if i["release_date"] and
+            (datetime.utcnow() - (i["release_date"].replace(tzinfo=None) if i["release_date"].tzinfo else i["release_date"])).days < 30
+        )
+        logger.info(
+            f"[DISC] keyword '{kw}': {len(app_infos)} found, "
+            f"{new} queued ({fresh_count} fresh <30d)"
+        )
+        return new
 
     async def run_keyword_discovery(self) -> int:
         """
@@ -405,27 +437,30 @@ class DiscoveryEngine:
         """
         total_new = 0
         for kw in DISCOVERY_KEYWORDS:
-            key = f"keyword:{kw}"
-            if self._ran_today(key):
-                continue
-            app_infos = await asyncio.to_thread(self._fetch_keyword_with_dates, kw)
-            new = 0
-            for info in app_infos:
-                prio = self._freshness_priority(info["release_date"])
-                new += self.enqueue([info["app_id"]], source=key, priority=prio)
-            self._mark_progress(key, new)
+            new = await asyncio.to_thread(self._process_keyword_sync, kw)
             total_new += new
-            fresh_count = sum(
-                1 for i in app_infos
-                if i["release_date"] and
-                (datetime.utcnow() - (i["release_date"].replace(tzinfo=None) if i["release_date"].tzinfo else i["release_date"])).days < 30
-            )
-            logger.info(
-                f"[DISC] keyword '{kw}': {len(app_infos)} found, "
-                f"{new} queued ({fresh_count} fresh <30d)"
-            )
             await asyncio.sleep(0.2)
         return total_new
+
+    def _process_developer_sync(
+        self, developer_id: str, developer_name: str
+    ) -> tuple:
+        """
+        All DB + HTTP work for one developer.
+        Returns (new_queued, already_done).
+        Safe to call via asyncio.to_thread — keeps self.db access off event loop.
+        """
+        key = f"developer:{developer_id}"
+        if self._get_progress(key):
+            return 0, True  # already expanded
+        ids = self._fetch_developer_apps(developer_id)
+        new = self.enqueue(ids, source=key, priority=1)
+        self._mark_progress(key, new)
+        logger.info(
+            f"[DISC] developer {developer_name} ({developer_id}): "
+            f"{len(ids)} found, {new} queued"
+        )
+        return new, False
 
     async def run_developer_expansion(self, limit: int = 50) -> int:
         """
@@ -433,38 +468,32 @@ class DiscoveryEngine:
         fetch all other apps by that developer and enqueue them.
         Returns total new IDs enqueued.
         """
-        total_new = 0
-        # Get recently added apps with a developer_id
-        apps = (
-            self.db.query(App)
-            .filter(App.developer_id.isnot(None), App.developer_id != "")
-            .order_by(App.created_at.desc())
-            .limit(limit * 3)   # fetch extra so we can dedup seen devs
-            .all()
+        # Fetch candidate apps list off the event loop
+        apps = await asyncio.to_thread(
+            lambda: (
+                self.db.query(App)
+                .filter(App.developer_id.isnot(None), App.developer_id != "")
+                .order_by(App.created_at.desc())
+                .limit(limit * 3)
+                .all()
+            )
         )
 
         seen_devs: set = set()
         expanded = 0
+        total_new = 0
         for app in apps:
             if not app.developer_id or app.developer_id in seen_devs:
                 continue
             seen_devs.add(app.developer_id)
 
-            key = f"developer:{app.developer_id}"
-            if self._get_progress(key):
-                continue  # already expanded this developer
-
-            ids = await asyncio.to_thread(
-                self._fetch_developer_apps, app.developer_id
+            new, already_done = await asyncio.to_thread(
+                self._process_developer_sync, app.developer_id, app.developer or ""
             )
-            new = self.enqueue(ids, source=key, priority=1)
-            self._mark_progress(key, new)
+            if already_done:
+                continue
             total_new += new
             expanded += 1
-            logger.info(
-                f"[DISC] developer {app.developer} ({app.developer_id}): "
-                f"{len(ids)} found, {new} queued"
-            )
             await asyncio.sleep(0.2)
             if expanded >= limit:
                 break

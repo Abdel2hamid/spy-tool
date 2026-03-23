@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import asyncio
 import logging
 import threading
+import time as _time
 
 from app.database import get_db
 from app.models import models
@@ -380,10 +381,16 @@ def get_apps(
     else:
         query = query.order_by(sort_col.desc().nullslast())
 
-    total = query.count()
-    apps = query.offset(effective_skip).limit(limit).all()
-
-    return {"apps": apps, "total": total, "skip": effective_skip, "limit": limit}
+    _t0 = _time.monotonic()
+    logger.info(f"[GET /apps] start  limit={limit} skip={effective_skip} search={search!r} sort={sort_by}")
+    try:
+        total = query.count()
+        apps = query.offset(effective_skip).limit(limit).all()
+        logger.info(f"[GET /apps] done  total={total} returned={len(apps)} {(_time.monotonic()-_t0)*1000:.0f}ms")
+        return {"apps": apps, "total": total, "skip": effective_skip, "limit": limit}
+    except Exception as exc:
+        logger.error(f"[GET /apps] FAILED after {(_time.monotonic()-_t0)*1000:.0f}ms: {exc}")
+        return {"apps": [], "total": 0, "skip": effective_skip, "limit": limit}
 
 
 @router.get("/apps/latest-60-days", response_model=AppListResponse)
@@ -1966,8 +1973,14 @@ def get_opportunities(
 
 @router.get("/categories", response_model=List[dict])
 def get_categories(db: Session = Depends(get_db)):
-    categories = db.query(models.Category).all()
-    return [{"id": c.id, "name": c.name, "slug": c.slug} for c in categories]
+    _t0 = _time.monotonic()
+    try:
+        categories = db.query(models.Category).all()
+        logger.info(f"[GET /categories] done  {len(categories)} cats {(_time.monotonic()-_t0)*1000:.0f}ms")
+        return [{"id": c.id, "name": c.name, "slug": c.slug} for c in categories]
+    except Exception as exc:
+        logger.error(f"[GET /categories] FAILED: {exc}")
+        return []
 
 
 @router.get("/rankings", response_model=List[RankingResponse])
