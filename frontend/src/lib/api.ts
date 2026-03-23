@@ -597,15 +597,25 @@ async function fetchApi<T>(endpoint: string): Promise<T> {
 
 /**
  * Like fetchApi but includes a Bearer token and throws PlanLimitExceeded on 402.
+ * Accepts an optional RequestInit for mutations (POST/PATCH with body).
  */
-async function fetchApiAuth<T>(endpoint: string, token: string): Promise<T> {
+async function fetchApiAuth<T>(
+  endpoint: string,
+  token: string,
+  init?: RequestInit,
+): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   try {
+    const { headers: extraHeaders, ...restInit } = init ?? {};
     const res = await fetch(`${API_BASE}${endpoint}`, {
-      cache: 'no-store',
+      ...restInit,
+      cache: 'no-store' as RequestCache,
       signal: controller.signal,
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(extraHeaders as Record<string, string> ?? {}),
+      },
     });
     if (res.status === 402) {
       const body = await res.json().catch(() => ({}));
@@ -616,7 +626,12 @@ async function fetchApiAuth<T>(endpoint: string, token: string): Promise<T> {
       throw new Error('Plan limit exceeded.');
     }
     if (!res.ok) {
-      throw new Error(`API error: ${res.status}`);
+      const body = await res.json().catch(() => ({}));
+      const msg =
+        typeof body?.detail === 'string'
+          ? body.detail
+          : `Request failed (${res.status})`;
+      throw new Error(msg);
     }
     return res.json();
   } finally {
@@ -1792,6 +1807,37 @@ export async function getUsageSummary(token: string): Promise<UsageSummary> {
     };
   }
   return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Settings — profile + password mutations
+// ---------------------------------------------------------------------------
+
+export interface ProfileUpdateData {
+  full_name?: string;
+  workspace_name?: string;
+}
+
+export async function updateProfile(
+  token: string,
+  data: ProfileUpdateData,
+): Promise<MeResponse> {
+  return fetchApiAuth<MeResponse>('/auth/profile', token, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function changePassword(
+  token: string,
+  data: { current_password: string; new_password: string },
+): Promise<{ ok: boolean }> {
+  return fetchApiAuth<{ ok: boolean }>('/auth/password', token, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
 }
 
 /**

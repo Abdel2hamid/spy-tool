@@ -30,6 +30,23 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # Request / Response schemas  (local — don't pollute global schemas.py)
 # ---------------------------------------------------------------------------
 
+class UpdateProfileRequest(BaseModel):
+    full_name: Optional[str] = None
+    workspace_name: Optional[str] = None
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def password_min_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        return v
+
+
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
@@ -202,3 +219,54 @@ def get_me(ctx: AuthContext = Depends(get_auth_context)):
             subscription=_subscription_info(ctx.subscription, ctx.membership.role),
         ),
     )
+
+
+@router.patch("/profile", response_model=MeResponse)
+def update_profile(
+    body: UpdateProfileRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+):
+    """Update display name and/or workspace name."""
+    if body.full_name is not None:
+        ctx.user.full_name = body.full_name.strip() or None
+    if body.workspace_name is not None:
+        name = body.workspace_name.strip()
+        if name:
+            ctx.workspace.name = name
+    db.commit()
+    db.refresh(ctx.user)
+    db.refresh(ctx.workspace)
+    return MeResponse(
+        user=UserInfo(
+            id=ctx.user.id,
+            email=ctx.user.email,
+            full_name=ctx.user.full_name,
+            created_at=ctx.user.created_at,
+        ),
+        workspace=WorkspaceInfo(
+            id=ctx.workspace.id,
+            name=ctx.workspace.name,
+            slug=ctx.workspace.slug,
+            role=ctx.membership.role,
+            subscription=_subscription_info(ctx.subscription, ctx.membership.role),
+        ),
+    )
+
+
+@router.post("/password", status_code=status.HTTP_200_OK)
+def change_password(
+    body: ChangePasswordRequest,
+    ctx: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+):
+    """Change account password. Requires correct current password."""
+    from app.services.auth_service import hash_password, verify_password
+    if not verify_password(body.current_password, ctx.user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect.",
+        )
+    ctx.user.password_hash = hash_password(body.new_password)
+    db.commit()
+    return {"ok": True}
