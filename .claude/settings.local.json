@@ -353,7 +353,15 @@
       "Bash(python3 -m pytest tests/test_blowing_up.py tests/test_opportunity_of_day.py -q 2>&1 | tail -10)",
       "Bash(python3 -m pytest tests/test_pre_filter_service.py tests/test_app_tiering_service.py -q 2>&1 | tail -5)",
       "Bash(python3 -c \"\nfrom app.services.pre_filter_service import PreFilterService, MASS_KEYWORDS\nfrom app.services.app_tiering_service import AppTieringService\nfrom app.workers.discovery_engine import DISCOVERY_KEYWORDS, MASS_KEYWORDS\nprint\\(f'DISCOVERY_KEYWORDS: {len\\(DISCOVERY_KEYWORDS\\)}'\\)\nprint\\(f'MASS_KEYWORDS: {len\\(MASS_KEYWORDS\\)}'\\)\nsvc = PreFilterService\\(\\)\nscore = svc.score_one\\({'release_date': None, 'current_reviews': 0, 'current_rank': 1}\\)\nprint\\(f'Score for ranked app \\(no reviews, old\\): {score}'\\)\n\" 2>&1)",
-      "Bash(python3 -c \"\nfrom app.services.pre_filter_service import PreFilterService\nfrom app.services.app_tiering_service import AppTieringService\nfrom app.workers.discovery_engine import DISCOVERY_KEYWORDS, MASS_KEYWORDS\nprint\\(f'DISCOVERY_KEYWORDS: {len\\(DISCOVERY_KEYWORDS\\)}'\\)\nprint\\(f'MASS_KEYWORDS: {len\\(MASS_KEYWORDS\\)}'\\)\nsvc = PreFilterService\\(\\)\nscore = svc.score_one\\({'release_date': None, 'current_reviews': 0, 'current_rank': 1}\\)\nprint\\(f'Score for ranked app \\(no reviews, old\\): {score}'\\)\n\" 2>&1)"
+      "Bash(python3 -c \"\nfrom app.services.pre_filter_service import PreFilterService\nfrom app.services.app_tiering_service import AppTieringService\nfrom app.workers.discovery_engine import DISCOVERY_KEYWORDS, MASS_KEYWORDS\nprint\\(f'DISCOVERY_KEYWORDS: {len\\(DISCOVERY_KEYWORDS\\)}'\\)\nprint\\(f'MASS_KEYWORDS: {len\\(MASS_KEYWORDS\\)}'\\)\nsvc = PreFilterService\\(\\)\nscore = svc.score_one\\({'release_date': None, 'current_reviews': 0, 'current_rank': 1}\\)\nprint\\(f'Score for ranked app \\(no reviews, old\\): {score}'\\)\n\" 2>&1)",
+      "Bash(pip3 show python-jose passlib 2>/dev/null | grep -E \"^Name:|^Version:\" || echo \"not installed\")",
+      "Bash(pip3 install \"python-jose[cryptography]\" \"passlib[bcrypt]\" --quiet 2>&1 | tail -5)",
+      "Bash(python3 -c \"from app.api.auth_router import router; from app.services.auth_service import register_user, login_user; from app.api.deps import get_current_user, get_auth_context; print\\('OK'\\)\" 2>&1)",
+      "Bash(pip3 install \"email-validator\" --quiet 2>&1 | tail -3)",
+      "Bash(npx tsc --noEmit 2>&1 | grep -v \".next/\" | head -30)",
+      "Bash(python3 -c \"\nfrom app.main import app\nroutes = [r.path for r in app.routes]\nauth = [r for r in routes if 'auth' in r]\nprint\\('Auth routes:', auth\\)\nprint\\('Total routes:', len\\(routes\\)\\)\n\" 2>&1)",
+      "Bash(python3 -c \"\nfrom app.api.auth_router import router\nroutes = [\\(r.methods, r.path\\) for r in router.routes]\nprint\\('Auth router routes:'\\)\nfor r in routes:\n    print\\(' ', r\\)\n\" 2>&1)",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -c \"\nfrom app.api.auth_router import router\nroutes = [\\(list\\(r.methods\\), r.path\\) for r in router.routes]\nprint\\('Auth router routes:'\\)\nfor r in routes:\n    print\\(' ', r\\)\n\" 2>&1)"
     ]
   }
 }

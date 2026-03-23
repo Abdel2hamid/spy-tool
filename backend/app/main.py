@@ -9,6 +9,7 @@ from sqlalchemy import text
 from app.config import settings
 from app.database import engine, Base
 from app.api import router
+from app.api.auth_router import router as auth_router
 from app.workers.tasks import run_scrape_task, run_scoring_task
 from app.workers.scheduler import scheduler, setup_scheduler
 
@@ -327,6 +328,51 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_reviews_app_date      ON reviews (app_id, date DESC)",
     "CREATE INDEX IF NOT EXISTS idx_feature_gaps_app_id   ON feature_gaps (app_id)",
 
+    # Auth / Workspace tables
+    """CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        email VARCHAR(255) NOT NULL UNIQUE,
+        password_hash VARCHAR(255) NOT NULL,
+        full_name VARCHAR(255),
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)",
+
+    """CREATE TABLE IF NOT EXISTS workspaces (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        slug VARCHAR(255) NOT NULL UNIQUE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_workspaces_slug ON workspaces (slug)",
+
+    """CREATE TABLE IF NOT EXISTS memberships (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        role VARCHAR(20) NOT NULL DEFAULT 'member',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(user_id, workspace_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_membership_user ON memberships (user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_membership_workspace ON memberships (workspace_id)",
+
+    """CREATE TABLE IF NOT EXISTS subscriptions (
+        id SERIAL PRIMARY KEY,
+        workspace_id INTEGER NOT NULL UNIQUE REFERENCES workspaces(id) ON DELETE CASCADE,
+        plan_code VARCHAR(50) NOT NULL DEFAULT 'trial',
+        status VARCHAR(30) NOT NULL DEFAULT 'trialing',
+        trial_ends_at TIMESTAMPTZ,
+        stripe_customer_id VARCHAR(255),
+        stripe_subscription_id VARCHAR(255),
+        current_period_end TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_sub_workspace ON subscriptions (workspace_id)",
+    "CREATE INDEX IF NOT EXISTS idx_sub_status ON subscriptions (status)",
+
     # Scalable ingestion pipeline — two-speed architecture (500K target)
     "ALTER TABLE apps ADD COLUMN IF NOT EXISTS ingestion_stage VARCHAR(20) DEFAULT 'full'",
     "ALTER TABLE apps ADD COLUMN IF NOT EXISTS sync_tier VARCHAR(10) DEFAULT 'warm'",
@@ -409,6 +455,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router, prefix="/api/v1")
 app.include_router(router, prefix="/api/v1")
 
 

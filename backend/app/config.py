@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     dataforseo_username: str = ""
     dataforseo_password: str = ""
 
+    # ── JWT / Auth ────────────────────────────────────────────────────────
+    jwt_secret: str = "change-me-in-production-use-a-long-random-string"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 1440  # 24 hours
+
     class Config:
         env_file = ".env"
 

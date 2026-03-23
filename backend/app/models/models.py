@@ -6,6 +6,86 @@ from sqlalchemy.sql import func
 from app.database import Base
 
 
+# ---------------------------------------------------------------------------
+# Auth / Workspace models
+# ---------------------------------------------------------------------------
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    full_name = Column(String(255))
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    memberships = relationship("Membership", back_populates="user", cascade="all, delete-orphan")
+
+
+class Workspace(Base):
+    __tablename__ = "workspaces"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    slug = Column(String(255), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    memberships = relationship("Membership", back_populates="workspace", cascade="all, delete-orphan")
+    subscription = relationship("Subscription", back_populates="workspace", uselist=False, cascade="all, delete-orphan")
+
+
+class Membership(Base):
+    """Links users to workspaces with a role."""
+    __tablename__ = "memberships"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    role = Column(String(20), nullable=False, default="member")  # owner | admin | member
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", back_populates="memberships")
+    workspace = relationship("Workspace", back_populates="memberships")
+
+    __table_args__ = (
+        Index("idx_membership_user", "user_id"),
+        Index("idx_membership_workspace", "workspace_id"),
+        Index("idx_membership_user_workspace", "user_id", "workspace_id", unique=True),
+    )
+
+
+class Subscription(Base):
+    """
+    Workspace-level subscription record.
+    One row per workspace — updated as the plan changes.
+
+    plan_code  : 'trial' | 'starter' | 'pro' | 'enterprise'
+    status     : 'trialing' | 'active' | 'past_due' | 'canceled'
+    trial_ends_at : when the trial period expires (NULL for paid plans)
+    """
+    __tablename__ = "subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, unique=True)
+    plan_code = Column(String(50), nullable=False, default="trial")
+    status = Column(String(30), nullable=False, default="trialing")
+    trial_ends_at = Column(DateTime(timezone=True))
+    # Future billing fields (Stripe, etc.) — kept nullable for now
+    stripe_customer_id = Column(String(255))
+    stripe_subscription_id = Column(String(255))
+    current_period_end = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    workspace = relationship("Workspace", back_populates="subscription")
+
+    __table_args__ = (
+        Index("idx_sub_workspace", "workspace_id"),
+        Index("idx_sub_status", "status"),
+    )
+
+
 class KeywordStatus(str, enum.Enum):
     """Lifecycle state of a keyword in the enrichment pipeline."""
     RAW = "raw"          # inserted, not yet enriched

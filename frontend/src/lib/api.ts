@@ -1623,3 +1623,80 @@ export async function getCampaignTrackingList(params: {
   if (!res.ok) throw new Error(`Failed to fetch campaigns: ${res.status}`);
   return res.json();
 }
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+export interface SubscriptionInfo {
+  plan_code: string;
+  status: string;
+  trial_ends_at: string | null;
+  is_trialing: boolean;
+  trial_days_left: number | null;
+}
+
+export interface WorkspaceInfo {
+  id: number;
+  name: string;
+  slug: string;
+  role: 'owner' | 'admin' | 'member';
+  subscription: SubscriptionInfo | null;
+}
+
+export interface UserInfo {
+  id: number;
+  email: string;
+  full_name: string | null;
+  created_at: string;
+}
+
+export interface AuthResponse {
+  access_token: string;
+  token_type: string;
+  user: UserInfo;
+  workspace: WorkspaceInfo;
+}
+
+export interface MeResponse {
+  user: UserInfo;
+  workspace: WorkspaceInfo;
+}
+
+export async function authRegister(
+  email: string,
+  password: string,
+  fullName?: string,
+): Promise<AuthResponse> {
+  const res = await fetch(`${API_BASE}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, full_name: fullName ?? null }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Registration failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function authLogin(email: string, password: string): Promise<AuthResponse> {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Login failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function authMe(token: string): Promise<MeResponse> {
+  const res = await fetch(`${API_BASE}/auth/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`Unauthorized (${res.status})`);
+  return res.json();
+}
