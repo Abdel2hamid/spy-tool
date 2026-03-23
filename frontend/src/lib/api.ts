@@ -595,6 +595,44 @@ async function fetchApi<T>(endpoint: string): Promise<T> {
   }
 }
 
+/**
+ * Like fetchApi but includes a Bearer token and throws PlanLimitExceeded on 402.
+ */
+async function fetchApiAuth<T>(endpoint: string, token: string): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const res = await fetch(`${API_BASE}${endpoint}`, {
+      cache: 'no-store',
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.status === 402) {
+      const body = await res.json().catch(() => ({}));
+      const detail = body?.detail;
+      if (detail?.code === 'PLAN_LIMIT_EXCEEDED') {
+        throw new PlanLimitExceededError(detail as PlanLimitError);
+      }
+      throw new Error('Plan limit exceeded.');
+    }
+    if (!res.ok) {
+      throw new Error(`API error: ${res.status}`);
+    }
+    return res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export class PlanLimitExceededError extends Error {
+  readonly detail: PlanLimitError;
+  constructor(detail: PlanLimitError) {
+    super(detail.message);
+    this.name = 'PlanLimitExceededError';
+    this.detail = detail;
+  }
+}
+
 export async function getDashboardStats(): Promise<DashboardStats> {
   return fetchApi<DashboardStats>('/dashboard/stats');
 }
@@ -749,14 +787,19 @@ export interface AppLookupResponse {
 
 export async function searchAppsImport(
   query: string,
-  limit: number = 10
+  limit: number = 10,
+  token?: string | null,
 ): Promise<AppImportSearchResponse> {
   const params = new URLSearchParams({ q: query, limit: String(limit) });
-  return fetchApi<AppImportSearchResponse>(`/apps/import?${params}`);
+  const endpoint = `/apps/import?${params}`;
+  if (token) return fetchApiAuth<AppImportSearchResponse>(endpoint, token);
+  return fetchApi<AppImportSearchResponse>(endpoint);
 }
 
-export async function lookupApp(trackId: string): Promise<AppLookupResponse> {
-  return fetchApi<AppLookupResponse>(`/apps/lookup/${trackId}`);
+export async function lookupApp(trackId: string, token?: string | null): Promise<AppLookupResponse> {
+  const endpoint = `/apps/lookup/${trackId}`;
+  if (token) return fetchApiAuth<AppLookupResponse>(endpoint, token);
+  return fetchApi<AppLookupResponse>(endpoint);
 }
 
 export async function getCategories(): Promise<Category[]> {
@@ -1699,4 +1742,69 @@ export async function authMe(token: string): Promise<MeResponse> {
   });
   if (!res.ok) throw new Error(`Unauthorized (${res.status})`);
   return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Plan usage
+// ---------------------------------------------------------------------------
+
+export interface UsageCounts {
+  app_imports: number;
+  keyword_refreshes: number;
+  ai_requests: number;
+  exports: number;
+}
+
+export interface PlanLimits {
+  app_imports: number | null;
+  keyword_refreshes: number | null;
+  ai_requests: number | null;
+  exports: number | null;
+}
+
+export interface UsageSummary {
+  plan: string;
+  month: string;
+  usage: UsageCounts;
+  limits: PlanLimits;
+}
+
+export interface PlanLimitError {
+  code: 'PLAN_LIMIT_EXCEEDED';
+  action: string;
+  message: string;
+  current_usage: number;
+  limit: number;
+  plan: string;
+  upgrade_message: string;
+}
+
+export async function getUsageSummary(token: string): Promise<UsageSummary> {
+  const res = await fetch(`${API_BASE}/usage`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    return {
+      plan: 'unknown',
+      month: '',
+      usage: { app_imports: 0, keyword_refreshes: 0, ai_requests: 0, exports: 0 },
+      limits: { app_imports: null, keyword_refreshes: null, ai_requests: null, exports: null },
+    };
+  }
+  return res.json();
+}
+
+/**
+ * Parse a 402 fetch response into a PlanLimitError, or null if not a limit error.
+ */
+export async function parsePlanLimitError(res: Response): Promise<PlanLimitError | null> {
+  if (res.status !== 402) return null;
+  try {
+    const body = await res.json();
+    const detail = body?.detail;
+    if (detail?.code === 'PLAN_LIMIT_EXCEEDED') return detail as PlanLimitError;
+  } catch {
+    // ignore
+  }
+  return null;
 }

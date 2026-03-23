@@ -1,4 +1,5 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from sqlalchemy import exists, func, and_, or_
 from typing import List, Optional
@@ -85,6 +86,8 @@ from app.models.schemas import (
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
+from app.api.deps import _bearer
+from app.services.plan_enforcement import PlanEnforcer
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -636,7 +639,8 @@ def get_blowing_up_apps(
 def import_search_apps(
     q: str = Query(..., min_length=1, description="App name, App Store URL, or Apple trackId"),
     limit: int = Query(10, ge=1, le=20, description="Max results"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ):
     """
     Search for apps: first checks local database, then queries iTunes API if needed.
@@ -658,9 +662,12 @@ def import_search_apps(
         parsed = None
 
     if parsed and parsed.type in ("url", "track_id") and parsed.track_id:
+        enforcer = PlanEnforcer.from_token(credentials, db)
+        enforcer.check("app_imports")
         result = service.lookup_app(parsed.track_id)
         if "error" not in result:
             if result.get("is_new") and result.get("id"):
+                enforcer.increment("app_imports")
                 from app.services.post_import_hydration import PostImportHydrationService
                 threading.Thread(
                     target=PostImportHydrationService().hydrate,
@@ -720,7 +727,8 @@ def import_search_apps(
 @router.get("/apps/lookup/{track_id}", response_model=AppLookupResponse)
 def lookup_app(
     track_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ):
     """
     Lookup full app details by trackId from iTunes API.
@@ -731,6 +739,9 @@ def lookup_app(
     """
     from app.services.app_import_service import AppImportService
 
+    enforcer = PlanEnforcer.from_token(credentials, db)
+    enforcer.check("app_imports")
+
     service = AppImportService(db)
     result = service.lookup_app(track_id)
 
@@ -738,6 +749,7 @@ def lookup_app(
         raise HTTPException(status_code=404, detail=result["error"])
 
     if result.get("is_new") and result.get("id"):
+        enforcer.increment("app_imports")
         from app.services.post_import_hydration import PostImportHydrationService
         threading.Thread(
             target=PostImportHydrationService().hydrate,
@@ -2201,7 +2213,11 @@ def get_ideas(
 
 
 @router.post("/ideas/generate", response_model=AppIdeaListResponse)
-def trigger_generate_ideas(db: Session = Depends(get_db)):
+def trigger_generate_ideas(
+    db: Session = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+):
+    PlanEnforcer.from_token(credentials, db).check_and_increment("ai_requests")
     from app.scoring.idea_generator import IdeaGenerator
     gen = IdeaGenerator(db)
     gen.generate_all()
@@ -2706,11 +2722,13 @@ async def run_keyword_tracker(
     country: str = Query("us"),
     keyword_limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ):
     """
     Trigger a keyword rank tracking scan immediately.
     Scrapes App Store search results for all tracked keywords.
     """
+    PlanEnforcer.from_token(credentials, db).check_and_increment("keyword_refreshes")
     import time as _time
     from app.jobs.keyword_rank_tracker import run_keyword_rank_tracker
 
@@ -3493,3 +3511,21 @@ def get_ingestion_status(db: Session = Depends(get_db)):
             "daily_rate_7d": [],
             "error": str(exc),
         }
+
+
+# ---------------------------------------------------------------------------
+# Plan Usage — current workspace monthly usage + limits
+# ---------------------------------------------------------------------------
+
+@router.get("/usage")
+def get_usage(
+    db: Session = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+):
+    """
+    Return the current month's usage counters and plan limits for the
+    authenticated workspace.  Returns zeros + plan='unknown' if not
+    authenticated (so the frontend can always call this without errors).
+    """
+    enforcer = PlanEnforcer.from_token(credentials, db)
+    return enforcer.get_summary()

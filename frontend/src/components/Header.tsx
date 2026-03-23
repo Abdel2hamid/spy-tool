@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { ThemeToggle } from './ThemeToggle';
 import { SearchDropdown } from './SearchDropdown';
 import { useAuth } from '@/lib/auth';
+import { UsageMeter } from './UsageMeter';
 
 interface HeaderProps {
   onMenuClick: () => void;
@@ -120,6 +121,9 @@ export function Header({ onMenuClick }: HeaderProps) {
                     </div>
                   </div>
                 )}
+
+                {/* Usage meter */}
+                <UsageMeter />
 
                 {/* Logout */}
                 <button

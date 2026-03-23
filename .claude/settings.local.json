@@ -361,7 +361,10 @@
       "Bash(npx tsc --noEmit 2>&1 | grep -v \".next/\" | head -30)",
       "Bash(python3 -c \"\nfrom app.main import app\nroutes = [r.path for r in app.routes]\nauth = [r for r in routes if 'auth' in r]\nprint\\('Auth routes:', auth\\)\nprint\\('Total routes:', len\\(routes\\)\\)\n\" 2>&1)",
       "Bash(python3 -c \"\nfrom app.api.auth_router import router\nroutes = [\\(r.methods, r.path\\) for r in router.routes]\nprint\\('Auth router routes:'\\)\nfor r in routes:\n    print\\(' ', r\\)\n\" 2>&1)",
-      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -c \"\nfrom app.api.auth_router import router\nroutes = [\\(list\\(r.methods\\), r.path\\) for r in router.routes]\nprint\\('Auth router routes:'\\)\nfor r in routes:\n    print\\(' ', r\\)\n\" 2>&1)"
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -c \"\nfrom app.api.auth_router import router\nroutes = [\\(list\\(r.methods\\), r.path\\) for r in router.routes]\nprint\\('Auth router routes:'\\)\nfor r in routes:\n    print\\(' ', r\\)\n\" 2>&1)",
+      "Bash(python3 -c \"from app.config.plans import PLAN_LIMITS, get_effective_plan, get_limit; print\\('plans OK'\\); from app.services.plan_enforcement import PlanEnforcer, _NoOpEnforcer; print\\('enforcement OK'\\)\" 2>&1)",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -m pytest tests/test_pre_filter_service.py tests/test_app_tiering_service.py -q 2>&1 | tail -10)",
+      "Bash(python3 -m pytest tests/test_plan_enforcement.py -v 2>&1 | tail -40)"
     ]
   }
 }

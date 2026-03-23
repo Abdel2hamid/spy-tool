@@ -86,6 +86,23 @@ class Subscription(Base):
     )
 
 
+class WorkspaceUsage(Base):
+    """Per-workspace monthly usage counters (reset each calendar month)."""
+    __tablename__ = "workspace_usage"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    month = Column(String(7), nullable=False)        # "2026-03"
+    app_imports = Column(Integer, default=0, nullable=False)
+    keyword_refreshes = Column(Integer, default=0, nullable=False)
+    ai_requests = Column(Integer, default=0, nullable=False)
+    exports = Column(Integer, default=0, nullable=False)
+
+    __table_args__ = (
+        Index("idx_workspace_usage_month", "workspace_id", "month", unique=True),
+    )
+
+
 class KeywordStatus(str, enum.Enum):
     """Lifecycle state of a keyword in the enrichment pipeline."""
     RAW = "raw"          # inserted, not yet enriched

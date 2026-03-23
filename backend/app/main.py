@@ -383,6 +383,19 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_app_sync_tier ON apps (sync_tier)",
     "CREATE INDEX IF NOT EXISTS idx_app_tier_stage ON apps (sync_tier, ingestion_stage)",
     "CREATE INDEX IF NOT EXISTS idx_app_last_enriched ON apps (last_enriched_at)",
+
+    # Plan limits — per-workspace monthly usage counters
+    """CREATE TABLE IF NOT EXISTS workspace_usage (
+        id SERIAL PRIMARY KEY,
+        workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        month VARCHAR(7) NOT NULL,
+        app_imports INTEGER NOT NULL DEFAULT 0,
+        keyword_refreshes INTEGER NOT NULL DEFAULT 0,
+        ai_requests INTEGER NOT NULL DEFAULT 0,
+        exports INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(workspace_id, month)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_workspace_usage_ws ON workspace_usage (workspace_id)",
 ]
 
 

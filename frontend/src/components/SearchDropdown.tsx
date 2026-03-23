@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, X, Loader2, ChevronRight } from 'lucide-react';
+import { Search, X, Loader2, ChevronRight, Zap } from 'lucide-react';
 import Link from 'next/link';
-import { searchAppsImport, lookupApp, AppImportSearchItem } from '@/lib/api';
+import { searchAppsImport, lookupApp, AppImportSearchItem, PlanLimitExceededError, PlanLimitError } from '@/lib/api';
 import { SearchSection } from './SearchSection';
 import { SearchResultRow } from './SearchResultRow';
+import { useAuth } from '@/lib/auth';
 
 export function SearchDropdown() {
   const [query, setQuery] = useState('');
@@ -16,10 +17,12 @@ export function SearchDropdown() {
   const [importing, setImporting] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [planLimitError, setPlanLimitError] = useState<PlanLimitError | null>(null);
   const [showDropdown, setShowDropdown] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(-1);
 
   const router = useRouter();
+  const { token } = useAuth();
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
@@ -60,9 +63,10 @@ export function SearchDropdown() {
     debounceRef.current = setTimeout(async () => {
       setSearching(true);
       setSearchError(null);
+      setPlanLimitError(null);
       setShowDropdown(true);
       try {
-        const res = await searchAppsImport(query.trim(), 8);
+        const res = await searchAppsImport(query.trim(), 8, token);
 
         // Direct lookup success → auto-navigate, skip dropdown
         if (
@@ -84,9 +88,14 @@ export function SearchDropdown() {
         }
 
         setResults(res.results);
-      } catch {
-        setSearchError('Search failed. Please try again.');
-        setResults([]);
+      } catch (err) {
+        if (err instanceof PlanLimitExceededError) {
+          setPlanLimitError(err.detail);
+          setResults([]);
+        } else {
+          setSearchError('Search failed. Please try again.');
+          setResults([]);
+        }
       } finally {
         setSearching(false);
       }
@@ -100,6 +109,7 @@ export function SearchDropdown() {
     setQuery('');
     setImportError(null);
     setSearchError(null);
+    setPlanLimitError(null);
     setFocusedIndex(-1);
     inputRef.current?.blur();
   }, []);
@@ -116,17 +126,22 @@ export function SearchDropdown() {
     async (app: AppImportSearchItem) => {
       setImporting(app.app_id);
       setImportError(null);
+      setPlanLimitError(null);
       try {
-        const detail = await lookupApp(app.app_id);
+        const detail = await lookupApp(app.app_id, token);
         closeDropdown();
         router.push(`/apps/${detail.id}?imported=1`);
-      } catch {
-        setImportError('Import failed. Please try again.');
+      } catch (err) {
+        if (err instanceof PlanLimitExceededError) {
+          setPlanLimitError(err.detail);
+        } else {
+          setImportError('Import failed. Please try again.');
+        }
       } finally {
         setImporting(null);
       }
     },
-    [closeDropdown, router]
+    [closeDropdown, router, token]
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -199,6 +214,7 @@ export function SearchDropdown() {
               setQuery('');
               setShowDropdown(false);
               setSearchError(null);
+              setPlanLimitError(null);
               inputRef.current?.focus();
             }}
             className="flex-shrink-0 rounded text-gray-400 hover:text-gray-600 focus:outline-none dark:hover:text-gray-300"
@@ -229,8 +245,28 @@ export function SearchDropdown() {
           </div>
         )}
 
+        {/* Plan limit error */}
+        {!searching && planLimitError && (
+          <div className="px-4 py-5">
+            <div className="flex items-start gap-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/50 px-3 py-3">
+              <Zap className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                  {planLimitError.message}
+                </p>
+                <p className="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
+                  {planLimitError.upgrade_message}
+                </p>
+                <p className="mt-1 text-xs text-amber-500 dark:text-amber-500">
+                  {planLimitError.current_usage}/{planLimitError.limit} used this month
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Error */}
-        {!searching && searchError && (
+        {!searching && !planLimitError && searchError && (
           <div className="px-4 py-6 text-center">
             <p className="text-sm text-red-500 dark:text-red-400">
               {searchError}
@@ -239,7 +275,7 @@ export function SearchDropdown() {
         )}
 
         {/* Empty */}
-        {!searching && !searchError && query.trim().length >= 2 && !hasResults && (
+        {!searching && !planLimitError && !searchError && query.trim().length >= 2 && !hasResults && (
           <div className="px-4 py-8 text-center">
             <p className="text-sm font-medium text-gray-900 dark:text-white">
               No apps found
