@@ -57,13 +57,13 @@ class TestCandidateCapping:
         src = inspect.getsource(BlowingUpService.compute_for_all_apps)
         assert ".limit(max_apps)" in src, "compute_for_all_apps must call .limit(max_apps)"
 
-    def test_default_max_apps_is_100(self):
-        """Default max_apps should be 100 — prevents runaway on large DBs."""
+    def test_default_max_apps_is_large(self):
+        """Default max_apps should be ≥ 500 — wide enough to surface breakout apps."""
         import inspect
         from app.services.blowing_up_service import BlowingUpService
         sig = inspect.signature(BlowingUpService.compute_for_all_apps)
         default = sig.parameters["max_apps"].default
-        assert default == 100, f"Expected default max_apps=100, got {default}"
+        assert default >= 500, f"Expected default max_apps>=500, got {default}"
 
     def test_no_candidates_returns_zero_immediately(self):
         """Empty rankings table → returns 0 without hitting the upsert path."""

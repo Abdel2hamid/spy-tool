@@ -82,11 +82,19 @@ class TestNormHelpers:
     def test_norm_reviews_velocity_zero(self):
         from app.services.blowing_up_service import _norm_reviews_velocity
         assert _norm_reviews_velocity(0) == 0.0
+        assert _norm_reviews_velocity(0, total_reviews=10_000) == 0.0
 
     def test_norm_reviews_velocity_capped(self):
         from app.services.blowing_up_service import _norm_reviews_velocity
+        # Log scale: 10/day with no base still maxes out at 100
         assert _norm_reviews_velocity(10) == 100.0
         assert _norm_reviews_velocity(100) == 100.0
+
+    def test_norm_reviews_velocity_positive_small_app(self):
+        from app.services.blowing_up_service import _norm_reviews_velocity
+        # 5/day for a new app with small base → meaningful score
+        score = _norm_reviews_velocity(5.0, total_reviews=100)
+        assert score > 50.0
 
     def test_norm_chart_presence(self):
         from app.services.blowing_up_service import _norm_chart_presence
@@ -541,3 +549,148 @@ class TestBlowingUpModel:
         from app.models.models import AppBlowingUpScore
         pk_cols = [c.key for c in AppBlowingUpScore.__table__.primary_key]
         assert "app_id" in pk_cols
+
+
+# ---------------------------------------------------------------------------
+# 9. Incumbent penalty + discovery bias
+# ---------------------------------------------------------------------------
+
+class TestIncumbentDiscovery:
+    """Verify giant incumbents are penalised and breakout apps surface higher."""
+
+    # ── _incumbent_penalty ───────────────────────────────────────────────
+
+    def test_penalty_none_for_small_app(self):
+        from app.services.blowing_up_service import _incumbent_penalty
+        assert _incumbent_penalty(0)      == 1.0
+        assert _incumbent_penalty(100)    == 1.0
+        assert _incumbent_penalty(9_999)  == 1.0
+
+    def test_penalty_partial_for_medium_app(self):
+        from app.services.blowing_up_service import _incumbent_penalty
+        p = _incumbent_penalty(100_000)
+        assert 0.1 < p < 1.0, f"100k-review app should have partial penalty, got {p}"
+
+    def test_penalty_heavy_for_giant_app(self):
+        from app.services.blowing_up_service import _incumbent_penalty
+        # YouTube / TikTok tier (5M+ reviews)
+        p = _incumbent_penalty(5_000_000)
+        assert p <= 0.20, f"5M-review app should have ≥80% penalty, got {p}"
+
+    def test_penalty_floor_is_0_1(self):
+        from app.services.blowing_up_service import _incumbent_penalty
+        # Even the biggest possible app must not go below 0.10
+        assert _incumbent_penalty(500_000_000) == 0.10
+
+    def test_penalty_monotonically_decreasing(self):
+        from app.services.blowing_up_service import _incumbent_penalty
+        sizes = [0, 10_000, 50_000, 200_000, 1_000_000, 5_000_000]
+        penalties = [_incumbent_penalty(s) for s in sizes]
+        for i in range(1, len(penalties)):
+            assert penalties[i] <= penalties[i - 1], (
+                f"penalty should decrease as size grows: {list(zip(sizes, penalties))}"
+            )
+
+    # ── _norm_reviews_velocity with base ────────────────────────────────
+
+    def test_reviews_velocity_giant_dampened(self):
+        from app.services.blowing_up_service import _norm_reviews_velocity
+        # 100/day for an incumbent with 1M reviews vs 10/day for a breakout with 200
+        giant    = _norm_reviews_velocity(100.0, total_reviews=1_000_000)
+        breakout = _norm_reviews_velocity(10.0,  total_reviews=200)
+        assert breakout > giant, (
+            f"breakout (10/day, 200 base) should outscore giant (100/day, 1M base): "
+            f"{breakout:.1f} vs {giant:.1f}"
+        )
+
+    def test_reviews_velocity_small_app_not_penalised(self):
+        from app.services.blowing_up_service import _norm_reviews_velocity
+        # ≤500 total reviews → no dampening at all
+        s0   = _norm_reviews_velocity(5.0, total_reviews=0)
+        s200 = _norm_reviews_velocity(5.0, total_reviews=200)
+        assert abs(s0 - s200) < 1e-9, "No dampening for ≤500 review apps"
+
+    def test_reviews_velocity_increasing_base_decreases_score(self):
+        from app.services.blowing_up_service import _norm_reviews_velocity
+        bases  = [0, 1_000, 10_000, 100_000, 1_000_000]
+        scores = [_norm_reviews_velocity(20.0, b) for b in bases]
+        for i in range(1, len(scores)):
+            assert scores[i] <= scores[i - 1], (
+                f"Larger review base should not increase score: {list(zip(bases, scores))}"
+            )
+
+    # ── end-to-end: breakout > incumbent with same rank trajectory ───────
+
+    def test_breakout_outscores_incumbent_same_rank_data(self):
+        """
+        Two apps with identical rank trajectory (100 → 10 over 7 days).
+        Breakout has 200 lifetime reviews; incumbent has 5 000 000.
+        Breakout must score higher on blowing_up_score.
+        """
+        from app.services.blowing_up_service import BlowingUpService
+        from datetime import datetime, timezone
+        from unittest.mock import MagicMock
+
+        db  = MagicMock()
+        svc = BlowingUpService(db)
+        now = datetime.now(timezone.utc)
+
+        def make_rankings(n=8):
+            ranks = [int(100 - (90 / (n - 1)) * i) for i in range(n)]
+            return [
+                _make_ranking(rank=r, velocity=90 / (n - 1), days_ago=7 - i)
+                for i, r in enumerate(ranks)
+            ]
+
+        breakout_result = svc._compute_from_prefetch(
+            app_id=1, rankings=make_rankings(), review_count=20,
+            is_new_entry=True, timeframe_days=7, now=now,
+            current_reviews=200,
+        )
+        incumbent_result = svc._compute_from_prefetch(
+            app_id=2, rankings=make_rankings(), review_count=5_000,
+            is_new_entry=False, timeframe_days=7, now=now,
+            current_reviews=5_000_000,
+        )
+
+        assert breakout_result  is not None
+        assert incumbent_result is not None
+        assert breakout_result["blowing_up_score"] > incumbent_result["blowing_up_score"], (
+            f"breakout {breakout_result['blowing_up_score']:.2f} should beat "
+            f"incumbent {incumbent_result['blowing_up_score']:.2f}"
+        )
+
+    # ── candidate selection properties ──────────────────────────────────
+
+    def test_candidate_selection_orders_by_rank_improvement(self):
+        """compute_for_all_apps must order by rank improvement, not snapshot count."""
+        import inspect
+        from app.services.blowing_up_service import BlowingUpService
+        src = inspect.getsource(BlowingUpService.compute_for_all_apps)
+        assert "rank_improvement" in src, (
+            "compute_for_all_apps should reference rank_improvement in candidate query"
+        )
+        assert "rank_improvement_expr.desc()" in src, (
+            "Candidates should be ordered by rank_improvement DESC"
+        )
+
+    def test_default_max_apps_is_large(self):
+        """Candidate pool default must be ≥ 500 so breakout apps are not excluded."""
+        import re
+        import inspect
+        from app.services.blowing_up_service import BlowingUpService
+        src = inspect.getsource(BlowingUpService.compute_for_all_apps)
+        matches = re.findall(r'max_apps\s*(?::\s*\w+\s*)?=\s*(\d+)', src)
+        assert matches, "max_apps default must be declared in compute_for_all_apps"
+        assert int(matches[0]) >= 500, (
+            f"max_apps default should be ≥ 500 to include breakout apps, got {matches[0]}"
+        )
+
+    def test_current_reviews_bulk_fetched_in_compute_all(self):
+        """compute_for_all_apps must bulk-fetch App.current_reviews."""
+        import inspect
+        from app.services.blowing_up_service import BlowingUpService
+        src = inspect.getsource(BlowingUpService.compute_for_all_apps)
+        assert "current_reviews" in src, (
+            "compute_for_all_apps must fetch and pass current_reviews for dampening"
+        )

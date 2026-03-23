@@ -337,7 +337,13 @@
       "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python -m pytest tests/test_growth_intelligence.py -q 2>&1 | tail -5)",
       "Bash(python3 -m pytest tests/test_growth_intelligence.py -q 2>&1 | tail -5)",
       "Bash(python3 -m pytest tests/test_growth_intelligence.py::TestMetricSnapshotService::test_compute_all_calls_commit -v 2>&1 | tail -20)",
-      "Bash(python3 -m pytest tests/ -q --tb=no 2>&1 | tail -8)"
+      "Bash(python3 -m pytest tests/ -q --tb=no 2>&1 | tail -8)",
+      "Bash(python3 -c \"import sys; sys.path.insert\\(0, '.'\\); from app.services.blowing_up_service import _norm_reviews_velocity, _incumbent_penalty; print\\('small breakout 5/day 100 reviews:', _norm_reviews_velocity\\(5, 100\\)\\); print\\('giant 100/day 1M reviews:', _norm_reviews_velocity\\(100, 1_000_000\\)\\); print\\('penalty 0 reviews:', _incumbent_penalty\\(0\\)\\); print\\('penalty 100k reviews:', _incumbent_penalty\\(100_000\\)\\); print\\('penalty 5M reviews:', _incumbent_penalty\\(5_000_000\\)\\)\")",
+      "Bash(python3 -m pytest tests/test_blowing_up.py -v 2>&1 | tail -60)",
+      "Bash(python3 -m pytest tests/test_blowing_up.py -v --tb=short 2>&1 | tail -15)",
+      "Bash(python3 -m pytest tests/test_blowing_up.py -v --tb=short 2>&1 | tail -10)",
+      "Bash(python3 -m pytest --tb=short -q 2>&1 | tail -15)",
+      "Bash(python3 -m pytest --tb=short -q 2>&1 | tail -8)"
     ]
   }
 }

@@ -25,6 +25,7 @@ Refreshed every 15 minutes by the blowing_up_compute scheduler job.
 """
 
 import logging
+import math
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -85,9 +86,44 @@ def _norm_rank_change(rank_change: int, starting_rank: Optional[int]) -> float:
     return min(100.0, max(relative, absolute) * 100)
 
 
-def _norm_reviews_velocity(reviews_per_day: float) -> float:
-    """0 reviews/day → 0, 10+ reviews/day → 100."""
-    return min(100.0, reviews_per_day * 10.0)
+def _norm_reviews_velocity(reviews_per_day: float, total_reviews: int = 0) -> float:
+    """
+    Log-scaled review velocity with incumbent dampening.
+
+    Uses log scaling so a breakout gaining 5 reviews/day and a giant gaining
+    50/day are not separated by 10× in score:
+      1/day  →  ~42    5/day  →  ~81    10/day → 100
+
+    Then dampens apps with large lifetime review bases (incumbents):
+      ≤ 500 total reviews  → no dampening
+      500k+ total reviews  → 80 % dampening
+
+    This prevents YouTube / TikTok / Netflix from monopolising the list via
+    sheer review volume while small breakout apps stay competitive.
+    """
+    if reviews_per_day <= 0:
+        return 0.0
+    base = min(100.0, math.log1p(reviews_per_day) / math.log(11.0) * 100.0)
+    if total_reviews <= 500:
+        return base
+    dampening = min(0.80, math.log10(total_reviews / 500.0) * 0.35)
+    return base * (1.0 - dampening)
+
+
+def _incumbent_penalty(total_reviews: int) -> float:
+    """
+    Final-score multiplier (0.10 – 1.0) that penalises giant incumbents.
+
+    Apps with < 10 000 lifetime reviews : no penalty  (1.0)
+    Apps with   1 000 000+ reviews      : 90 % penalty (0.10)
+
+    Ensures YouTube / TikTok / Netflix cannot dominate the blowing-up list
+    even when they happen to be showing momentum signals.
+    """
+    if total_reviews <= 10_000:
+        return 1.0
+    dampening = min(0.90, math.log10(total_reviews / 10_000) * 0.45)
+    return max(0.10, 1.0 - dampening)
 
 
 def _norm_chart_presence(appearances: int, days: int) -> float:
@@ -308,6 +344,11 @@ class BlowingUpService:
         ) or 0
         reviews_velocity = review_count / max(timeframe_days, 1)
 
+        # Lifetime reviews — used for incumbent dampening
+        current_reviews = (
+            self.db.query(App.current_reviews).filter(App.id == app_id).scalar()
+        ) or 0
+
         # Chart presence & cross-market
         chart_types  = {r.chart_type   for r in rankings if r.chart_type}
         category_ids = {r.category_id  for r in rankings if r.category_id is not None}
@@ -331,7 +372,7 @@ class BlowingUpService:
         # Component scores
         rvs  = _norm_rank_velocity(avg_velocity)
         rcs  = _norm_rank_change(rank_change, starting_rank)
-        revs = _norm_reviews_velocity(reviews_velocity)
+        revs = _norm_reviews_velocity(reviews_velocity, current_reviews)
         cps  = _norm_chart_presence(chart_appearances, timeframe_days)
         cms  = _norm_cross_market(markets_count)
         con  = consistency_score  # already 0-100
@@ -345,7 +386,8 @@ class BlowingUpService:
             _WEIGHTS["consistency_score"]      * con
         )
 
-        blowing_up_score = round(composite * confidence_factor, 2)
+        penalty = _incumbent_penalty(current_reviews)
+        blowing_up_score = round(composite * confidence_factor * penalty, 2)
         confidence_score = round(confidence_factor * 100, 2)
 
         return {
@@ -383,6 +425,7 @@ class BlowingUpService:
         is_new_entry: bool,
         timeframe_days: int,
         now: datetime,
+        current_reviews: int = 0,
     ) -> Optional[Dict]:
         """
         Compute score for one app using pre-fetched data (no DB access).
@@ -423,7 +466,7 @@ class BlowingUpService:
 
         rvs  = _norm_rank_velocity(avg_velocity)
         rcs  = _norm_rank_change(rank_change, starting_rank)
-        revs = _norm_reviews_velocity(reviews_velocity)
+        revs = _norm_reviews_velocity(reviews_velocity, current_reviews)
         cps  = _norm_chart_presence(chart_appearances, timeframe_days)
         cms  = _norm_cross_market(markets_count)
         con  = consistency_score
@@ -437,7 +480,8 @@ class BlowingUpService:
             _WEIGHTS["consistency_score"]      * con
         )
 
-        blowing_up_score = round(composite * confidence_factor, 2)
+        penalty = _incumbent_penalty(current_reviews)
+        blowing_up_score = round(composite * confidence_factor * penalty, 2)
         confidence_score = round(confidence_factor * 100, 2)
 
         return {
@@ -467,16 +511,18 @@ class BlowingUpService:
     # Batch computation + persistence
     # ------------------------------------------------------------------
 
-    def compute_for_all_apps(self, timeframe_days: int = 7, max_apps: int = 100) -> int:
+    def compute_for_all_apps(self, timeframe_days: int = 7, max_apps: int = 500) -> int:
         """
         Compute and persist blowing_up_score for all eligible apps.
 
-        Performance optimisation (vs the old N+1 approach):
-          • Candidates are capped at *max_apps* (most active first) so the loop
-            is always bounded — default 100 apps.
-          • All ranking rows, review counts and pre-window flags are fetched in
-            three bulk queries instead of 3 × N individual queries.
-          • A single transaction replaces per-app commits.
+        Candidate selection (v2 — discovery-oriented):
+          • Pool expanded to *max_apps* = 500 (was 100).
+          • Candidates ordered by rank improvement (max_rank − min_rank DESC)
+            so apps with the biggest climbs appear first.  Previously ordered
+            by snapshot count which favoured permanently-charted incumbents.
+          • All ranking rows, review counts, pre-window flags and lifetime
+            review counts fetched in bulk (no N+1 queries).
+          • Single transaction for all upserts.
 
         Returns the number of apps scored (inserted/updated).
         """
@@ -484,13 +530,23 @@ class BlowingUpService:
         now    = datetime.now(timezone.utc)
         cutoff = now - timedelta(days=timeframe_days)
 
-        # ── 1. Candidates: apps with ≥2 snapshots in window, most active first ──
+        # ── 1. Candidates: apps with ≥2 snapshots, ordered by rank improvement ──
+        # rank_improvement = max_rank − min_rank over the window.
+        # Biggest rank climb → top of list → breakout apps surface before incumbents.
+        rank_improvement_expr = (
+            func.max(Ranking.rank) - func.min(Ranking.rank)
+        ).label("rank_improvement")
+
         candidate_rows = (
-            self.db.query(Ranking.app_id, func.count(Ranking.id).label("cnt"))
+            self.db.query(
+                Ranking.app_id,
+                func.count(Ranking.id).label("cnt"),
+                rank_improvement_expr,
+            )
             .filter(Ranking.recorded_at >= cutoff, Ranking.rank.isnot(None))
             .group_by(Ranking.app_id)
             .having(func.count(Ranking.id) >= 2)
-            .order_by(func.count(Ranking.id).desc())
+            .order_by(rank_improvement_expr.desc())
             .limit(max_apps)
             .all()
         )
@@ -546,7 +602,17 @@ class BlowingUpService:
             )
         )
 
-        # ── 5. Score each app using only in-memory data ──
+        # ── 5. Bulk-fetch lifetime review counts for incumbent dampening ──
+        current_reviews_by_app: Dict[int, int] = {
+            row[0]: (row[1] or 0)
+            for row in (
+                self.db.query(App.id, App.current_reviews)
+                .filter(App.id.in_(app_ids))
+                .all()
+            )
+        }
+
+        # ── 6. Score each app using only in-memory data ──
         results: List[Dict] = []
         skipped_no_data = 0
         failed = 0
@@ -559,6 +625,7 @@ class BlowingUpService:
                     is_new_entry=(app_id not in pre_window_apps),
                     timeframe_days=timeframe_days,
                     now=now,
+                    current_reviews=current_reviews_by_app.get(app_id, 0),
                 )
                 if result is None:
                     skipped_no_data += 1
@@ -568,7 +635,7 @@ class BlowingUpService:
                 logger.warning("[BlowingUp] app_id=%s scoring failed: %s", app_id, exc)
                 failed += 1
 
-        # ── 6. Batch upsert in a single transaction ──
+        # ── 7. Batch upsert in a single transaction ──
         scored = 0
         if results:
             try:
