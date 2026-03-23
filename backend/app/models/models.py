@@ -62,6 +62,11 @@ class App(Base):
     estimated_revenue_monthly_max = Column(Float)
     # Freshness: 100 = released <30d ago, 0 = >1yr old. Updated on every scrape.
     freshness_score = Column(Float, default=0.0)
+    # Scalable ingestion pipeline (two-speed architecture)
+    ingestion_stage  = Column(String(20), default="full")   # 'light' | 'full'
+    sync_tier        = Column(String(10), default="warm")   # 'hot' | 'warm' | 'cold'
+    tier_computed_at = Column(DateTime(timezone=True))      # last tier classification
+    last_enriched_at = Column(DateTime(timezone=True))      # last full scrape timestamp
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -472,6 +477,7 @@ class DiscoveryQueue(Base):
     priority = Column(Integer, nullable=False, default=0, index=True)
     # higher priority → processed first; keyword hits get priority=2, chart=1
     source = Column(String(255))          # e.g. "chart:topfreeapplications:us:6007"
+    enrich_mode = Column(String(10), default="full")        # 'light' | 'full'
     failed_attempts = Column(Integer, default=0)
     added_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     processed_at = Column(DateTime(timezone=True))

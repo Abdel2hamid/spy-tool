@@ -20,12 +20,14 @@ every queued app in priority order: newer + higher-priority apps first.
 import asyncio
 import json
 import logging
+import math
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 from sqlalchemy.orm import Session
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models.models import App, DiscoveryProgress, DiscoveryQueue
 
@@ -121,7 +123,75 @@ DISCOVERY_KEYWORDS = [
     "audiobook", "ebook", "news reader", "video downloader",
     "screen recorder", "alarm clock", "flashlight", "calculator",
     "unit converter", "translator", "dictionary",
+    # AI & emerging tech
+    "ai productivity", "ai image generator", "stable diffusion", "midjourney",
+    "text to image", "ai video", "ai music", "ai code", "copilot", "llm",
+    "ai notes", "ai journal", "ai fitness", "ai diet", "ai tutor",
+    "ai language", "ai therapy", "ai companion", "ai dating", "ai coach",
+    "smart home", "iot", "ar app", "augmented reality", "virtual reality",
+    # Mental health & wellness
+    "anxiety app", "depression help", "stress relief", "mindfulness",
+    "breathing exercise", "panic attack", "ptsd", "self care", "burnout",
+    "emotional wellness", "gratitude journal", "mood tracker", "cbt app",
+    "adhd planner", "autism app", "adhd focus", "executive function",
+    # Creator tools
+    "content creator", "influencer", "tiktok tools", "instagram analytics",
+    "youtube tools", "shorts editor", "reel maker", "thumbnail maker",
+    "caption generator", "hashtag generator", "social media scheduler",
+    "link in bio", "creator monetization", "newsletter", "substack",
+    # Niche fitness
+    "hiit workout", "pilates app", "crossfit", "calisthenics", "stretching",
+    "flexibility", "posture corrector", "back pain", "physical therapy",
+    "sports nutrition", "protein tracker", "macro calculator", "fasting app",
+    "intermittent fasting", "keto diet", "vegan tracker", "water reminder",
+    # Finance & crypto
+    "defi", "nft", "web3", "bitcoin wallet", "ethereum", "portfolio tracker",
+    "options trading", "forex", "day trading", "dividend tracker",
+    "tax calculator", "tax filing", "real estate investment", "peer lending",
+    "savings challenge", "debt payoff", "net worth tracker", "fire calculator",
+    # Gaming niches
+    "idle game", "clicker game", "roguelike", "tower defense", "city builder",
+    "survival game", "horror game", "escape room", "visual novel", "rpg",
+    "card game", "board game", "chess", "sudoku", "crossword", "wordle",
+    "math game", "brain training", "memory game",
+    # Productivity niches
+    "second brain", "pkm", "zettelkasten", "obsidian", "notion alternative",
+    "kanban", "gtd app", "inbox zero", "deep work", "time blocking",
+    "digital detox", "screen time", "focus mode", "distraction blocker",
+    # Niche lifestyle
+    "plant care", "garden app", "pet tracker", "dog training", "cat app",
+    "astrology", "horoscope", "tarot", "numerology", "manifestation",
+    "vision board", "affirmations", "law of attraction", "journaling app",
+    "dream journal", "sleep sounds", "white noise", "meditation timer",
+    # Travel & local
+    "travel planner", "trip organizer", "packing list", "currency converter",
+    "language translator offline", "offline maps", "local guide", "yelp alternative",
+    "restaurant finder", "happy hour", "bar app", "nightlife",
 ]
+
+# ---------------------------------------------------------------------------
+# Mass keyword list — 1000+ long-tail terms for Phase 2+ discovery
+# ---------------------------------------------------------------------------
+
+def _build_mass_keywords() -> List[str]:
+    """
+    Generate 1000+ long-tail search terms from base keywords + modifiers.
+    Called once at module load; result cached as MASS_KEYWORDS constant.
+    """
+    base = DISCOVERY_KEYWORDS
+    modifiers = ["app", "tracker", "best", "free", "2024", "planner", "tool"]
+    seen: set = set(base)
+    result: List[str] = list(base)
+    for kw in base:
+        for mod in modifiers:
+            term = f"{kw} {mod}"
+            if term not in seen:
+                seen.add(term)
+                result.append(term)
+    return result
+
+
+MASS_KEYWORDS: List[str] = _build_mass_keywords()
 
 # ---------------------------------------------------------------------------
 # Engine
@@ -149,11 +219,20 @@ class DiscoveryEngine:
     # Queue helpers
     # -----------------------------------------------------------------------
 
-    def enqueue(self, app_ids: List[str], source: str, priority: int = 0) -> int:
+    def enqueue(
+        self,
+        app_ids: List[str],
+        source: str,
+        priority: int = 0,
+        enrich_mode: str = "full",
+    ) -> int:
         """
         Add new app IDs to the discovery queue.
         Deduplicates against both the apps table and the existing queue.
         Returns the count of IDs newly added.
+
+        enrich_mode: 'full' (default) or 'light' — stored on the queue row so
+        the processor knows whether to call scrape_light_details or scrape_app_full_details.
         """
         if not app_ids:
             return 0
@@ -182,6 +261,7 @@ class DiscoveryEngine:
                 source=source,
                 priority=priority,
                 status="pending",
+                enrich_mode=enrich_mode,
             ))
             count += 1
 
@@ -300,6 +380,59 @@ class DiscoveryEngine:
             return []
 
     @staticmethod
+    def _fetch_keyword_with_dates_rich(keyword: str) -> List[dict]:
+        """
+        iTunes Search API → list of rich info dicts (up to 200).
+
+        Like _fetch_keyword_with_dates but returns the full iTunes result
+        dict fields needed for light_insert_batch:
+          app_id, release_date, current_rank (None for keyword results),
+          developer_id, icon_url, primary_category, is_free, price,
+          current_rating, current_reviews (userRatingCount), name, developer.
+
+        Single HTTP call — no extra API cost vs the basic version.
+        """
+        try:
+            encoded = urllib.parse.quote(keyword)
+            url = (
+                f"https://itunes.apple.com/search"
+                f"?term={encoded}&entity=software&limit=200&country=us"
+            )
+            req = urllib.request.Request(url, headers={"User-Agent": _UA})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            results = []
+            for r in data.get("results", []):
+                if not r.get("trackId"):
+                    continue
+                rd = None
+                raw_date = r.get("releaseDate") or r.get("currentVersionReleaseDate")
+                if raw_date:
+                    try:
+                        rd = datetime.fromisoformat(raw_date.rstrip("Z"))
+                    except Exception:
+                        pass
+                results.append({
+                    "app_id": str(r["trackId"]),
+                    "release_date": rd,
+                    "current_rank": None,  # keyword search results have no chart rank
+                    "name": r.get("trackName", ""),
+                    "developer": r.get("artistName", ""),
+                    "developer_id": str(r["artistId"]) if r.get("artistId") else None,
+                    "icon_url": r.get("artworkUrl512") or r.get("artworkUrl100") or r.get("artworkUrl60"),
+                    "primary_category": r.get("primaryGenreName"),
+                    "is_free": r.get("price", 0) == 0,
+                    "price": r.get("price", 0.0),
+                    "current_rating": r.get("averageUserRating"),
+                    "current_reviews": r.get("userRatingCount", 0),
+                    "url": r.get("trackViewUrl"),
+                })
+            return results
+        except Exception as exc:
+            logger.warning(f"[DISC] Keyword '{keyword}' (rich) failed: {exc}")
+            return []
+
+    @staticmethod
     def _freshness_priority(release_date: Optional[datetime]) -> int:
         """Map a release_date to a queue priority level.
 
@@ -342,6 +475,171 @@ class DiscoveryEngine:
         except Exception as exc:
             logger.warning(f"[DISC] Developer {developer_id} lookup failed: {exc}")
             return []
+
+    # -----------------------------------------------------------------------
+    # Light insert (two-speed pipeline)
+    # -----------------------------------------------------------------------
+
+    def light_insert_batch(self, app_infos: List[dict]) -> int:
+        """
+        Bulk-insert new apps from keyword/chart discovery without fetching full
+        details.  Sets ingestion_stage='light' so the tiering + enrichment jobs
+        know to come back and complete the scrape.
+
+        Deduplicates against the apps table in a single query.
+        Uses ON CONFLICT DO NOTHING so concurrent inserts are safe.
+
+        Returns count of rows inserted.
+        """
+        if not app_infos:
+            return 0
+
+        from app.workers.tasks import _compute_freshness_score
+
+        # Dedup: find which app_ids already exist
+        candidate_ids = [str(info["app_id"]) for info in app_infos if info.get("app_id")]
+        if not candidate_ids:
+            return 0
+
+        existing: set = {
+            row[0]
+            for row in self.db.query(App.app_id).filter(App.app_id.in_(candidate_ids)).all()
+        }
+
+        rows = []
+        for info in app_infos:
+            aid = str(info.get("app_id", ""))
+            if not aid or aid in existing:
+                continue
+
+            rd = info.get("release_date")
+            freshness = _compute_freshness_score(rd) if rd else 0.0
+
+            rows.append({
+                "app_id": aid,
+                "name": info.get("name") or "Unknown",
+                "developer": info.get("developer"),
+                "developer_id": info.get("developer_id"),
+                "icon_url": info.get("icon_url"),
+                "primary_category": info.get("primary_category"),
+                "is_free": bool(info.get("is_free", True)),
+                "price": float(info.get("price") or 0.0),
+                "current_rating": info.get("current_rating"),
+                "current_reviews": int(info.get("current_reviews") or 0),
+                "current_rank": info.get("current_rank"),
+                "release_date": rd,
+                "url": info.get("url"),
+                "freshness_score": freshness,
+                "ingestion_stage": "light",
+                "sync_tier": "warm",
+            })
+
+        if not rows:
+            return 0
+
+        try:
+            stmt = pg_insert(App.__table__).values(rows)
+            stmt = stmt.on_conflict_do_nothing(index_elements=["app_id"])
+            result = self.db.execute(stmt)
+            self.db.commit()
+            inserted = result.rowcount if result.rowcount >= 0 else len(rows)
+            logger.info(f"[DISC] light_insert_batch: {inserted}/{len(rows)} new rows inserted")
+            return inserted
+        except Exception as exc:
+            logger.error(f"[DISC] light_insert_batch failed: {exc}")
+            self.db.rollback()
+            return 0
+
+    async def run_mass_keyword_discovery(self, keywords: List[str]) -> dict:
+        """
+        Run keyword discovery for a large list of keywords using the rich
+        iTunes result dict + pre-filter → light insert pipeline.
+
+        Returns {discovered, filtered_out, inserted}.
+        """
+        from app.services.pre_filter_service import PreFilterService
+
+        pre_filter = PreFilterService()
+        total_discovered = 0
+        total_filtered_out = 0
+        total_inserted = 0
+
+        for kw in keywords:
+            try:
+                raw = await asyncio.to_thread(self._fetch_keyword_with_dates_rich, kw)
+                total_discovered += len(raw)
+
+                passing = pre_filter.filter_batch(raw)
+                total_filtered_out += len(raw) - len(passing)
+
+                if passing:
+                    inserted = await asyncio.to_thread(self.light_insert_batch, passing)
+                    total_inserted += inserted
+
+                await asyncio.sleep(0.3)
+            except Exception as exc:
+                logger.warning(f"[DISC] mass keyword '{kw}' failed: {exc}")
+
+        logger.info(
+            f"[DISC] run_mass_keyword_discovery: {total_discovered} discovered, "
+            f"{total_filtered_out} filtered out, {total_inserted} inserted"
+        )
+        return {
+            "discovered": total_discovered,
+            "filtered_out": total_filtered_out,
+            "inserted": total_inserted,
+        }
+
+    def _enqueue_light_apps_for_tier(self, tier: str, limit: int) -> int:
+        """
+        Find apps with ingestion_stage='light' and sync_tier=tier that are not
+        already in the discovery queue (any status), and enqueue them for full
+        enrichment.
+
+        Priority: HOT=5, WARM=2, COLD=0
+        Returns count of items enqueued.
+        """
+        priority_map = {"hot": 5, "warm": 2, "cold": 0}
+        priority = priority_map.get(tier, 0)
+
+        # Apps already in queue (any status)
+        queued_ids: set = {
+            row[0]
+            for row in self.db.query(DiscoveryQueue.app_id).all()
+        }
+
+        candidates = (
+            self.db.query(App.app_id)
+            .filter(
+                App.ingestion_stage == "light",
+                App.sync_tier == tier,
+            )
+            .limit(limit * 2)  # over-fetch to account for already-queued
+            .all()
+        )
+
+        new_ids = [row[0] for row in candidates if row[0] not in queued_ids]
+        new_ids = new_ids[:limit]
+
+        if not new_ids:
+            return 0
+
+        count = 0
+        for aid in new_ids:
+            self.db.add(DiscoveryQueue(
+                app_id=aid,
+                source=f"tier_enrich:{tier}",
+                priority=priority,
+                status="pending",
+                enrich_mode="full",
+            ))
+            count += 1
+
+        if count:
+            self.db.commit()
+
+        logger.info(f"[DISC] _enqueue_light_apps_for_tier({tier}): {count} enqueued")
+        return count
 
     # -----------------------------------------------------------------------
     # Discovery phases
@@ -504,25 +802,39 @@ class DiscoveryEngine:
     # Queue processor
     # -----------------------------------------------------------------------
 
-    async def process_queue(self, batch_size: int = 25) -> int:
+    async def process_queue(
+        self,
+        batch_size: int = 100,
+        concurrency: int = 10,
+        tier: Optional[str] = None,
+    ) -> int:
         """
         Pick up to `batch_size` pending items from the discovery queue,
-        scrape full details, persist to the apps table, mark done.
+        scrape details concurrently (up to `concurrency` workers), persist
+        to the apps table, mark done.
 
-        Ordering: higher priority first, then oldest added_at (FIFO within
-        the same priority so newest keyword hits are processed before old
-        chart entries, but within a priority class oldest wins to prevent
-        starvation).
+        Parameters
+        ----------
+        batch_size  : max items to claim per call (default 100)
+        concurrency : max simultaneous scrape coroutines (default 10)
+        tier        : optional filter — only process items whose source
+                      contains f"tier_enrich:{tier}" (HOT/WARM/COLD enrichment jobs)
+
+        Ordering: higher priority first, then newest added_at.
+        Routes each item to scrape_light_details or scrape_app_full_details
+        based on the item.enrich_mode column (default 'full').
 
         Returns number of apps successfully scraped.
         """
         from app.workers.tasks import ScraperWorker
+        from app.database import SessionLocal
 
-        # Priority desc (fresh apps = 5 first), then newest added_at within
-        # the same priority tier (recently discovered apps are likely newer).
+        query = self.db.query(DiscoveryQueue).filter(DiscoveryQueue.status == "pending")
+        if tier:
+            query = query.filter(DiscoveryQueue.source.like(f"%tier_enrich:{tier}%"))
+
         pending = (
-            self.db.query(DiscoveryQueue)
-            .filter(DiscoveryQueue.status == "pending")
+            query
             .order_by(
                 DiscoveryQueue.priority.desc(),
                 DiscoveryQueue.added_at.desc(),
@@ -542,38 +854,56 @@ class DiscoveryEngine:
         ).update({"status": "scraping"}, synchronize_session=False)
         self.db.commit()
 
-        worker = ScraperWorker()
-        await worker.initialize()
-        success = 0
+        semaphore = asyncio.Semaphore(concurrency)
+        success_count = 0
 
-        try:
-            for item in pending:
+        async def _process_one(item: DiscoveryQueue) -> bool:
+            """Scrape one item; update queue row status in its own session."""
+            async with semaphore:
+                mode = item.enrich_mode or "full"
+                worker = ScraperWorker()
+                await worker.initialize()
+                ok = False
                 try:
-                    ok = await worker.scrape_app_full_details(item.app_id)
-                    if ok:
-                        item.status = "done"
-                        item.processed_at = datetime.now(timezone.utc)
-                        success += 1
+                    if mode == "light":
+                        ok = await worker.scrape_light_details(item.app_id)
+                        # brief sleep for light path rate-limiting
+                        await asyncio.sleep(0.1)
                     else:
-                        item.failed_attempts = (item.failed_attempts or 0) + 1
-                        item.status = (
-                            "pending" if item.failed_attempts < 3 else "failed"
-                        )
+                        ok = await worker.scrape_app_full_details(item.app_id)
+                        await asyncio.sleep(0.5)
                 except Exception as exc:
-                    item.failed_attempts = (item.failed_attempts or 0) + 1
-                    item.status = (
-                        "pending" if item.failed_attempts < 3 else "failed"
-                    )
-                    logger.error(
-                        f"[DISC] Queue scrape failed {item.app_id}: {exc}"
-                    )
-                self.db.commit()
-                await asyncio.sleep(0.5)
-        finally:
-            await worker.cleanup()
+                    logger.error(f"[DISC] Queue scrape failed {item.app_id}: {exc}")
+                finally:
+                    await worker.cleanup()
 
-        logger.info(f"[DISC] Queue batch done: {success}/{len(pending)} scraped")
-        return success
+                # Update queue row in a dedicated session to avoid cross-thread issues
+                db2 = SessionLocal()
+                try:
+                    row = db2.query(DiscoveryQueue).filter(DiscoveryQueue.id == item.id).first()
+                    if row:
+                        if ok:
+                            row.status = "done"
+                            row.processed_at = datetime.now(timezone.utc)
+                        else:
+                            row.failed_attempts = (row.failed_attempts or 0) + 1
+                            row.status = (
+                                "pending" if row.failed_attempts < 3 else "failed"
+                            )
+                        db2.commit()
+                except Exception as exc:
+                    logger.error(f"[DISC] Queue status update failed {item.app_id}: {exc}")
+                    db2.rollback()
+                finally:
+                    db2.close()
+
+                return ok
+
+        results = await asyncio.gather(*[_process_one(item) for item in pending])
+        success_count = sum(1 for r in results if r)
+
+        logger.info(f"[DISC] Queue batch done: {success_count}/{len(pending)} scraped (concurrency={concurrency})")
+        return success_count
 
     # -----------------------------------------------------------------------
     # Metrics

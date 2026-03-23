@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
@@ -277,6 +277,9 @@ class ScraperWorker:
 
             # Freshness score — recomputed on every full scrape
             app.freshness_score = _compute_freshness_score(app.release_date)
+            # Mark as fully enriched
+            app.ingestion_stage = "full"
+            app.last_enriched_at = datetime.now(timezone.utc)
 
             self.db.commit()
             self.db.refresh(app)
@@ -350,6 +353,64 @@ class ScraperWorker:
             self.db.rollback()
             return False
     
+    async def scrape_light_details(self, app_id: str, country: str = "us") -> bool:
+        """
+        Fetch a single iTunes Lookup API call for `app_id` and persist the
+        partial metadata to the apps table.  This is the 'light' enrichment
+        path — 1 HTTP call vs 3 for a full scrape.
+
+        - Does NOT overwrite ingestion_stage if the row already has 'full'.
+        - Does NOT scrape version history HTML or reviews.
+        - Sets ingestion_stage='light' only if the row was 'light' already (or new).
+        - Creates a minimal row if the app doesn't exist yet.
+
+        Returns True on success, False on failure.
+        """
+        logger.debug(f"[LIGHT] Scraping light details for app {app_id}")
+        try:
+            details = await self.app_scraper.get_app_details(app_id, country)
+            if not details:
+                logger.warning(f"[LIGHT] No details returned for app {app_id}")
+                return False
+
+            app = self.db.query(App).filter(App.app_id == app_id).first()
+            if not app:
+                app = App(app_id=app_id, ingestion_stage="light")
+                self.db.add(app)
+
+            # Update partial fields from iTunes Lookup
+            app.name = details.get("name") or app.name or "Unknown"
+            app.developer = details.get("developer") or app.developer
+            app.developer_id = details.get("developer_id") or app.developer_id
+            app.icon_url = details.get("icon_url") or app.icon_url
+            app.primary_category = details.get("primary_category") or app.primary_category
+            app.is_free = details.get("is_free", app.is_free if app.is_free is not None else True)
+            app.price = details.get("price", app.price or 0.0)
+            app.current_rating = details.get("current_rating") or app.current_rating
+            app.current_reviews = details.get("current_reviews") or app.current_reviews or 0
+            app.current_version = details.get("current_version") or app.current_version
+            app.url = details.get("url") or app.url
+
+            if details.get("release_date"):
+                app.release_date = details["release_date"]
+            if details.get("last_updated"):
+                app.last_updated = details["last_updated"]
+
+            # Recompute freshness
+            app.freshness_score = _compute_freshness_score(app.release_date)
+
+            # Only set light stage if not already fully enriched
+            if app.ingestion_stage != "full":
+                app.ingestion_stage = "light"
+
+            self.db.commit()
+            return True
+
+        except Exception as exc:
+            logger.error(f"[LIGHT] scrape_light_details failed for {app_id}: {exc}")
+            self.db.rollback()
+            return False
+
     async def scrape_quick_refresh_all(self) -> int:
         """
         Lightweight hourly refresh for all tracked apps — runs concurrently.

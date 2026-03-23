@@ -330,8 +330,9 @@ async def job_discovery_developer():
 
 async def job_queue_processor():
     """
-    Pick up to 25 pending items from the discovery queue, scrape full
-    details (metadata + versions + reviews), persist to apps table.
+    Pick up to 100 pending items from the discovery queue, scrape full
+    details (metadata + versions + reviews) with up to 10 concurrent
+    workers, persist to apps table.
     """
     job_id = "queue_processor"
     t0 = _log_start(job_id)
@@ -341,8 +342,131 @@ async def job_queue_processor():
         db = SessionLocal()
         try:
             engine = DiscoveryEngine(db)
-            scraped = await engine.process_queue(batch_size=25)
+            scraped = await engine.process_queue(batch_size=100, concurrency=10)
             _log_done(job_id, t0, f"{scraped} apps fully scraped from queue")
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+# ---------------------------------------------------------------------------
+# Scalable Ingestion Pipeline Jobs (500K target)
+# ---------------------------------------------------------------------------
+
+async def job_mass_discovery_light():
+    """
+    Run keyword discovery for 1000+ long-tail MASS_KEYWORDS.
+    Uses the pre-filter (score >= 15) → light insert pipeline.
+    Light inserts: sets ingestion_stage='light', deferred full enrichment.
+    """
+    job_id = "mass_discovery_light"
+    t0 = _log_start(job_id)
+    try:
+        from app.workers.discovery_engine import DiscoveryEngine, MASS_KEYWORDS
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            engine = DiscoveryEngine(db)
+            stats = await engine.run_mass_keyword_discovery(MASS_KEYWORDS)
+            _log_done(
+                job_id, t0,
+                f"discovered={stats['discovered']}, "
+                f"filtered_out={stats['filtered_out']}, "
+                f"inserted={stats['inserted']}"
+            )
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+async def job_tier_reclassify():
+    """
+    Reclassify all App rows into HOT / WARM / COLD tiers using a single
+    SQL CASE WHEN UPDATE.  Skips rows updated < 6h ago.
+    """
+    job_id = "tier_reclassify"
+    t0 = _log_start(job_id)
+    try:
+        from app.services.app_tiering_service import AppTieringService
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            updated = await asyncio.to_thread(AppTieringService(db).reclassify_all)
+            _log_done(job_id, t0, f"{updated} rows reclassified")
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+async def job_enrich_hot():
+    """
+    Enqueue HOT light-stage apps for full enrichment and process up to
+    200 items with concurrency=15 (highest priority tier).
+    """
+    job_id = "enrich_hot"
+    t0 = _log_start(job_id)
+    try:
+        from app.workers.discovery_engine import DiscoveryEngine
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            engine = DiscoveryEngine(db)
+            enqueued = await asyncio.to_thread(
+                engine._enqueue_light_apps_for_tier, "hot", 200
+            )
+            scraped = await engine.process_queue(batch_size=200, concurrency=15, tier="hot")
+            _log_done(job_id, t0, f"enqueued={enqueued}, scraped={scraped}")
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+async def job_enrich_warm():
+    """
+    Enqueue WARM light-stage apps for full enrichment and process up to
+    500 items with concurrency=8.
+    """
+    job_id = "enrich_warm"
+    t0 = _log_start(job_id)
+    try:
+        from app.workers.discovery_engine import DiscoveryEngine
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            engine = DiscoveryEngine(db)
+            enqueued = await asyncio.to_thread(
+                engine._enqueue_light_apps_for_tier, "warm", 500
+            )
+            scraped = await engine.process_queue(batch_size=500, concurrency=8, tier="warm")
+            _log_done(job_id, t0, f"enqueued={enqueued}, scraped={scraped}")
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+async def job_enrich_cold():
+    """
+    Enqueue COLD light-stage apps for full enrichment and process up to
+    1000 items with concurrency=5 (background, lowest priority).
+    """
+    job_id = "enrich_cold"
+    t0 = _log_start(job_id)
+    try:
+        from app.workers.discovery_engine import DiscoveryEngine
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            engine = DiscoveryEngine(db)
+            enqueued = await asyncio.to_thread(
+                engine._enqueue_light_apps_for_tier, "cold", 1000
+            )
+            scraped = await engine.process_queue(batch_size=1000, concurrency=5, tier="cold")
+            _log_done(job_id, t0, f"enqueued={enqueued}, scraped={scraped}")
         finally:
             db.close()
     except Exception as exc:
@@ -1225,6 +1349,72 @@ def setup_scheduler() -> AsyncIOScheduler:
         ),
         id="campaign_detection",
         name="Every 2h: Campaign / Growth Signal Detection",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── SCALABLE INGESTION PIPELINE (500K target) ──────────────────────────────
+    # Mass keyword discovery with light insert — every 1h, first +20min
+    scheduler.add_job(
+        job_mass_discovery_light,
+        trigger=IntervalTrigger(
+            hours=1,
+            start_date=now + timedelta(minutes=20),
+            timezone="UTC",
+        ),
+        id="mass_discovery_light",
+        name="Every 1h: Mass Keyword Discovery (light insert)",
+        **_JOB_DEFAULTS,
+    )
+
+    # Tier reclassification — every 6h, first +25min
+    scheduler.add_job(
+        job_tier_reclassify,
+        trigger=IntervalTrigger(
+            hours=6,
+            start_date=now + timedelta(minutes=25),
+            timezone="UTC",
+        ),
+        id="tier_reclassify",
+        name="Every 6h: App Tier Reclassification (HOT/WARM/COLD)",
+        **_JOB_DEFAULTS,
+    )
+
+    # HOT tier enrichment — every 1h, first +30min
+    scheduler.add_job(
+        job_enrich_hot,
+        trigger=IntervalTrigger(
+            hours=1,
+            start_date=now + timedelta(minutes=30),
+            timezone="UTC",
+        ),
+        id="enrich_hot",
+        name="Every 1h: Enrich HOT tier light apps",
+        **_JOB_DEFAULTS,
+    )
+
+    # WARM tier enrichment — every 6h, first +90min
+    scheduler.add_job(
+        job_enrich_warm,
+        trigger=IntervalTrigger(
+            hours=6,
+            start_date=now + timedelta(minutes=90),
+            timezone="UTC",
+        ),
+        id="enrich_warm",
+        name="Every 6h: Enrich WARM tier light apps",
+        **_JOB_DEFAULTS,
+    )
+
+    # COLD tier enrichment — every 24h, first +4h
+    scheduler.add_job(
+        job_enrich_cold,
+        trigger=IntervalTrigger(
+            hours=24,
+            start_date=now + timedelta(hours=4),
+            timezone="UTC",
+        ),
+        id="enrich_cold",
+        name="Every 24h: Enrich COLD tier light apps",
         **_JOB_DEFAULTS,
     )
 

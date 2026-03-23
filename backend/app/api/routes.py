@@ -3405,3 +3405,91 @@ def get_campaigns(
         total=total,
         by_type=by_type,
     )
+
+
+# ---------------------------------------------------------------------------
+# Ingestion pipeline status
+# ---------------------------------------------------------------------------
+
+@router.get("/ingestion/status")
+def get_ingestion_status(db: Session = Depends(get_db)):
+    """
+    Live ingestion pipeline stats: stage/tier distribution, queue depth,
+    and 7-day daily insertion rate.
+
+    Uses fast COUNT GROUP BY queries — no table scans on large columns.
+    """
+    from sqlalchemy import text as _text
+    import time as _t
+
+    t0 = _t.monotonic()
+
+    try:
+        # Total apps
+        total_apps = db.query(func.count(models.App.id)).scalar() or 0
+
+        # By ingestion stage
+        stage_rows = db.execute(_text(
+            "SELECT ingestion_stage, COUNT(*) FROM apps GROUP BY ingestion_stage"
+        )).fetchall()
+        by_stage = {row[0] or "full": row[1] for row in stage_rows}
+
+        # By sync tier
+        tier_rows = db.execute(_text(
+            "SELECT sync_tier, COUNT(*) FROM apps GROUP BY sync_tier"
+        )).fetchall()
+        by_tier = {row[0] or "warm": row[1] for row in tier_rows}
+
+        # Queue stats
+        queue_rows = db.execute(_text(
+            "SELECT status, COUNT(*) FROM discovery_queue GROUP BY status"
+        )).fetchall()
+        queue = {row[0]: row[1] for row in queue_rows}
+
+        # HOT SLA breach: HOT light-stage apps older than 1h not yet enriched
+        hot_breach = db.execute(_text(
+            """
+            SELECT COUNT(*) FROM apps
+            WHERE sync_tier = 'hot'
+              AND ingestion_stage = 'light'
+              AND created_at < NOW() - INTERVAL '1 hour'
+            """
+        )).scalar() or 0
+
+        # 7-day daily insertion rate (new apps per day)
+        daily_rows = db.execute(_text(
+            """
+            SELECT DATE(created_at AT TIME ZONE 'UTC') AS day, COUNT(*) AS cnt
+            FROM apps
+            WHERE created_at >= NOW() - INTERVAL '7 days'
+            GROUP BY 1
+            ORDER BY 1
+            """
+        )).fetchall()
+        daily_rate_7d = [{"date": str(row[0]), "count": row[1]} for row in daily_rows]
+
+        return {
+            "total_apps": total_apps,
+            "by_stage": by_stage,
+            "by_tier": by_tier,
+            "queue": {
+                "pending": queue.get("pending", 0),
+                "scraping": queue.get("scraping", 0),
+                "done": queue.get("done", 0),
+                "failed": queue.get("failed", 0),
+            },
+            "hot_sla_breach": hot_breach,
+            "daily_rate_7d": daily_rate_7d,
+            "response_ms": round((_t.monotonic() - t0) * 1000, 1),
+        }
+    except Exception as exc:
+        logger.error(f"[ingestion/status] failed: {exc}")
+        return {
+            "total_apps": 0,
+            "by_stage": {},
+            "by_tier": {},
+            "queue": {"pending": 0, "scraping": 0, "done": 0, "failed": 0},
+            "hot_sla_breach": 0,
+            "daily_rate_7d": [],
+            "error": str(exc),
+        }

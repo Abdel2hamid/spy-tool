@@ -326,6 +326,17 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_rankings_app_recorded ON rankings (app_id, recorded_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_reviews_app_date      ON reviews (app_id, date DESC)",
     "CREATE INDEX IF NOT EXISTS idx_feature_gaps_app_id   ON feature_gaps (app_id)",
+
+    # Scalable ingestion pipeline — two-speed architecture (500K target)
+    "ALTER TABLE apps ADD COLUMN IF NOT EXISTS ingestion_stage VARCHAR(20) DEFAULT 'full'",
+    "ALTER TABLE apps ADD COLUMN IF NOT EXISTS sync_tier VARCHAR(10) DEFAULT 'warm'",
+    "ALTER TABLE apps ADD COLUMN IF NOT EXISTS tier_computed_at TIMESTAMPTZ",
+    "ALTER TABLE apps ADD COLUMN IF NOT EXISTS last_enriched_at TIMESTAMPTZ",
+    "ALTER TABLE discovery_queue ADD COLUMN IF NOT EXISTS enrich_mode VARCHAR(10) DEFAULT 'full'",
+    "CREATE INDEX IF NOT EXISTS idx_app_ingestion_stage ON apps (ingestion_stage)",
+    "CREATE INDEX IF NOT EXISTS idx_app_sync_tier ON apps (sync_tier)",
+    "CREATE INDEX IF NOT EXISTS idx_app_tier_stage ON apps (sync_tier, ingestion_stage)",
+    "CREATE INDEX IF NOT EXISTS idx_app_last_enriched ON apps (last_enriched_at)",
 ]
 
 

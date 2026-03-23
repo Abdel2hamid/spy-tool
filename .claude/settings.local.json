@@ -345,7 +345,15 @@
       "Bash(python3 -m pytest --tb=short -q 2>&1 | tail -15)",
       "Bash(python3 -m pytest --tb=short -q 2>&1 | tail -8)",
       "Bash(python3 -m pytest --tb=short -q 2>&1 | tail -10)",
-      "Bash(python3 -m pytest --tb=short -q 2>&1 | tail -5)"
+      "Bash(python3 -m pytest --tb=short -q 2>&1 | tail -5)",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python -m pytest tests/test_pre_filter_service.py tests/test_app_tiering_service.py -v 2>&1 | tail -60)",
+      "Bash(python3 -m pytest tests/test_pre_filter_service.py tests/test_app_tiering_service.py -v 2>&1 | tail -70)",
+      "Bash(python3 -m pytest tests/test_pre_filter_service.py tests/test_app_tiering_service.py -v 2>&1 | tail -15)",
+      "Bash(python3 -m pytest tests/test_blowing_up.py tests/test_trending.py -q 2>&1 | tail -10)",
+      "Bash(python3 -m pytest tests/test_blowing_up.py tests/test_opportunity_of_day.py -q 2>&1 | tail -10)",
+      "Bash(python3 -m pytest tests/test_pre_filter_service.py tests/test_app_tiering_service.py -q 2>&1 | tail -5)",
+      "Bash(python3 -c \"\nfrom app.services.pre_filter_service import PreFilterService, MASS_KEYWORDS\nfrom app.services.app_tiering_service import AppTieringService\nfrom app.workers.discovery_engine import DISCOVERY_KEYWORDS, MASS_KEYWORDS\nprint\\(f'DISCOVERY_KEYWORDS: {len\\(DISCOVERY_KEYWORDS\\)}'\\)\nprint\\(f'MASS_KEYWORDS: {len\\(MASS_KEYWORDS\\)}'\\)\nsvc = PreFilterService\\(\\)\nscore = svc.score_one\\({'release_date': None, 'current_reviews': 0, 'current_rank': 1}\\)\nprint\\(f'Score for ranked app \\(no reviews, old\\): {score}'\\)\n\" 2>&1)",
+      "Bash(python3 -c \"\nfrom app.services.pre_filter_service import PreFilterService\nfrom app.services.app_tiering_service import AppTieringService\nfrom app.workers.discovery_engine import DISCOVERY_KEYWORDS, MASS_KEYWORDS\nprint\\(f'DISCOVERY_KEYWORDS: {len\\(DISCOVERY_KEYWORDS\\)}'\\)\nprint\\(f'MASS_KEYWORDS: {len\\(MASS_KEYWORDS\\)}'\\)\nsvc = PreFilterService\\(\\)\nscore = svc.score_one\\({'release_date': None, 'current_reviews': 0, 'current_rank': 1}\\)\nprint\\(f'Score for ranked app \\(no reviews, old\\): {score}'\\)\n\" 2>&1)"
     ]
   }
 }
