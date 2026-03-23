@@ -514,7 +514,7 @@ def get_blowing_up_apps(
         def _bg_compute():
             _db = _SessionLocal()
             try:
-                BlowingUpService(_db).compute_for_all_apps(timeframe_days=7, max_apps=100)
+                BlowingUpService(_db).compute_for_all_apps(timeframe_days=7, max_apps=500)
             except Exception as _exc:
                 logger.warning("[blowing-up] background autocompute error: %s", _exc)
             finally:
@@ -1595,7 +1595,7 @@ async def trigger_keyword_pipeline():
         try:
             logger.info("keyword_pipeline: manual run started")
             pipeline = KeywordIntelligencePipeline(_db)
-            summary = await pipeline.run_full_pipeline(max_keywords=300)
+            summary = await pipeline.run_full_pipeline(max_keywords=1000)
             logger.info(f"keyword_pipeline: manual run complete — {summary}")
         except Exception as e:
             logger.error(f"keyword_pipeline: manual run failed — {e}", exc_info=True)
