@@ -19,8 +19,9 @@ from typing import Optional
 
 import logging
 
+import bcrypt as _bcrypt
+
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -28,21 +29,30 @@ from app.models.models import Membership, Subscription, User, Workspace
 
 logger = logging.getLogger(__name__)
 
-_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 TRIAL_DAYS = 14
 
 
 # ---------------------------------------------------------------------------
-# Password helpers
+# Password helpers — use bcrypt directly, not passlib CryptContext.
+#
+# passlib 1.7.4's CryptContext.verify() with deprecated="auto" runs TWO
+# bcrypt computations per call (verify + needs_update check), and can hang
+# indefinitely in low-entropy container environments.  Direct bcrypt calls
+# are simpler, faster, and have no hidden code paths.
 # ---------------------------------------------------------------------------
 
 def hash_password(plain: str) -> str:
-    return _pwd_ctx.hash(plain)
+    """Hash a plain-text password with bcrypt (cost=12)."""
+    return _bcrypt.hashpw(plain.encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return _pwd_ctx.verify(plain, hashed)
+    """Verify a plain-text password against a stored bcrypt hash."""
+    try:
+        return _bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception as exc:                         # malformed hash, encoding error, etc.
+        logger.error("verify_password error: %s", exc)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -167,19 +177,33 @@ class InvalidCredentials(Exception):
     pass
 
 
-def login_user(db: Session, email: str, password: str) -> tuple[User, Workspace, str]:
+def login_user(
+    db: Session, email: str, password: str
+) -> tuple[User, Workspace, Membership, "Subscription | None", str]:
     """
-    Verify credentials and return (user, workspace, access_token).
+    Verify credentials and return (user, workspace, membership, subscription, token).
     Uses the user's first owned workspace (or first membership if no owner role).
     Raises InvalidCredentials on failure.
     """
     email = email.lower().strip()
+    logger.info("login_user: start for %s", email)
 
+    logger.info("login_user: querying user")
     user = db.query(User).filter(User.email == email, User.is_active == True).first()
-    if not user or not verify_password(password, user.password_hash):
+    logger.info("login_user: user query done — found=%s", user is not None)
+
+    if not user:
+        raise InvalidCredentials("Invalid email or password")
+
+    logger.info("login_user: starting bcrypt verify")
+    pw_ok = verify_password(password, user.password_hash)
+    logger.info("login_user: bcrypt verify done — ok=%s", pw_ok)
+
+    if not pw_ok:
         raise InvalidCredentials("Invalid email or password")
 
     # Prefer owner workspace; fall back to first membership
+    logger.info("login_user: querying membership")
     membership = (
         db.query(Membership)
         .filter(Membership.user_id == user.id, Membership.role == "owner")
@@ -188,7 +212,14 @@ def login_user(db: Session, email: str, password: str) -> tuple[User, Workspace,
     )
     if not membership:
         raise InvalidCredentials("No workspace found for this user")
+    logger.info("login_user: membership found workspace_id=%s", membership.workspace_id)
 
     workspace = db.query(Workspace).filter(Workspace.id == membership.workspace_id).first()
+    subscription = db.query(Subscription).filter(
+        Subscription.workspace_id == workspace.id
+    ).first()
+
+    logger.info("login_user: creating token for user_id=%s", user.id)
     token = create_access_token(user.id, workspace.id)
-    return user, workspace, token
+    logger.info("login_user: done for %s", email)
+    return user, workspace, membership, subscription, token

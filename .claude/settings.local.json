@@ -374,7 +374,9 @@
       "Bash(python3 -m pytest tests/test_plan_enforcement.py -q 2>&1 | tail -5)",
       "Bash(cd /Users/abdelhamid/appstore-spy-tool/frontend && npx tsc --noEmit --project tsconfig.json 2>&1 | grep -E \"settings|auth_router|api.ts\" | head -20)",
       "Bash(npx tsc --noEmit --project tsconfig.json 2>&1 | grep -v \"node_modules\" | grep -E \"error|warning\" | head -20)",
-      "Bash(npx tsc --noEmit 2>&1 | grep -E \"settings/page|lib/api\" | head -20)"
+      "Bash(npx tsc --noEmit 2>&1 | grep -E \"settings/page|lib/api\" | head -20)",
+      "Bash(cd /Users/abdelhamid/appstore-spy-tool/backend && python3 -c \"\nfrom app.services.auth_service import hash_password, verify_password\nimport time\n\n# Test hash\nt0 = time.time\\(\\)\nh = hash_password\\('TestPass123!'\\)\nprint\\(f'hash_password: {time.time\\(\\)-t0:.3f}s  hash={h[:20]}...'\\)\n\n# Test verify correct\nt0 = time.time\\(\\)\nok = verify_password\\('TestPass123!', h\\)\nprint\\(f'verify_password \\(correct\\): {time.time\\(\\)-t0:.3f}s  ok={ok}'\\)\n\n# Test verify wrong\nt0 = time.time\\(\\)\nbad = verify_password\\('WrongPass!', h\\)\nprint\\(f'verify_password \\(wrong\\): {time.time\\(\\)-t0:.3f}s  ok={bad}'\\)\n\nprint\\('All OK'\\)\n\")",
+      "Bash(python3 -m pytest tests/test_plan_enforcement.py -q 2>&1 | tail -3)"
     ]
   }
 }

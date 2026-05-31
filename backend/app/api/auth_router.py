@@ -183,20 +183,14 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
 def login(body: LoginRequest, db: Session = Depends(get_db)):
     """Authenticate with email + password. Returns JWT access token."""
     try:
-        user, workspace, token = login_user(db, email=body.email, password=body.password)
+        user, workspace, membership, subscription, token = login_user(
+            db, email=body.email, password=body.password
+        )
     except InvalidCredentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
         )
-
-    from app.models.models import Membership, Subscription
-    membership = db.query(Membership).filter(
-        Membership.user_id == user.id, Membership.workspace_id == workspace.id
-    ).first()
-    subscription = db.query(Subscription).filter(
-        Subscription.workspace_id == workspace.id
-    ).first()
 
     return _build_auth_response(user, workspace, membership, subscription, token)
 
