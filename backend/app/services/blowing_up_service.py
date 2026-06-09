@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models.models import App, AppBlowingUpScore, Ranking, Review
+from app.utils.batch_utils import log_memory
 
 logger = logging.getLogger(__name__)
 
@@ -515,24 +516,18 @@ class BlowingUpService:
         """
         Compute and persist blowing_up_score for all eligible apps.
 
-        Candidate selection (v2 — discovery-oriented):
-          • Pool expanded to *max_apps* = 500 (was 100).
-          • Candidates ordered by rank improvement (max_rank − min_rank DESC)
-            so apps with the biggest climbs appear first.  Previously ordered
-            by snapshot count which favoured permanently-charted incumbents.
-          • All ranking rows, review counts, pre-window flags and lifetime
-            review counts fetched in bulk (no N+1 queries).
-          • Single transaction for all upserts.
+        Processes candidates in batches of 50 to bound memory usage —
+        rankings are only prefetched for the current batch, then committed
+        and expired before the next batch.
 
         Returns the number of apps scored (inserted/updated).
         """
         t0 = time.monotonic()
+        log_memory("blowing_up", "start")
         now    = datetime.now(timezone.utc)
         cutoff = now - timedelta(days=timeframe_days)
 
         # ── 1. Candidates: apps with ≥2 snapshots, ordered by rank improvement ──
-        # rank_improvement = max_rank − min_rank over the window.
-        # Biggest rank climb → top of list → breakout apps surface before incumbents.
         rank_improvement_expr = (
             func.max(Ranking.rank) - func.min(Ranking.rank)
         ).label("rank_improvement")
@@ -563,83 +558,77 @@ class BlowingUpService:
             logger.info("[BlowingUp] no candidates — done in %.2fs", time.monotonic() - t0)
             return 0
 
-        # ── 2. Bulk-prefetch rankings in window (single query) ──
-        all_rankings = (
-            self.db.query(Ranking)
-            .filter(
-                Ranking.app_id.in_(app_ids),
-                Ranking.recorded_at >= cutoff,
-                Ranking.rank.isnot(None),
-            )
-            .order_by(Ranking.app_id, Ranking.recorded_at.asc())
-            .all()
-        )
-        rankings_by_app: Dict[int, List] = defaultdict(list)
-        for r in all_rankings:
-            rankings_by_app[r.app_id].append(r)
-
-        # ── 3. Bulk-prefetch review counts (single query) ──
-        review_count_rows = (
-            self.db.query(Review.app_id, func.count(Review.id).label("cnt"))
-            .filter(Review.app_id.in_(app_ids), Review.date >= cutoff)
-            .group_by(Review.app_id)
-            .all()
-        )
-        review_counts: Dict[int, int] = {row[0]: row[1] for row in review_count_rows}
-
-        # ── 4. Bulk-prefetch pre-window existence (single query) ──
-        pre_window_apps = set(
-            row[0]
-            for row in (
-                self.db.query(Ranking.app_id)
-                .filter(
-                    Ranking.app_id.in_(app_ids),
-                    Ranking.recorded_at < cutoff,
-                    Ranking.rank.isnot(None),
-                )
-                .distinct()
-                .all()
-            )
-        )
-
-        # ── 5. Bulk-fetch lifetime review counts for incumbent dampening ──
-        current_reviews_by_app: Dict[int, int] = {
-            row[0]: (row[1] or 0)
-            for row in (
-                self.db.query(App.id, App.current_reviews)
-                .filter(App.id.in_(app_ids))
-                .all()
-            )
-        }
-
-        # ── 6. Score each app using only in-memory data ──
-        results: List[Dict] = []
+        # ── Process in batches of 50 to bound memory ──
+        _PREFETCH_BATCH = 50
+        scored = 0
         skipped_no_data = 0
         failed = 0
-        for app_id in app_ids:
-            try:
-                result = self._compute_from_prefetch(
-                    app_id=app_id,
-                    rankings=rankings_by_app.get(app_id, []),
-                    review_count=review_counts.get(app_id, 0),
-                    is_new_entry=(app_id not in pre_window_apps),
-                    timeframe_days=timeframe_days,
-                    now=now,
-                    current_reviews=current_reviews_by_app.get(app_id, 0),
-                )
-                if result is None:
-                    skipped_no_data += 1
-                else:
-                    results.append(result)
-            except Exception as exc:
-                logger.warning("[BlowingUp] app_id=%s scoring failed: %s", app_id, exc)
-                failed += 1
 
-        # ── 7. Batch upsert in a single transaction ──
-        scored = 0
-        if results:
-            try:
-                for result in results:
+        for i in range(0, len(app_ids), _PREFETCH_BATCH):
+            batch_ids = app_ids[i : i + _PREFETCH_BATCH]
+
+            # Prefetch rankings only for this batch
+            all_rankings = (
+                self.db.query(Ranking)
+                .filter(
+                    Ranking.app_id.in_(batch_ids),
+                    Ranking.recorded_at >= cutoff,
+                    Ranking.rank.isnot(None),
+                )
+                .order_by(Ranking.app_id, Ranking.recorded_at.asc())
+                .all()
+            )
+            rankings_by_app: Dict[int, List] = defaultdict(list)
+            for r in all_rankings:
+                rankings_by_app[r.app_id].append(r)
+
+            review_count_rows = (
+                self.db.query(Review.app_id, func.count(Review.id).label("cnt"))
+                .filter(Review.app_id.in_(batch_ids), Review.date >= cutoff)
+                .group_by(Review.app_id)
+                .all()
+            )
+            review_counts: Dict[int, int] = {row[0]: row[1] for row in review_count_rows}
+
+            pre_window_apps = set(
+                row[0]
+                for row in (
+                    self.db.query(Ranking.app_id)
+                    .filter(
+                        Ranking.app_id.in_(batch_ids),
+                        Ranking.recorded_at < cutoff,
+                        Ranking.rank.isnot(None),
+                    )
+                    .distinct()
+                    .all()
+                )
+            )
+
+            current_reviews_by_app: Dict[int, int] = {
+                row[0]: (row[1] or 0)
+                for row in (
+                    self.db.query(App.id, App.current_reviews)
+                    .filter(App.id.in_(batch_ids))
+                    .all()
+                )
+            }
+
+            # Score each app in this batch
+            for app_id in batch_ids:
+                try:
+                    result = self._compute_from_prefetch(
+                        app_id=app_id,
+                        rankings=rankings_by_app.get(app_id, []),
+                        review_count=review_counts.get(app_id, 0),
+                        is_new_entry=(app_id not in pre_window_apps),
+                        timeframe_days=timeframe_days,
+                        now=now,
+                        current_reviews=current_reviews_by_app.get(app_id, 0),
+                    )
+                    if result is None:
+                        skipped_no_data += 1
+                        continue
+
                     stmt = (
                         pg_insert(AppBlowingUpScore)
                         .values(
@@ -684,12 +673,20 @@ class BlowingUpService:
                         )
                     )
                     self.db.execute(stmt)
-                self.db.commit()
-                scored = len(results)
-            except Exception as exc:
-                logger.error("[BlowingUp] batch upsert failed: %s", exc)
-                self.db.rollback()
+                    scored += 1
+                except Exception as exc:
+                    logger.warning("[BlowingUp] app_id=%s scoring failed: %s", app_id, exc)
+                    failed += 1
 
+            # Commit and release ORM objects after each batch
+            try:
+                self.db.commit()
+            except Exception as exc:
+                logger.error("[BlowingUp] batch commit failed: %s", exc)
+                self.db.rollback()
+            self.db.expire_all()
+
+        log_memory("blowing_up", "end")
         elapsed = time.monotonic() - t0
         logger.info(
             "[BlowingUp] done in %.2fs: candidates=%d scored=%d "

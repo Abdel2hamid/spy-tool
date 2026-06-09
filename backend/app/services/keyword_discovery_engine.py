@@ -252,10 +252,16 @@ class KeywordDiscoveryEngine:
     # -----------------------------------------------------------------------
 
     def _load_seeds(self) -> List[str]:
-        """Return builtin seeds + any existing DB keyword terms."""
+        """Return builtin seeds + top DB keywords by quality_score (bounded to 5000)."""
         from app.models.models import Keyword
 
-        db_terms = [row.term for row in self.db.query(Keyword.term).all()]
+        db_terms = [
+            row.term for row in
+            self.db.query(Keyword.term)
+            .order_by(Keyword.quality_score.desc().nullslast())
+            .limit(5000)
+            .all()
+        ]
         combined = list(dict.fromkeys(_BUILTIN_SEEDS + db_terms))  # preserve order, dedup
         return combined
 
@@ -482,10 +488,25 @@ class KeywordDiscoveryEngine:
         skipped = 0
         batch_size = 500
 
-        existing_terms: Set[str] = {
-            row.term
-            for row in self.db.query(Keyword.term).all()
-        }
+        # Build lookup sets for deduplication.
+        # Use EXISTS checks per-batch for terms instead of loading all into memory.
+        # For canonical mapping, load only non-null entries (typically much smaller).
+        from sqlalchemy import exists as sa_exists
+
+        existing_terms: Set[str] = set()
+        # Pre-load terms only for the candidates we're about to insert
+        candidate_set = set(candidates)
+        # Check in batches of 1000 to avoid oversized IN clauses
+        _check_batch = 1000
+        candidate_list = list(candidate_set)
+        for ci in range(0, len(candidate_list), _check_batch):
+            chunk = candidate_list[ci : ci + _check_batch]
+            found = {
+                row.term for row in
+                self.db.query(Keyword.term).filter(Keyword.term.in_(chunk)).all()
+            }
+            existing_terms.update(found)
+
         canonical_to_id: dict = {
             row.canonical_term: row.id
             for row in self.db.query(Keyword.id, Keyword.canonical_term)

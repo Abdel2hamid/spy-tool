@@ -8,6 +8,7 @@ from app.models.models import App, Category, Ranking, Keyword, KeywordStatus, Ap
 from app.scrapers.appstore import AppStoreScraper
 from app.scrapers.app_details import AppStoreAppScraper
 from app.scoring.engine import ScoringEngine
+from app.utils.batch_utils import iter_batches, log_memory
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -430,16 +431,12 @@ class ScraperWorker:
         _TIMEOUT = 60.0  # seconds per app
         _SEM = asyncio.Semaphore(_CONCURRENCY)
 
-        # Collect IDs while holding the shared session; avoid passing the ORM
-        # object across session boundaries.
-        apps = (
-            self.db.query(App)
-            .order_by(App.freshness_score.desc().nullslast(), App.created_at.desc())
-            .all()
-        )
-        app_records = [(app.id, app.app_id) for app in apps]
+        log_memory("quick_refresh", "start")
+
+        # Count total apps for logging
+        total_apps = self.db.query(App.id).count()
         logger.info(
-            f"Quick refresh: {len(app_records)} apps  "
+            f"Quick refresh: {total_apps} apps  "
             f"concurrency={_CONCURRENCY}  timeout={_TIMEOUT}s"
         )
 
@@ -520,40 +517,60 @@ class ScraperWorker:
                 finally:
                     db.close()
 
-        results = await asyncio.gather(
-            *[_refresh_one(db_id, sid) for db_id, sid in app_records]
+        # Process in batches of 200 to avoid creating 100K+ coroutines at once
+        _BATCH_SIZE = 200
+        success_count = 0
+        total_processed = 0
+        base_query = (
+            self.db.query(App.id, App.app_id)
+            .order_by(App.freshness_score.desc().nullslast(), App.created_at.desc())
         )
-        success_count = sum(1 for r in results if r)
-        failed_count = len(app_records) - success_count
+        for batch in iter_batches(base_query, _BATCH_SIZE):
+            results = await asyncio.gather(
+                *[_refresh_one(db_id, sid) for db_id, sid in batch]
+            )
+            success_count += sum(1 for r in results if r)
+            total_processed += len(batch)
+            self.db.expire_all()
+
+        failed_count = total_processed - success_count
+        log_memory("quick_refresh", "end")
         logger.info(
-            f"Quick refresh complete: {success_count}/{len(app_records)} OK  "
+            f"Quick refresh complete: {success_count}/{total_processed} OK  "
             f"{failed_count} failed/timed-out"
         )
         return success_count
 
     async def scrape_all_tracked_apps(self):
         logger.info("Starting scrape for all tracked apps (uncapped)")
+        log_memory("scrape_all_tracked", "start")
 
-        # Process fresh apps (high freshness_score) before older ones
-        apps = (
-            self.db.query(App)
-            .order_by(App.freshness_score.desc().nullslast(), App.created_at.desc())
-            .all()
-        )
-        app_ids = [app.app_id for app in apps]
+        total_apps = self.db.query(App.id).count()
+        logger.info(f"Found {total_apps} tracked apps to scrape")
 
-        logger.info(f"Found {len(app_ids)} tracked apps to scrape")
-        
+        # Process in batches of 100 to bound memory usage
+        _BATCH_SIZE = 100
         success_count = 0
-        for app_id in app_ids:
-            try:
-                success = await self.scrape_app_full_details(app_id)
-                if success:
-                    success_count += 1
-            except Exception as e:
-                logger.error(f"Failed to scrape app {app_id}: {e}")
-        
-        logger.info(f"Scraped {success_count}/{len(app_ids)} apps successfully")
+        total_processed = 0
+        base_query = (
+            self.db.query(App.app_id)
+            .order_by(App.freshness_score.desc().nullslast(), App.created_at.desc())
+        )
+        for batch in iter_batches(base_query, _BATCH_SIZE):
+            app_ids = [row[0] for row in batch]
+            for app_id in app_ids:
+                try:
+                    success = await self.scrape_app_full_details(app_id)
+                    if success:
+                        success_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to scrape app {app_id}: {e}")
+            total_processed += len(app_ids)
+            # Release ORM identity map between batches
+            self.db.expire_all()
+
+        log_memory("scrape_all_tracked", "end")
+        logger.info(f"Scraped {success_count}/{total_processed} apps successfully")
         return success_count
 
 
@@ -570,46 +587,50 @@ class ScoringWorker:
     
     def update_opportunities(self):
         logger.info("Updating opportunity scores")
+        log_memory("update_opportunities", "start")
 
-        # Mark truly orphaned keywords as PRUNED (no app links, never enriched, >24h old).
-        # We mark first instead of deleting immediately so they can be inspected;
-        # a follow-up pass deletes only PRUNED rows.
+        from sqlalchemy import text
+
+        # Mark truly orphaned keywords as PRUNED using raw SQL (no ORM load)
         cutoff_24h = datetime.utcnow() - timedelta(hours=24)
-        stale = (
-            self.db.query(Keyword)
-            .outerjoin(AppKeyword, AppKeyword.keyword_id == Keyword.id)
-            .filter(
-                AppKeyword.id.is_(None),                            # no app associations
-                Keyword.last_enriched.is_(None),                    # never enriched
-                Keyword.last_updated < cutoff_24h,                  # at least 24 h old
-                Keyword.status != KeywordStatus.ENRICHED.value,     # not yet enriched
-            )
-            .all()
-        )
-        if stale:
-            logger.info(f"Marking {len(stale)} orphaned keywords as PRUNED")
-            for kw in stale:
-                kw.status = KeywordStatus.PRUNED.value
+        try:
+            result = self.db.execute(text("""
+                UPDATE keywords SET status = 'pruned'
+                WHERE id IN (
+                    SELECT k.id FROM keywords k
+                    LEFT JOIN app_keywords ak ON ak.keyword_id = k.id
+                    WHERE ak.id IS NULL
+                      AND k.last_enriched IS NULL
+                      AND k.last_updated < :cutoff
+                      AND k.status != 'enriched'
+                )
+            """), {"cutoff": cutoff_24h})
+            if result.rowcount:
+                logger.info(f"Marked {result.rowcount} orphaned keywords as PRUNED")
             self.db.commit()
+        except Exception as e:
+            logger.error(f"Keyword pruning mark failed: {e}")
+            self.db.rollback()
 
         # Delete keywords that were previously marked PRUNED
-        pruned = (
-            self.db.query(Keyword)
-            .filter(Keyword.status == KeywordStatus.PRUNED.value)
-            .all()
-        )
-        if pruned:
-            logger.info(f"Deleting {len(pruned)} PRUNED keywords")
-            for kw in pruned:
-                self.db.delete(kw)
+        try:
+            result = self.db.execute(text("DELETE FROM keywords WHERE status = 'pruned'"))
+            if result.rowcount:
+                logger.info(f"Deleted {result.rowcount} PRUNED keywords")
             self.db.commit()
+        except Exception as e:
+            logger.error(f"Keyword pruning delete failed: {e}")
+            self.db.rollback()
+
+        self.db.expire_all()
 
         engine = ScoringEngine(self.db)
 
         # Populate search_volume / difficulty / trend estimates from app data
         logger.info("Updating keyword metrics from app data")
         engine.update_keyword_metrics()
-        
+        self.db.expire_all()
+
         # Process fresh apps first — new apps need opportunity scores quickly
         apps = (
             self.db.query(App)
@@ -618,26 +639,26 @@ class ScoringWorker:
             .limit(200)
             .all()
         )
-        
+
         for app in apps:
             keywords = self.db.query(AppKeyword).join(Keyword).filter(
                 AppKeyword.app_id == app.id
             ).limit(5).all()
-            
+
             if not keywords:
                 continue
-            
+
             for app_kw in keywords:
                 result = engine.score_opportunity(app.id, app_kw.keyword.term)
-                
+
                 if result:
                     from app.models.models import Opportunity
-                    
+
                     existing = self.db.query(Opportunity).filter(
                         Opportunity.app_id == app.id,
                         Opportunity.primary_keyword == app_kw.keyword.term
                     ).first()
-                    
+
                     if existing:
                         existing.competition_score = result["competition_score"]
                         existing.trend_score = result["trend_score"]
@@ -656,54 +677,67 @@ class ScoringWorker:
                             recommendation=result["recommendation"]
                         )
                         self.db.add(opportunity)
-        
+
         self.db.commit()
+        self.db.expire_all()
         logger.info("Opportunity scores updated")
 
-        # Compute market weakness (per-country negative review ratio) for all apps with reviews
+        # Compute market weakness — paginated by app ID instead of loading all
         logger.info("Computing market weakness stats")
-        apps_with_reviews = (
-            self.db.query(App)
+        _BATCH = 100
+        mw_count = 0
+        mw_query = (
+            self.db.query(App.id)
             .join(Review, Review.app_id == App.id)
             .distinct()
-            .all()
+            .order_by(App.id)
         )
-        for app in apps_with_reviews:
-            try:
-                engine.compute_market_weakness(app.id)
-            except Exception as e:
-                logger.error(f"Market weakness computation failed for app {app.id}: {e}")
-        logger.info(f"Market weakness computed for {len(apps_with_reviews)} apps")
+        for batch in iter_batches(mw_query, _BATCH):
+            for (app_id,) in batch:
+                try:
+                    engine.compute_market_weakness(app_id)
+                    mw_count += 1
+                except Exception as e:
+                    logger.error(f"Market weakness computation failed for app {app_id}: {e}")
+            self.db.commit()
+            self.db.expire_all()
+        logger.info(f"Market weakness computed for {mw_count} apps")
 
-        # Compute feature gap analysis for all apps with negative reviews
+        # Compute feature gap analysis — paginated
         logger.info("Computing feature gap analysis")
         from app.scoring.feature_gaps import FeatureGapAnalyzer
         fg_analyzer = FeatureGapAnalyzer(self.db)
-        apps_with_neg_reviews = (
-            self.db.query(App)
+        fg_count = 0
+        fg_query = (
+            self.db.query(App.id)
             .join(Review, Review.app_id == App.id)
             .filter(Review.rating <= 3, Review.content.isnot(None))
             .distinct()
-            .all()
+            .order_by(App.id)
         )
-        fg_count = 0
-        for app in apps_with_neg_reviews:
-            try:
-                gaps = fg_analyzer.compute_for_app(app.id)
-                if gaps:
-                    fg_count += 1
-            except Exception as e:
-                logger.error(f"Feature gap analysis failed for app {app.id}: {e}")
+        for batch in iter_batches(fg_query, _BATCH):
+            for (app_id,) in batch:
+                try:
+                    gaps = fg_analyzer.compute_for_app(app_id)
+                    if gaps:
+                        fg_count += 1
+                except Exception as e:
+                    logger.error(f"Feature gap analysis failed for app {app_id}: {e}")
+            self.db.commit()
+            self.db.expire_all()
         logger.info(f"Feature gaps computed for {fg_count} apps")
 
-        # Recompute keyword opportunity + feasibility scores using stored signals
-        # (fast pass — no external API calls; the full pipeline runs via its own job)
+        # Recompute keyword opportunity + feasibility scores in batches
         logger.info("Recomputing keyword intelligence scores")
         try:
             from app.services.keyword_intelligence_pipeline import KeywordIntelligencePipeline
             kw_pipeline = KeywordIntelligencePipeline(self.db)
-            scored_count = kw_pipeline.recompute_scores(self.db.query(Keyword).all())
-            logger.info(f"Keyword scores updated for {scored_count} keywords")
+            scored_total = 0
+            kw_query = self.db.query(Keyword).order_by(Keyword.id)
+            for batch in iter_batches(kw_query, 500):
+                scored_total += kw_pipeline.recompute_scores(batch)
+                self.db.expire_all()
+            logger.info(f"Keyword scores updated for {scored_total} keywords")
         except Exception as e:
             logger.error(f"Keyword score recompute failed: {e}")
 
@@ -718,8 +752,6 @@ class ScoringWorker:
             logger.error(f"Idea generation failed: {e}")
 
         # Compute metric snapshots (download + revenue estimates in one coordinated pass)
-        # MetricSnapshotService orchestrates InstallEstimator + RevenueEstimator,
-        # writes to app_metric_snapshots table, and back-fills App cached columns.
         logger.info("Computing metric snapshots (downloads + revenue)")
         try:
             from app.services.metric_snapshot_service import MetricSnapshotService
@@ -728,6 +760,8 @@ class ScoringWorker:
             logger.info(f"Metric snapshots written for {snap_count} apps")
         except Exception as e:
             logger.error(f"Metric snapshot computation failed: {e}")
+
+        log_memory("update_opportunities", "end")
 
     def generate_daily_report(self):
         logger.info("Generating daily report")

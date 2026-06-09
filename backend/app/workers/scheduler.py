@@ -35,6 +35,7 @@ from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from app.utils.batch_utils import log_memory
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ _JOB_DEFAULTS = dict(
 # ---------------------------------------------------------------------------
 
 def _log_start(job_id: str) -> float:
+    log_memory(job_id, "start")
     logger.info(f"[SCHEDULER] ▶  {job_id} started")
     return datetime.utcnow().timestamp()
 
@@ -67,10 +69,12 @@ def _log_done(job_id: str, t0: float, extra: str = ""):
     if extra:
         msg += f"  ({extra})"
     logger.info(msg)
+    log_memory(job_id, "end")
 
 
 def _log_fail(job_id: str, exc: Exception):
     logger.error(f"[SCHEDULER] ✗  {job_id} FAILED: {exc}", exc_info=True)
+    log_memory(job_id, "fail")
 
 
 # ---------------------------------------------------------------------------
@@ -1353,16 +1357,18 @@ def setup_scheduler() -> AsyncIOScheduler:
     )
 
     # ── SCALABLE INGESTION PIPELINE (500K target) ──────────────────────────────
-    # Mass keyword discovery with light insert — every 1h, first +20min
+    # Mass keyword discovery with light insert — every 6h (reduced from 1h;
+    # results are deduplicated and the discovery_keywords job already covers
+    # the same keyword list every 6h).
     scheduler.add_job(
         job_mass_discovery_light,
         trigger=IntervalTrigger(
-            hours=1,
+            hours=6,
             start_date=now + timedelta(minutes=20),
             timezone="UTC",
         ),
         id="mass_discovery_light",
-        name="Every 1h: Mass Keyword Discovery (light insert)",
+        name="Every 6h: Mass Keyword Discovery (light insert)",
         **_JOB_DEFAULTS,
     )
 

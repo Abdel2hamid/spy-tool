@@ -602,24 +602,27 @@ class DiscoveryEngine:
         priority_map = {"hot": 5, "warm": 2, "cold": 0}
         priority = priority_map.get(tier, 0)
 
-        # Apps already in queue (any status)
-        queued_ids: set = {
-            row[0]
-            for row in self.db.query(DiscoveryQueue.app_id).all()
-        }
+        # Use NOT EXISTS subquery instead of loading all queue IDs into memory
+        from sqlalchemy import exists
+
+        queued_subq = (
+            self.db.query(DiscoveryQueue.app_id)
+            .filter(DiscoveryQueue.app_id == App.app_id)
+            .exists()
+        )
 
         candidates = (
             self.db.query(App.app_id)
             .filter(
                 App.ingestion_stage == "light",
                 App.sync_tier == tier,
+                ~queued_subq,
             )
-            .limit(limit * 2)  # over-fetch to account for already-queued
+            .limit(limit)
             .all()
         )
 
-        new_ids = [row[0] for row in candidates if row[0] not in queued_ids]
-        new_ids = new_ids[:limit]
+        new_ids = [row[0] for row in candidates]
 
         if not new_ids:
             return 0

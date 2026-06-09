@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 
 from app.models.models import Keyword, KeywordStatus, AppKeyword, KeywordTrend, App
 from app.config import settings
+from app.utils.batch_utils import iter_batches, log_memory
 
 logger = logging.getLogger(__name__)
 
@@ -880,6 +881,8 @@ class KeywordIntelligencePipeline:
             "scored": 0,
         }
 
+        log_memory("keyword_pipeline", "start")
+
         logger.info("keyword_pipeline: [PHASE 1] keyword discovery — start")
         t0 = _time.monotonic()
         try:
@@ -888,16 +891,25 @@ class KeywordIntelligencePipeline:
             logger.error(f"keyword_pipeline: [PHASE 1] discovery failed — {e}", exc_info=True)
         logger.info(f"keyword_pipeline: [PHASE 1] done in {_time.monotonic()-t0:.1f}s, discovered={summary['discovered']}")
 
-        # Fetch all keywords up to max_keywords
-        keywords = self.db.query(Keyword).limit(max_keywords).all()
-        logger.info(f"keyword_pipeline: loaded {len(keywords)} keywords for enrichment")
+        # Fetch keyword IDs once; reload ORM objects per-phase in batches
+        keyword_ids = [
+            row[0] for row in
+            self.db.query(Keyword.id).limit(max_keywords).all()
+        ]
+        logger.info(f"keyword_pipeline: {len(keyword_ids)} keyword IDs for enrichment")
+
+        def _load_keywords_by_ids(ids):
+            """Reload keywords from DB by ID list (fresh ORM objects)."""
+            if not ids:
+                return []
+            return self.db.query(Keyword).filter(Keyword.id.in_(ids)).all()
 
         logger.info("keyword_pipeline: [PHASE 2] Google Trends enrichment — start")
         t0 = _time.monotonic()
         try:
-            # enrich_with_trends is synchronous and calls time.sleep() per batch —
-            # run in a thread so the event loop stays free for API requests.
+            keywords = _load_keywords_by_ids(keyword_ids)
             summary["trends_updated"] = await asyncio.to_thread(self.enrich_with_trends, keywords)
+            self.db.expire_all()
         except Exception as e:
             logger.error(f"keyword_pipeline: [PHASE 2] Google Trends failed — {e}", exc_info=True)
         logger.info(f"keyword_pipeline: [PHASE 2] done in {_time.monotonic()-t0:.1f}s, updated={summary['trends_updated']}")
@@ -905,32 +917,34 @@ class KeywordIntelligencePipeline:
         logger.info("keyword_pipeline: [PHASE 3] Apple signals enrichment — start")
         t0 = _time.monotonic()
         try:
+            keywords = _load_keywords_by_ids(keyword_ids)
             summary["apple_updated"] = await self.enrich_with_apple_signals(keywords)
+            self.db.expire_all()
         except Exception as e:
             logger.error(f"keyword_pipeline: [PHASE 3] Apple signals failed — {e}", exc_info=True)
         logger.info(f"keyword_pipeline: [PHASE 3] done in {_time.monotonic()-t0:.1f}s, updated={summary['apple_updated']}")
 
-        # Refresh keywords from DB before scoring (captures Apple signal updates)
-        keywords = self.db.query(Keyword).limit(max_keywords).all()
-
         logger.info("keyword_pipeline: [PHASE 4] DataForSEO enrichment — start")
         t0 = _time.monotonic()
         try:
+            keywords = _load_keywords_by_ids(keyword_ids)
             summary["seo_updated"] = await self.enrich_with_dataforseo(keywords)
+            self.db.expire_all()
         except Exception as e:
             logger.error(f"keyword_pipeline: [PHASE 4] DataForSEO failed — {e}", exc_info=True)
         logger.info(f"keyword_pipeline: [PHASE 4] done in {_time.monotonic()-t0:.1f}s, updated={summary['seo_updated']}")
 
-        # Refresh again for scoring
-        keywords = self.db.query(Keyword).limit(max_keywords).all()
-
         logger.info("keyword_pipeline: [PHASE 5] score recompute — start")
         t0 = _time.monotonic()
         try:
+            keywords = _load_keywords_by_ids(keyword_ids)
             summary["scored"] = await asyncio.to_thread(self.recompute_scores, keywords)
+            self.db.expire_all()
         except Exception as e:
             logger.error(f"keyword_pipeline: [PHASE 5] scoring failed — {e}", exc_info=True)
         logger.info(f"keyword_pipeline: [PHASE 5] done in {_time.monotonic()-t0:.1f}s, scored={summary['scored']}")
+
+        log_memory("keyword_pipeline", "end")
 
         elapsed = _time.monotonic() - pipeline_start
         logger.info(f"keyword_pipeline: ALL PHASES COMPLETE in {elapsed:.1f}s — {summary}")
@@ -939,17 +953,27 @@ class KeywordIntelligencePipeline:
     async def run_trends_only(self, max_keywords: int = 200) -> int:
         """Quick job: only refresh Google Trends data (no Apple/SEO calls)."""
         keywords = self.db.query(Keyword).limit(max_keywords).all()
-        return await asyncio.to_thread(self.enrich_with_trends, keywords)
+        result = await asyncio.to_thread(self.enrich_with_trends, keywords)
+        self.db.expire_all()
+        return result
 
     async def run_apple_signals_only(self, max_keywords: int = 300) -> int:
         """Quick job: only refresh Apple App Store signals."""
         keywords = self.db.query(Keyword).limit(max_keywords).all()
-        return await self.enrich_with_apple_signals(keywords)
+        result = await self.enrich_with_apple_signals(keywords)
+        self.db.expire_all()
+        return result
 
     async def run_scoring_only(self) -> int:
         """Quick job: only recompute scores (no external API calls)."""
-        keywords = self.db.query(Keyword).all()
-        return await asyncio.to_thread(self.recompute_scores, keywords)
+        log_memory("keyword_scoring_only", "start")
+        scored_total = 0
+        kw_query = self.db.query(Keyword).order_by(Keyword.id)
+        for batch in iter_batches(kw_query, 500):
+            scored_total += await asyncio.to_thread(self.recompute_scores, batch)
+            self.db.expire_all()
+        log_memory("keyword_scoring_only", "end")
+        return scored_total
 
     def get_trending_keywords(self, limit: int = 20) -> List[Keyword]:
         """

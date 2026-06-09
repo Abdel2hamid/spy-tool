@@ -32,6 +32,7 @@ from app.models.models import App, AppMetricSnapshot
 from app.services.download_estimator import DownloadEstimator
 from app.services.install_estimator import InstallEstimator  # kept for backward compat
 from app.services.revenue_estimator import RevenueEstimator
+from app.utils.batch_utils import iter_batches, log_memory
 
 logger = logging.getLogger(__name__)
 
@@ -112,23 +113,34 @@ class MetricSnapshotService:
     def compute_all(self) -> int:
         """
         Compute and persist metric snapshots for all tracked apps.
+        Processes in batches of 200 to bound ORM memory.
         Returns count of snapshots written.
         """
-        apps = self.db.query(App).all()
+        log_memory("metric_snapshot", "start")
+        _BATCH_SIZE = 200
         count = 0
-        for app in apps:
-            try:
-                self.compute_for_app(app)
-                self.db.commit()
-                count += 1
-            except Exception as exc:
-                logger.warning(f"[metric_snapshot] Failed for app {app.app_id}: {exc}")
+        base_query = self.db.query(App).order_by(App.id)
+
+        for batch in iter_batches(base_query, _BATCH_SIZE):
+            for app in batch:
                 try:
-                    self.db.rollback()
-                except Exception:
-                    pass
+                    self.compute_for_app(app)
+                    count += 1
+                except Exception as exc:
+                    logger.warning(f"[metric_snapshot] Failed for app {app.app_id}: {exc}")
+                    try:
+                        self.db.rollback()
+                    except Exception:
+                        pass
+            # Commit and release ORM objects after each batch
+            try:
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+            self.db.expire_all()
 
         self._prune_old_snapshots()
+        log_memory("metric_snapshot", "end")
         logger.info(f"[metric_snapshot] Wrote {count} snapshots")
         return count
 

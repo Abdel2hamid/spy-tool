@@ -24,10 +24,11 @@ import re
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.models.models import App, Review, AppAnalytics
+from app.utils.batch_utils import log_memory
 
 logger = logging.getLogger(__name__)
 
@@ -93,24 +94,48 @@ class ReviewSentimentService:
     def classify_pending_reviews(self, batch_size: int = 5000) -> int:
         """
         Classify all reviews where sentiment IS NULL.
+        Uses lightweight tuple queries + batched raw SQL UPDATEs to avoid
+        loading 5000 full ORM Review objects.
         Returns the number of reviews updated.
         """
-        reviews = (
-            self.db.query(Review)
+        log_memory("sentiment_classify", "start")
+
+        # Load only the columns needed for classification (no full ORM objects)
+        rows = (
+            self.db.query(Review.id, Review.rating, Review.content)
             .filter(Review.sentiment.is_(None))
             .limit(batch_size)
             .all()
         )
 
-        updated = 0
-        for review in reviews:
-            label, score = _classify(review.rating, review.content)
-            review.sentiment = label
-            updated += 1
+        if not rows:
+            return 0
 
-        if updated > 0:
-            self.db.commit()
-            logger.info(f"[Sentiment] classified {updated} reviews")
+        # Compute sentiment in Python, then batch UPDATE via raw SQL
+        updates = []
+        for review_id, rating, content in rows:
+            label, score = _classify(rating, content)
+            updates.append((review_id, label))
+
+        # Batch update in chunks of 500 to avoid oversized queries
+        _UPDATE_CHUNK = 500
+        updated = 0
+        for i in range(0, len(updates), _UPDATE_CHUNK):
+            chunk = updates[i : i + _UPDATE_CHUNK]
+            # Build a CASE WHEN for batched update
+            cases = " ".join(
+                f"WHEN id = {rid} THEN '{label}'" for rid, label in chunk
+            )
+            ids = ", ".join(str(rid) for rid, _ in chunk)
+            self.db.execute(text(
+                f"UPDATE reviews SET sentiment = CASE {cases} END WHERE id IN ({ids})"
+            ))
+            updated += len(chunk)
+
+        self.db.commit()
+        self.db.expire_all()
+        log_memory("sentiment_classify", "end")
+        logger.info(f"[Sentiment] classified {updated} reviews")
         return updated
 
     # ------------------------------------------------------------------

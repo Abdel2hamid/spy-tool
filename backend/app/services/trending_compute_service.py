@@ -15,8 +15,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.models.models import AppTrendingScore, Ranking
+from app.utils.batch_utils import log_memory
 
 logger = logging.getLogger(__name__)
+
+_COMMIT_BATCH = 200  # commit every N apps to bound ORM identity map
 
 
 def compute_trending_scores(db: Session) -> int:
@@ -27,6 +30,7 @@ def compute_trending_scores(db: Session) -> int:
     Returns the number of apps successfully scored.
     """
     t0 = time.monotonic()
+    log_memory("trending_compute", "start")
 
     # Local import to avoid circular dependency (engine → models → services)
     from app.scoring.engine import ScoringEngine  # noqa: PLC0415
@@ -49,6 +53,7 @@ def compute_trending_scores(db: Session) -> int:
         return 0
 
     scored = 0
+    batch_count = 0
     for app_id in app_ids:
         try:
             trend_data = engine.compute_trend_score(app_id, use_category_norm=True)
@@ -87,12 +92,22 @@ def compute_trending_scores(db: Session) -> int:
             )
             db.execute(stmt)
             scored += 1
+            batch_count += 1
+
+            # Intermediate commit to release ORM objects
+            if batch_count >= _COMMIT_BATCH:
+                db.commit()
+                db.expire_all()
+                batch_count = 0
 
         except Exception as exc:
             logger.warning(f"[TRENDING_COMPUTE] Failed to score app_id={app_id}: {exc}")
 
-    db.commit()
+    # Final commit for remaining rows
+    if batch_count > 0:
+        db.commit()
 
+    log_memory("trending_compute", "end")
     elapsed = time.monotonic() - t0
     logger.info(
         f"[TRENDING_COMPUTE] Scored {scored}/{len(app_ids)} apps in {elapsed:.1f}s"
