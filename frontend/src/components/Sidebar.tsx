@@ -18,6 +18,7 @@ import {
   Users,
   Bell,
   Star,
+  Heart,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -30,6 +31,7 @@ const navSections = [
       { href: '/apps', label: 'Apps', icon: AppWindow },
       { href: '/latest-apps', label: 'New Releases', icon: Zap },
       { href: '/trending', label: 'Trending', icon: TrendingUp },
+      { href: '/favorites', label: 'Favorites', icon: Heart },
     ],
   },
   {

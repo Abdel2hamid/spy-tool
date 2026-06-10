@@ -5,13 +5,13 @@ export const dynamic = 'force-dynamic';
 import { useState, useEffect } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components';
-import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, DownloadEstimate, getAppDetail, getAppReviews, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, getDownloadEstimate, RankHistory } from '@/lib/api';
+import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, DownloadEstimate, getAppDetail, getAppReviews, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, getDownloadEstimate, RankHistory, getFavoriteIds, addFavorite, removeFavorite } from '@/lib/api';
 import { fmtNum, fmtRev, fmtRange, fmtRevRange, confidenceLabel, CONFIDENCE_BADGE } from '@/lib/estimate-format';
 import {
   ArrowLeft, Star, Download, Calendar, Globe, MessageSquare,
   TrendingUp, BarChart3, AlertTriangle, ThumbsUp, Code, ExternalLink,
   ChevronRight, Filter, Lightbulb, RefreshCw, Search, Target,
-  Zap, DollarSign, Users, FlaskConical, Sparkles, X as XIcon
+  Zap, DollarSign, Users, FlaskConical, Sparkles, X as XIcon, Heart
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -49,7 +49,7 @@ function formatRevenue(min: number | null, max: number | null): string {
   return `${fmt(min ?? 0)}–${fmt(max)}`;
 }
 
-function AppHeader({ app }: { app: AppDetail }) {
+function AppHeader({ app, isFavorited, onToggleFavorite }: { app: AppDetail; isFavorited: boolean; onToggleFavorite: () => void }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
       {/* Gradient accent bar */}
@@ -105,6 +105,18 @@ function AppHeader({ app }: { app: AppDetail }) {
                     App Store
                   </a>
                 )}
+                <button
+                  onClick={onToggleFavorite}
+                  title={isFavorited ? 'Remove from favorites' : 'Add to favorites'}
+                  className={cn(
+                    'pill transition-colors',
+                    isFavorited
+                      ? 'bg-rose-100 text-rose-600 hover:bg-rose-200 dark:bg-rose-950/50 dark:text-rose-400 dark:hover:bg-rose-950'
+                      : 'bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-rose-500 dark:bg-gray-800 dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-rose-400',
+                  )}
+                >
+                  <Heart className={cn('h-3.5 w-3.5', isFavorited && 'fill-current')} />
+                </button>
               </div>
             </div>
 
@@ -2714,6 +2726,7 @@ export default function AppDetailPage() {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [showSyncBanner, setShowSyncBanner] = useState(searchParams.get('imported') === '1');
   const [reviewsLoaded, setReviewsLoaded] = useState(false);
+  const [isFavorited, setIsFavorited] = useState(false);
 
   useEffect(() => {
     async function fetchData() {
@@ -2729,7 +2742,24 @@ export default function AppDetailPage() {
       }
     }
     fetchData();
+    getFavoriteIds()
+      .then((ids) => setIsFavorited(ids.includes(appId)))
+      .catch(() => {});
   }, [appId]);
+
+  async function toggleFavorite() {
+    try {
+      if (isFavorited) {
+        await removeFavorite(appId);
+        setIsFavorited(false);
+      } else {
+        await addFavorite(appId);
+        setIsFavorited(true);
+      }
+    } catch {
+      // ignore
+    }
+  }
 
   useEffect(() => {
     if (activeTab !== 'reviews' || reviewsLoaded) return;
@@ -2840,7 +2870,7 @@ export default function AppDetailPage() {
           </div>
         )}
 
-        <AppHeader app={app} />
+        <AppHeader app={app} isFavorited={isFavorited} onToggleFavorite={toggleFavorite} />
 
         {/* Tab navigation — horizontally scrollable on mobile */}
         <div className="relative">

@@ -83,10 +83,12 @@ from app.models.schemas import (
     DashboardKeywordHighlightsResponse,
     WeeklyOpportunityItem,
     WeeklyOpportunitiesResponse,
+    FavoriteAppItem,
+    FavoriteListResponse,
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
-from app.api.deps import _bearer, get_current_user
+from app.api.deps import _bearer, get_current_user, get_auth_context, AuthContext
 from app.utils.rate_limiter import rate_limit
 from app.services.plan_enforcement import PlanEnforcer
 from app.config import settings
@@ -3656,3 +3658,107 @@ def get_usage(
     """
     enforcer = PlanEnforcer.from_token(credentials, db)
     return enforcer.get_summary()
+
+
+# ---------------------------------------------------------------------------
+# Favorites — user-scoped app bookmarks
+# ---------------------------------------------------------------------------
+
+@router.get("/favorites", response_model=FavoriteListResponse)
+def list_favorites(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Paginated list of the current user's favorited apps."""
+    base = (
+        db.query(models.Favorite, models.App)
+        .join(models.App, models.Favorite.app_id == models.App.id)
+        .filter(models.Favorite.user_id == ctx.user.id)
+        .order_by(models.Favorite.created_at.desc())
+    )
+    total = base.count()
+    rows = base.offset(skip).limit(limit).all()
+    items = [
+        FavoriteAppItem(
+            id=fav.id,
+            app_id=app.id,
+            store_app_id=app.app_id,
+            name=app.name,
+            icon_url=app.icon_url,
+            developer=app.developer,
+            primary_category=app.primary_category,
+            current_rating=app.current_rating,
+            current_reviews=app.current_reviews,
+            current_rank=app.current_rank,
+            price=app.price or 0,
+            is_free=app.is_free if app.is_free is not None else True,
+            favorited_at=fav.created_at,
+        )
+        for fav, app in rows
+    ]
+    return FavoriteListResponse(favorites=items, total=total, skip=skip, limit=limit)
+
+
+@router.get("/favorites/ids")
+def list_favorite_ids(
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Return bare list of app IDs the user has favorited (lightweight check)."""
+    rows = (
+        db.query(models.Favorite.app_id)
+        .filter(models.Favorite.user_id == ctx.user.id)
+        .all()
+    )
+    return {"app_ids": [r[0] for r in rows]}
+
+
+@router.post("/favorites", status_code=201)
+def add_favorite(
+    body: dict,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Add an app to the user's favorites."""
+    app_id = body.get("app_id")
+    if not app_id:
+        raise HTTPException(status_code=422, detail="app_id is required")
+    app_obj = db.query(models.App).filter(models.App.id == int(app_id)).first()
+    if not app_obj:
+        raise HTTPException(status_code=404, detail="App not found")
+    existing = (
+        db.query(models.Favorite)
+        .filter(models.Favorite.user_id == ctx.user.id, models.Favorite.app_id == int(app_id))
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Already favorited")
+    fav = models.Favorite(
+        user_id=ctx.user.id,
+        workspace_id=ctx.workspace.id,
+        app_id=int(app_id),
+    )
+    db.add(fav)
+    db.commit()
+    return {"id": fav.id, "app_id": fav.app_id}
+
+
+@router.delete("/favorites/{app_id}")
+def remove_favorite(
+    app_id: int,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Remove an app from the user's favorites."""
+    fav = (
+        db.query(models.Favorite)
+        .filter(models.Favorite.user_id == ctx.user.id, models.Favorite.app_id == app_id)
+        .first()
+    )
+    if not fav:
+        raise HTTPException(status_code=404, detail="Favorite not found")
+    db.delete(fav)
+    db.commit()
+    return {"ok": True}

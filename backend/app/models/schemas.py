@@ -1306,3 +1306,31 @@ class DashboardKeywordHighlight(BaseModel):
 class DashboardKeywordHighlightsResponse(BaseModel):
     keywords: List[DashboardKeywordHighlight]
     total: int
+
+
+# ---------------------------------------------------------------------------
+# Favorites
+# ---------------------------------------------------------------------------
+
+class FavoriteAppItem(BaseModel):
+    """Flat schema: favorite metadata + key app fields."""
+    id: int                          # favorite row id
+    app_id: int                      # internal DB app id
+    store_app_id: str                # App Store string ID
+    name: str
+    icon_url: Optional[str] = None
+    developer: Optional[str] = None
+    primary_category: Optional[str] = None
+    current_rating: Optional[float] = None
+    current_reviews: Optional[int] = None
+    current_rank: Optional[int] = None
+    price: float = 0
+    is_free: bool = True
+    favorited_at: datetime
+
+
+class FavoriteListResponse(BaseModel):
+    favorites: List[FavoriteAppItem]
+    total: int
+    skip: int
+    limit: int

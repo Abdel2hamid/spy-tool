@@ -1868,3 +1868,66 @@ export async function parsePlanLimitError(res: Response): Promise<PlanLimitError
   }
   return null;
 }
+
+
+// ---------------------------------------------------------------------------
+// Favorites
+// ---------------------------------------------------------------------------
+
+export interface FavoriteAppItem {
+  id: number;
+  app_id: number;
+  store_app_id: string;
+  name: string;
+  icon_url?: string | null;
+  developer?: string | null;
+  primary_category?: string | null;
+  current_rating?: number | null;
+  current_reviews?: number | null;
+  current_rank?: number | null;
+  price: number;
+  is_free: boolean;
+  favorited_at: string;
+}
+
+export interface FavoriteListResponse {
+  favorites: FavoriteAppItem[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+export async function getFavorites(skip = 0, limit = 50): Promise<FavoriteListResponse> {
+  const res = await fetch(`${API_BASE}/favorites?skip=${skip}&limit=${limit}`, {
+    headers: _authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed to fetch favorites (${res.status})`);
+  return res.json();
+}
+
+export async function getFavoriteIds(): Promise<number[]> {
+  const res = await fetch(`${API_BASE}/favorites/ids`, {
+    headers: _authHeaders(),
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.app_ids ?? [];
+}
+
+export async function addFavorite(appId: number): Promise<{ id: number; app_id: number }> {
+  const res = await fetch(`${API_BASE}/favorites`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+    body: JSON.stringify({ app_id: appId }),
+  });
+  if (!res.ok) throw new Error(`Failed to add favorite (${res.status})`);
+  return res.json();
+}
+
+export async function removeFavorite(appId: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/favorites/${appId}`, {
+    method: 'DELETE',
+    headers: _authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed to remove favorite (${res.status})`);
+}

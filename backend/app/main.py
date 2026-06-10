@@ -415,6 +415,18 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_app_last_updated ON apps (last_updated)",
     "CREATE INDEX IF NOT EXISTS idx_review_review_id ON reviews (review_id)",
     "CREATE INDEX IF NOT EXISTS idx_rankings_recorded_at ON rankings (recorded_at DESC)",
+
+    # Favorites (user bookmarks)
+    """CREATE TABLE IF NOT EXISTS favorites (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        app_id INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(user_id, app_id)
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_favorite_user_app ON favorites (user_id, app_id)",
+    "CREATE INDEX IF NOT EXISTS idx_favorite_workspace ON favorites (workspace_id)",
 ]
 
 

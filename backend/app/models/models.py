@@ -945,3 +945,19 @@ class AppTrendingScore(Base):
     __table_args__ = (
         Index("idx_trending_score", "trend_score"),
     )
+
+
+class Favorite(Base):
+    """User-scoped app bookmark / favorite."""
+    __tablename__ = "favorites"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    app_id = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_favorite_user_app", "user_id", "app_id", unique=True),
+        Index("idx_favorite_workspace", "workspace_id"),
+    )
