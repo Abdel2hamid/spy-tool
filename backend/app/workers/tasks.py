@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time as _time
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from sqlalchemy.orm import Session
@@ -414,7 +415,7 @@ class ScraperWorker:
             self.db.rollback()
             return False
 
-    async def scrape_quick_refresh_all(self) -> int:
+    async def scrape_quick_refresh_all(self, max_wall_time: float = None) -> int:
         """
         Lightweight hourly refresh for all tracked apps — runs concurrently.
 
@@ -426,8 +427,9 @@ class ScraperWorker:
         Concurrency: asyncio.Semaphore(15) — max 15 apps in-flight at once.
         Isolation: each task opens its own DB session so failures don't bleed.
         Timeout: 60 s per app; timed-out apps are logged and counted as failures.
-        Intentionally skips version history HTML scraping (that is the
-        responsibility of the heavier scrape_all_tracked_apps() job).
+        max_wall_time: if set, stop processing new batches after this many
+        seconds of total elapsed time (apps are sorted by priority, so the
+        most important ones are always refreshed first).
         """
         _CONCURRENCY = 15
         _TIMEOUT = 60.0  # seconds per app
@@ -523,11 +525,18 @@ class ScraperWorker:
         _BATCH_SIZE = 200
         success_count = 0
         total_processed = 0
+        wall_start = _time.monotonic()
         base_query = (
             self.db.query(App.id, App.app_id)
             .order_by(App.freshness_score.desc().nullslast(), App.created_at.desc())
         )
         for batch in iter_batches(base_query, _BATCH_SIZE):
+            if max_wall_time and (_time.monotonic() - wall_start) > max_wall_time:
+                logger.warning(
+                    f"Quick refresh: wall-time budget ({max_wall_time}s) exceeded "
+                    f"after {total_processed}/{total_apps} apps — stopping early"
+                )
+                break
             results = await asyncio.gather(
                 *[_refresh_one(db_id, sid) for db_id, sid in batch]
             )

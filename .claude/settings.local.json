@@ -497,7 +497,10 @@
       "Bash(psql \"postgresql://abdelhamid@localhost:5432/appstore_spy\" -c \"\nSELECT COUNT\\(*\\) as total, MAX\\(recorded_at\\) as newest FROM rankings;\")",
       "Bash(curl -s http://localhost:8099/health | python3 -c \"\nimport json, sys\ndata = json.load\\(sys.stdin\\)\nrh = data.get\\('ranking_health', {}\\)\nprint\\('BEFORE ranking_refresh fires:'\\)\nprint\\(f'  ranking_status:  {rh.get\\(\\\\\"ranking_status\\\\\"\\)}'\\)\nprint\\(f'  ranking_age_hours: {rh.get\\(\\\\\"ranking_age_hours\\\\\"\\)}'\\)\nprint\\(f'  rankings_last_24h: {rh.get\\(\\\\\"rankings_last_24h\\\\\"\\)}'\\)\nprint\\(f'  latest: {rh.get\\(\\\\\"latest_ranking_recorded_at\\\\\"\\)}'\\)\n\")",
       "Bash(psql \"postgresql://abdelhamid@localhost:5432/appstore_spy\" -c \"\nSELECT COUNT\\(*\\) as total,\n       MAX\\(recorded_at\\) as newest,\n       COUNT\\(*\\) FILTER \\(WHERE recorded_at > NOW\\(\\) - INTERVAL '10 minutes'\\) as last_10min\nFROM rankings;\")",
-      "Bash(psql \"postgresql://abdelhamid@localhost:5432/appstore_spy\" -c \"\nSELECT chart_type, COUNT\\(*\\) as new_rows\nFROM rankings\nWHERE recorded_at > NOW\\(\\) - INTERVAL '10 minutes'\nGROUP BY chart_type;\")"
+      "Bash(psql \"postgresql://abdelhamid@localhost:5432/appstore_spy\" -c \"\nSELECT chart_type, COUNT\\(*\\) as new_rows\nFROM rankings\nWHERE recorded_at > NOW\\(\\) - INTERVAL '10 minutes'\nGROUP BY chart_type;\")",
+      "Bash(python -c \"from app.workers.scheduler import setup_scheduler, get_job_metrics; print\\('scheduler OK'\\)\" 2>&1)",
+      "Bash(python3 -c \"from app.workers.scheduler import setup_scheduler, get_job_metrics; print\\('scheduler OK'\\)\" 2>&1)",
+      "Bash(python3 -c \"from app.workers.tasks import ScraperWorker; print\\('tasks OK'\\)\" 2>&1)"
     ]
   }
 }

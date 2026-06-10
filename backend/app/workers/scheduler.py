@@ -17,6 +17,8 @@ Job schedule:
   hourly_scoring             1 h      65 min      Recompute scores + daily report
   full_metadata              6 h      6 h         Full metadata refresh for all tracked apps
   keyword_discovery          24 h      2 min      Keyword expansion engine (10k-100k keywords)
+  keyword_discovery_daily    24 h     25 min      Per-app keyword discovery (200 apps/run, resumable)
+  keyword_discovery_phase1   24 h     30 min      Phase-1 discovery: alphabet+competitor+gap (50 apps/run)
   keyword_cleanup_daily      24 h     45 min      Prune low-value / stale keywords from DB
   review_scraper             6 h      90 min      Ingest up to 500 reviews for top 300 ranked apps
   sentiment_analysis         1 h      35 min      Rule-based sentiment classification + app analytics
@@ -33,6 +35,7 @@ To disable a job:      comment out its scheduler.add_job() call.
 import asyncio
 import functools
 import logging
+import time
 from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -98,6 +101,14 @@ _DEFAULT_TIMEOUT = 1800  # 30 min
 # ---------------------------------------------------------------------------
 _job_metrics = {}  # type: dict
 
+# ---------------------------------------------------------------------------
+# Resumable-batch cursors — track the last-processed App.id so each run
+# picks up where the previous one left off.  Reset on container restart,
+# which is fine: the jobs cycle through all apps over multiple runs anyway.
+# ---------------------------------------------------------------------------
+_kw_discovery_daily_cursor: int = 0
+_kw_discovery_phase1_cursor: int = 0
+
 
 def get_job_metrics() -> dict[str, dict]:
     """Return a copy of execution metrics for all jobs (used by /health)."""
@@ -138,6 +149,13 @@ def _with_timeout(job_id: str, timeout: int = None):
                     f"[SCHEDULER] ⏰ {job_id} TIMED OUT after {_timeout}s "
                     f"(runs={m['runs']}, ok={m['ok']}, timeout={m['timeout']})"
                 )
+            except asyncio.CancelledError:
+                m["fail"] += 1
+                logger.warning(
+                    f"[SCHEDULER] {job_id} CANCELLED "
+                    f"(runs={m['runs']}, ok={m['ok']}, fail={m['fail']})"
+                )
+                raise
             except Exception:
                 m["fail"] += 1
                 raise
@@ -195,7 +213,10 @@ async def job_hourly_reviews_ratings():
     worker = ScraperWorker()
     await worker.initialize()
     try:
-        count = await worker.scrape_quick_refresh_all()
+        # 45 min wall-time budget (job timeout is 3600s / 1h).
+        # Apps are sorted by freshness_score DESC, so highest-priority
+        # apps are always refreshed first even if time runs out.
+        count = await worker.scrape_quick_refresh_all(max_wall_time=2700)
         _log_done(job_id, t0, f"{count} apps refreshed")
     except Exception as exc:
         _log_fail(job_id, exc)
@@ -807,47 +828,93 @@ async def job_keyword_discovery():
 @_with_timeout("keyword_discovery_daily")
 async def job_keyword_discovery_daily():
     """
-    For each tracked app, discover new keyword candidates via:
-    - Apple MZSearchHints autocomplete (from seed keywords)
-    - Prefix/suffix affix expansions ("best {kw}", "{kw} app", …)
-    Enriches each candidate with iTunes + Google Trends signals and
-    stores results in app_discovered_keywords.
-    Processes apps in batches of 10 to respect API rate limits.
+    Per-app keyword discovery via Apple autocomplete + affix expansions.
+
+    Batch-limited & resumable: processes up to MAX_APPS apps per run,
+    resuming from the last-processed App.id.  A wall-time budget prevents
+    the job from exceeding its timeout even if individual HTTP calls are slow.
+    Over successive daily runs, every app in the database is eventually covered.
     """
+    global _kw_discovery_daily_cursor
     job_id = "keyword_discovery_daily"
     t0 = _log_start(job_id)
+
+    MAX_APPS = 200          # apps per run (8000 apps → covered in ~40 runs)
+    WALL_TIME_BUDGET = 6000  # 100 min hard stop (timeout is 7200s)
+    BATCH = 10
+
     try:
         from app.services.keyword_discovery_service import KeywordDiscoveryService
         from app.database import SessionLocal
         from app.models.models import App
 
+        # ── Load the next chunk of app IDs from the cursor ────────────────
         db = SessionLocal()
         try:
-            apps = db.query(App.id).order_by(App.id).all()
+            apps = (
+                db.query(App.id)
+                .filter(App.id > _kw_discovery_daily_cursor)
+                .order_by(App.id)
+                .limit(MAX_APPS)
+                .all()
+            )
+            if not apps:
+                # Wrapped around — start from the beginning
+                _kw_discovery_daily_cursor = 0
+                apps = (
+                    db.query(App.id)
+                    .order_by(App.id)
+                    .limit(MAX_APPS)
+                    .all()
+                )
             app_ids = [row[0] for row in apps]
-            total_discovered = 0
-            BATCH = 10
-
-            for i in range(0, len(app_ids), BATCH):
-                batch = app_ids[i: i + BATCH]
-                for app_id in batch:
-                    batch_db = SessionLocal()
-                    try:
-                        svc = KeywordDiscoveryService(batch_db)
-                        # discover_for_app is synchronous (DB + HTTP); run in a thread
-                        # so the event loop stays free to serve API requests.
-                        count = await asyncio.to_thread(svc.discover_for_app, app_id)
-                        total_discovered += count
-                    except Exception as exc:
-                        logger.warning(f"[{job_id}] app {app_id} failed: {exc}")
-                    finally:
-                        batch_db.close()
-                # brief pause between batches to avoid hammering APIs
-                await asyncio.sleep(2)
-
-            _log_done(job_id, t0, f"{len(app_ids)} apps, {total_discovered} new keywords")
         finally:
             db.close()
+
+        if not app_ids:
+            _log_done(job_id, t0, "no apps found")
+            return
+
+        logger.info(
+            f"[{job_id}] Processing {len(app_ids)} apps "
+            f"(cursor={_kw_discovery_daily_cursor}, range={app_ids[0]}..{app_ids[-1]})"
+        )
+
+        # ── Process apps in small batches ─────────────────────────────────
+        total_discovered = 0
+        processed = 0
+        last_id = _kw_discovery_daily_cursor
+        wall_start = time.monotonic()
+
+        for i in range(0, len(app_ids), BATCH):
+            if time.monotonic() - wall_start > WALL_TIME_BUDGET:
+                logger.warning(
+                    f"[{job_id}] Wall-time budget ({WALL_TIME_BUDGET}s) hit "
+                    f"after {processed}/{len(app_ids)} apps — stopping early"
+                )
+                break
+
+            batch = app_ids[i: i + BATCH]
+            for app_id in batch:
+                batch_db = SessionLocal()
+                try:
+                    svc = KeywordDiscoveryService(batch_db)
+                    count = await asyncio.to_thread(svc.discover_for_app, app_id)
+                    total_discovered += count
+                except Exception as exc:
+                    logger.warning(f"[{job_id}] app {app_id} failed: {exc}")
+                finally:
+                    batch_db.close()
+                processed += 1
+                last_id = app_id
+            await asyncio.sleep(2)
+
+        _kw_discovery_daily_cursor = last_id
+        _log_done(
+            job_id, t0,
+            f"{processed}/{len(app_ids)} apps (cursor→{last_id}), "
+            f"{total_discovered} new keywords"
+        )
     except Exception as exc:
         _log_fail(job_id, exc)
 
@@ -859,16 +926,21 @@ async def job_keyword_discovery_daily():
 @_with_timeout("keyword_discovery_phase1_daily")
 async def job_keyword_discovery_phase1_daily():
     """
-    For each tracked app, run the full Phase-1 keyword discovery pipeline:
-      1. Alphabet mining  — seed × a-z × Apple autocomplete → enriched keywords
-      2. Competitor mining — iTunes search for seeds → competitor n-gram phrases
-      3. Gap analysis     — marks keyword_gap=True where competitor≤10 & we rank>30
-      4. Opportunity score — recomputes opportunity_score for all discovered keywords
+    Phase-1 keyword discovery: alphabet mining, competitor mining, gap
+    analysis, and opportunity scoring for each app.
 
-    Processes apps in batches of 10 with a 3-second pause between batches.
+    Batch-limited & resumable: processes up to MAX_APPS apps per run
+    (4 HTTP-heavy service calls per app), resuming from the last cursor.
+    Wall-time budget prevents exceeding timeout.
     """
+    global _kw_discovery_phase1_cursor
     job_id = "keyword_discovery_phase1_daily"
     t0 = _log_start(job_id)
+
+    MAX_APPS = 50            # 4 calls/app → ~50 apps keeps runtime under 30 min
+    WALL_TIME_BUDGET = 6000  # 100 min hard stop (timeout is 7200s)
+    BATCH = 10
+
     try:
         from app.services.alphabet_mining_service import AlphabetMiningService
         from app.services.competitor_keyword_service import CompetitorKeywordService
@@ -877,62 +949,84 @@ async def job_keyword_discovery_phase1_daily():
         from app.database import SessionLocal
         from app.models.models import App
 
+        # ── Load the next chunk of app IDs from the cursor ────────────────
         db = SessionLocal()
         try:
-            apps = db.query(App.id).order_by(App.id).all()
+            apps = (
+                db.query(App.id)
+                .filter(App.id > _kw_discovery_phase1_cursor)
+                .order_by(App.id)
+                .limit(MAX_APPS)
+                .all()
+            )
+            if not apps:
+                _kw_discovery_phase1_cursor = 0
+                apps = (
+                    db.query(App.id)
+                    .order_by(App.id)
+                    .limit(MAX_APPS)
+                    .all()
+                )
             app_ids = [row[0] for row in apps]
+        finally:
             db.close()
-        except Exception:
-            db.close()
-            raise
 
+        if not app_ids:
+            _log_done(job_id, t0, "no apps found")
+            return
+
+        logger.info(
+            f"[{job_id}] Processing {len(app_ids)} apps "
+            f"(cursor={_kw_discovery_phase1_cursor}, range={app_ids[0]}..{app_ids[-1]})"
+        )
+
+        # ── Process apps in small batches ─────────────────────────────────
         total_alpha = 0
         total_comp = 0
         total_gaps = 0
-        BATCH = 10
+        processed = 0
+        last_id = _kw_discovery_phase1_cursor
+        wall_start = time.monotonic()
 
         for i in range(0, len(app_ids), BATCH):
+            if time.monotonic() - wall_start > WALL_TIME_BUDGET:
+                logger.warning(
+                    f"[{job_id}] Wall-time budget ({WALL_TIME_BUDGET}s) hit "
+                    f"after {processed}/{len(app_ids)} apps — stopping early"
+                )
+                break
+
             batch = app_ids[i: i + BATCH]
             for app_id in batch:
                 batch_db = SessionLocal()
                 try:
-                    logger.info(f"[{job_id}] Running Phase-1 discovery for app {app_id}")
-
-                    # Each service call is synchronous (DB + HTTP); run in a thread
-                    # so the event loop stays free to serve API requests.
-
-                    # 1. Alphabet mining
                     alpha_svc = AlphabetMiningService(batch_db)
                     alpha_count = await asyncio.to_thread(alpha_svc.mine_for_app, app_id)
                     total_alpha += alpha_count
 
-                    # 2. Competitor mining
                     comp_svc = CompetitorKeywordService(batch_db)
                     comp_count = await asyncio.to_thread(comp_svc.mine_for_app, app_id)
                     total_comp += comp_count
 
-                    # 3. Gap analysis
                     gap_svc = KeywordGapService(batch_db)
                     gap_count = await asyncio.to_thread(gap_svc.analyze_for_app, app_id)
                     total_gaps += gap_count
-                    logger.info(f"[{job_id}] Found {gap_count} gap keywords for app {app_id}")
 
-                    # 4. Opportunity scoring
                     opp_svc = OpportunityScoreService(batch_db)
                     await asyncio.to_thread(opp_svc.score_for_app, app_id)
-
                 except Exception as exc:
                     logger.warning(f"[{job_id}] app {app_id} failed: {exc}")
                 finally:
                     batch_db.close()
-
-            # Brief pause between batches to respect API rate limits
+                processed += 1
+                last_id = app_id
             await asyncio.sleep(3)
 
+        _kw_discovery_phase1_cursor = last_id
         _log_done(
             job_id, t0,
-            f"{len(app_ids)} apps — alphabet={total_alpha}, "
-            f"competitor={total_comp}, gaps={total_gaps}"
+            f"{processed}/{len(app_ids)} apps (cursor→{last_id}) — "
+            f"alphabet={total_alpha}, competitor={total_comp}, gaps={total_gaps}"
         )
     except Exception as exc:
         _log_fail(job_id, exc)
