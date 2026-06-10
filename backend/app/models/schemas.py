@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from typing import Optional, List, Any, Dict
 from datetime import datetime
 
@@ -53,20 +53,27 @@ class AppVersionResponse(AppVersionBase):
 # ---------------------------------------------------------------------------
 
 class AppAnalyticsBase(BaseModel):
+    # Real computed fields (populated by ReviewSentimentService)
     review_growth_30d: float = 0
     review_growth_90d: float = 0
     rating_change_30d: float = 0
     rating_change_90d: float = 0
     sentiment_score: float = 0
     sentiment_label: Optional[str] = None
+    # Never-computed fields — emit null (these DB columns are never written by any service)
     common_complaints: Optional[List[str]] = None
     common_features: Optional[List[str]] = None
     positive_themes: Optional[List[str]] = None
     bug_keywords: Optional[List[str]] = None
-    churn_risk_score: float = 0
-    update_cadence_score: float = 0
-    quality_score: float = 0
-    opportunity_score: float = 0
+    churn_risk_score: Optional[float] = None
+    update_cadence_score: Optional[float] = None
+    quality_score: Optional[float] = None
+    opportunity_score: Optional[float] = None
+
+    @validator("churn_risk_score", "update_cadence_score", "quality_score", "opportunity_score", pre=True)
+    def _zero_means_not_computed(cls, v):
+        """DB default is 0 but no service ever computes these — treat 0 as None."""
+        return None if v == 0 or v is None else v
 
 
 class AppAnalyticsResponse(AppAnalyticsBase):

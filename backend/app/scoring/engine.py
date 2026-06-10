@@ -117,13 +117,12 @@ class ScoringEngine:
         velocity = recent_avg - app.current_rating
         return float(velocity)
 
-    def calculate_keyword_competition(self, keyword: str) -> float:
+    def calculate_keyword_competition(self, keyword: str) -> Optional[float]:
+        """Return competition score 0-100 or None if insufficient data."""
         keyword_obj = self.db.query(Keyword).filter(Keyword.term == keyword).first()
 
         if not keyword_obj:
-            return 50.0
-
-        base_difficulty = keyword_obj.difficulty if keyword_obj.difficulty and keyword_obj.difficulty > 0 else 50.0
+            return None
 
         app_count = (
             self.db.query(AppKeyword)
@@ -131,6 +130,15 @@ class ScoringEngine:
             .filter(Keyword.term == keyword)
             .count()
         )
+
+        # Use real difficulty when available; otherwise derive from app_count only
+        if keyword_obj.difficulty and keyword_obj.difficulty > 0:
+            base_difficulty = keyword_obj.difficulty
+        elif app_count > 0:
+            # Rough estimate: more competing apps = harder (capped at 80)
+            base_difficulty = min(float(app_count) * 2.0, 80.0)
+        else:
+            return None  # no data at all
 
         competition_boost = min(
             app_count * ENGINE_CONFIG["competition_per_app_boost"],
@@ -235,7 +243,9 @@ class ScoringEngine:
         rank_velocity = self.calculate_rank_velocity(app_id)
         review_growth = self.calculate_review_growth(app_id)
         rating_velocity = self.calculate_rating_velocity(app_id)
-        competition_score = self.calculate_keyword_competition(primary_keyword)
+        competition_score_raw = self.calculate_keyword_competition(primary_keyword)
+        # Use 50.0 as uninformative prior for internal scoring when data missing
+        competition_score_for_calc = competition_score_raw if competition_score_raw is not None else 50.0
 
         category_growth = 0.0
         if app.category_id:
@@ -246,7 +256,7 @@ class ScoringEngine:
         success_prob = self.calculate_success_probability(
             rank_velocity,
             review_growth,
-            competition_score,
+            competition_score_for_calc,
             ai_potential,
             category_growth
         )
@@ -263,7 +273,7 @@ class ScoringEngine:
             "app_id": app_id,
             "app_name": app.name,
             "primary_keyword": primary_keyword,
-            "competition_score": round(competition_score, 2),
+            "competition_score": round(competition_score_raw, 2) if competition_score_raw is not None else None,
             "trend_score": round(trend_score, 2),
             "success_probability": round(success_prob, 2),
             "ai_integration_potential": round(ai_potential, 2),
@@ -661,7 +671,7 @@ class ScoringEngine:
                 .all()
             )
             for term, diff in kw_diff_rows:
-                kw_diff_map[term] = diff if diff and diff > 0 else 50.0
+                kw_diff_map[term] = diff if diff and diff > 0 else None
 
             kw_count_rows = (
                 self.db.query(Keyword.term, func.count(AppKeyword.id).label("cnt"))
@@ -683,14 +693,22 @@ class ScoringEngine:
             if not isinstance(primary_keyword, str):
                 primary_keyword = "app"
 
-            # Competition score
-            base_diff = kw_diff_map.get(primary_keyword, 50.0)
+            # Competition score — None when no real data
+            base_diff_raw = kw_diff_map.get(primary_keyword)
             app_count = kw_app_count_map.get(primary_keyword, 0)
+            if base_diff_raw is not None:
+                base_diff = base_diff_raw
+            elif app_count > 0:
+                base_diff = min(float(app_count) * 2.0, 80.0)
+            else:
+                base_diff = None
             competition_boost = min(
                 app_count * ENGINE_CONFIG["competition_per_app_boost"],
                 ENGINE_CONFIG["competition_max_boost"],
             )
-            competition_score = min(base_diff + competition_boost, 100.0)
+            competition_score_raw = min(base_diff + competition_boost, 100.0) if base_diff is not None else None
+            # Use 50.0 as uninformative prior for internal formulas
+            competition_score = competition_score_raw if competition_score_raw is not None else 50.0
 
             # AI potential (preloaded objects, no DB)
             ai_result = calculate_ai_potential_v2(
@@ -730,7 +748,7 @@ class ScoringEngine:
                 "app_id": app.id,
                 "app_name": app.name,
                 "primary_keyword": primary_keyword,
-                "competition_score": round(competition_score, 2),
+                "competition_score": round(competition_score_raw, 2) if competition_score_raw is not None else None,
                 "trend_score": round(min(rank_score * 0.6 + rating_score * 0.4, 100.0), 2),
                 "success_probability": round(combined, 2),
                 "attractiveness_score": round(attractiveness, 2),

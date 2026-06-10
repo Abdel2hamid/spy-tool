@@ -300,9 +300,9 @@ class WeeklyOpportunitiesService:
     def _build_weekly_ai_summary(self, candidate: dict, rank: int) -> str:
         keyword = candidate.get("primary_keyword") or "this niche"
         category = candidate.get("category") or "apps"
-        competition = candidate.get("competition_score", 50.0) or 50.0
-        feasibility = candidate.get("feasibility_score", 50.0) or 50.0
-        success_prob = candidate.get("success_probability", 0.0) or 0.0
+        competition = candidate.get("competition_score")  # None if unavailable
+        feasibility = candidate.get("feasibility_score") or 0.0
+        success_prob = candidate.get("success_probability") or 0.0
         opp_score = candidate.get("opportunity_score", 0.0) or 0.0
         trend = candidate.get("trend_score", 0.0) or 0.0
         gap_count = (candidate.get("feasibility_details") or {}).get("gap_count", 0)
@@ -332,7 +332,9 @@ class WeeklyOpportunitiesService:
             )
 
         # Middle: competition + feasibility
-        if competition < 35:
+        if competition is None:
+            comp_phrase = "unknown competition level"
+        elif competition < 35:
             comp_phrase = "very low keyword competition"
         elif competition < 55:
             comp_phrase = "moderate competition"

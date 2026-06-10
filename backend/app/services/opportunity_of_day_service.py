@@ -293,10 +293,10 @@ class OpportunityOfDayService:
         """
         keyword = opportunity.get("primary_keyword") or "this niche"
         category = opportunity.get("category") or "apps"
-        competition = opportunity.get("competition_score", 50.0)
-        feasibility = opportunity.get("feasibility_score", 50.0)
-        attractiveness = opportunity.get("attractiveness_score", 50.0)
-        success_prob = opportunity.get("success_probability", 0.0)
+        competition = opportunity.get("competition_score")  # None if unavailable
+        feasibility = opportunity.get("feasibility_score") or 0.0
+        attractiveness = opportunity.get("attractiveness_score") or 0.0
+        success_prob = opportunity.get("success_probability") or 0.0
         rank_velocity = opportunity.get("rank_velocity", 0.0)
         review_growth = opportunity.get("review_growth", 0.0)
         feasibility_details = opportunity.get("feasibility_details") or {}
@@ -323,7 +323,9 @@ class OpportunityOfDayService:
             )
 
         # Middle sentence: competition + feasibility signal
-        if competition < 35:
+        if competition is None:
+            comp_desc = "unknown competition level"
+        elif competition < 35:
             comp_desc = "very low keyword competition"
         elif competition < 55:
             comp_desc = "moderate competition"
