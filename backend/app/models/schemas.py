@@ -579,15 +579,15 @@ class KeywordCompetitorItem(BaseModel):
 class KeywordListItem(BaseModel):
     id: int
     term: str
-    search_volume: int
-    difficulty: float
-    trend: float
-    opportunity_score: float
-    feasibility_score: float
-    classification: str  # 'easy' | 'medium' | 'hard' | 'impossible'
-    apps_count: int
-    ads_presence: float  # 0.0–1.0 fraction of sponsored results
-    feature_gap_count: int
+    search_volume: Optional[int] = None       # None = no real data available
+    difficulty: Optional[float] = None        # None = no real data available
+    trend: Optional[float] = None             # None = no real data available
+    opportunity_score: float = 0.0
+    feasibility_score: float = 0.0
+    classification: str = "unknown"  # 'easy' | 'medium' | 'hard' | 'impossible' | 'unknown'
+    apps_count: int = 0
+    ads_presence: Optional[float] = None      # None = not yet scanned
+    feature_gap_count: Optional[int] = None   # None = not yet analyzed
     last_updated: Optional[datetime] = None
     # External signal fields (populated by KeywordIntelligencePipeline)
     trend_score: float = 0.0          # Google Trends average interest (0-100)
@@ -615,17 +615,17 @@ class GoogleTrendWeekPoint(BaseModel):
 class KeywordDetailResponse(BaseModel):
     id: Optional[int] = None
     term: str
-    search_volume: int
-    difficulty: float
-    trend: float
-    opportunity_score: float
-    feasibility_score: float
-    classification: str
-    apps_count: int
-    ads_presence: float
-    top_competitors: List[KeywordCompetitorItem]
-    related_keywords: List[str]
-    feature_gap_count: int
+    search_volume: Optional[int] = None       # None = no real data available
+    difficulty: Optional[float] = None        # None = no real data available
+    trend: Optional[float] = None             # None = no real data available
+    opportunity_score: float = 0.0
+    feasibility_score: float = 0.0
+    classification: str = "unknown"
+    apps_count: int = 0
+    ads_presence: Optional[float] = None      # None = not yet scanned
+    top_competitors: List[KeywordCompetitorItem] = []
+    related_keywords: List[str] = []
+    feature_gap_count: Optional[int] = None   # None = not yet analyzed
     market_fragmentation: float
     last_scanned: Optional[str] = None
     # External signal fields
@@ -655,16 +655,16 @@ class TrendingKeywordItem(BaseModel):
     """Keyword with strong rising trend signals — used on Trending/Opportunities pages."""
     id: int
     term: str
-    trend_score: float
-    trend_growth: float
-    trend_velocity: float
-    opportunity_score: float
-    feasibility_score: float
-    search_volume: int
-    difficulty: float
-    dominance_score: float
-    apps_count: int
-    classification: str
+    trend_score: float = 0.0
+    trend_growth: float = 0.0
+    trend_velocity: float = 0.0
+    opportunity_score: float = 0.0
+    feasibility_score: float = 0.0
+    search_volume: Optional[int] = None       # None = no real data
+    difficulty: Optional[float] = None        # None = no real data
+    dominance_score: float = 0.0
+    apps_count: int = 0
+    classification: str = "unknown"
 
 
 class TrendingKeywordsResponse(BaseModel):

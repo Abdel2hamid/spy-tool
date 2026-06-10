@@ -1437,21 +1437,18 @@ class ScoringEngine:
 
     def update_keyword_metrics(self) -> None:
         """
-        Estimate keyword metrics from available app-keyword data.
+        Update keyword apps_count from app-keyword association data.
 
-        Uses a single GROUP BY query to count app-keyword associations for ALL
-        keywords at once (instead of N per-keyword COUNT queries).
+        Previously this method fabricated search_volume, difficulty, and trend
+        using made-up formulas (search_volume = app_count * 850, etc.).
+        Those fabricated values have been removed — these fields should only
+        be populated by real external data sources (e.g. DataForSEO, Google
+        Trends via KeywordIntelligencePipeline).
 
-          search_volume ≈ app_count × search_volume_per_app
-          difficulty    ≈ min(app_count, difficulty_cap)
-          trend         ≈ category-based estimate (AI/chat keywords score higher)
+        This method now only updates apps_count which IS a real metric
+        derived from actual app-keyword associations in the database.
         """
-        _tmap = TRENDING_CONFIG["trend_velocity_map"]
-        _tdef = TRENDING_CONFIG["trend_velocity_default"]
-        _svpa = TRENDING_CONFIG["search_volume_per_app"]
-        _dcap = TRENDING_CONFIG["difficulty_cap"]
-
-        # Single query: keyword_id → app_count  (replaces N per-keyword COUNTs)
+        # Single query: keyword_id → app_count
         counts = dict(
             self.db.query(AppKeyword.keyword_id, func.count(AppKeyword.app_id))
             .group_by(AppKeyword.keyword_id)
@@ -1473,10 +1470,7 @@ class ScoringEngine:
             for kw in batch:
                 if not kw.term:
                     continue
-                app_count = counts.get(kw.id, 0)
-                kw.search_volume = app_count * _svpa
-                kw.difficulty = min(float(app_count), _dcap)
-                kw.trend = _tmap.get(kw.term.lower(), _tdef)
+                kw.apps_count = counts.get(kw.id, 0)
             self.db.commit()
             self.db.expire_all()
             offset += _BATCH

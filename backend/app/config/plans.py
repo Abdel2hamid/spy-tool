@@ -99,7 +99,7 @@ def get_effective_plan(subscription) -> str:
         return "trial"
     if subscription.status == "active":
         code = subscription.plan_code or "free"
-        return code if code in PLAN_LIMITS else "pro"
+        return code if code in PLAN_LIMITS else "free"
     return "free"
 
 

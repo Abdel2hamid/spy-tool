@@ -191,21 +191,32 @@ class PlanEnforcer:
 # ---------------------------------------------------------------------------
 
 class _NoOpEnforcer:
-    """All operations are no-ops. Returned when no valid auth token is present."""
+    """Returned when no valid auth token is present.
+
+    Applies free-plan limits so unauthenticated callers are NOT granted
+    unlimited access.  Previously this was a no-op (unlimited), which was
+    more permissive than even the Pro plan.
+    """
 
     def check(self, action: str) -> None:
-        pass
+        limit = get_limit("free", action)
+        if limit is not None and limit <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required for this action.",
+            )
 
     def increment(self, action: str) -> None:
-        pass
+        pass  # nothing to track without a workspace
 
     def check_and_increment(self, action: str) -> None:
-        pass
+        self.check(action)
 
     def get_summary(self) -> dict:
+        free = PLAN_LIMITS["free"]
         return {
-            "plan": "unknown",
+            "plan": "free",
             "month": "",
             "usage": {a: 0 for a in _TRACKED_ACTIONS},
-            "limits": {a: None for a in _TRACKED_ACTIONS},
+            "limits": {a: free.get(a) for a in _TRACKED_ACTIONS},
         }

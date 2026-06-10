@@ -86,7 +86,7 @@ from app.models.schemas import (
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
-from app.api.deps import _bearer
+from app.api.deps import _bearer, get_current_user
 from app.utils.rate_limiter import rate_limit
 from app.services.plan_enforcement import PlanEnforcer
 from app.config import settings
@@ -804,7 +804,7 @@ def get_app(app_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/apps", response_model=AppResponse)
-def create_app(app: AppCreate, db: Session = Depends(get_db)):
+def create_app(app: AppCreate, db: Session = Depends(get_db), _user=Depends(get_current_user)):
     db_app = models.App(**app.dict())
     db.add(db_app)
     db.commit()
@@ -841,7 +841,7 @@ def search_apps_by_keyword(
 
 
 @router.patch("/apps/{app_id}", response_model=AppResponse)
-def update_app(app_id: int, app_update: AppUpdate, db: Session = Depends(get_db)):
+def update_app(app_id: int, app_update: AppUpdate, db: Session = Depends(get_db), _user=Depends(get_current_user)):
     app = db.query(models.App).filter(models.App.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="App not found")
@@ -1364,7 +1364,7 @@ def get_keywords(
 
 
 @router.post("/keywords", response_model=KeywordResponse)
-def create_keyword(keyword: KeywordCreate, db: Session = Depends(get_db)):
+def create_keyword(keyword: KeywordCreate, db: Session = Depends(get_db), _user=Depends(get_current_user)):
     from app.services.global_keyword_sink import GlobalKeywordSink
     
     sink = GlobalKeywordSink(db)
@@ -1527,15 +1527,19 @@ def get_keywords_enhanced(
 
     items = []
     for kw, apps_count_raw in rows:
-        vol = kw.search_volume or 0
-        diff = float(kw.difficulty or 0)
-        trend = float(kw.trend or 0)
+        vol = kw.search_volume  # None if no real data
+        diff = kw.difficulty    # None if no real data (float column)
+        trend_val = kw.trend    # None if no real data (float column)
         # Prefer pipeline-computed scores when available; fall back to legacy formulas
         apps_count = int(kw.apps_count or 0) or int(apps_count_raw or 0)
-        opp = float(kw.opportunity_score or 0) or _kw_opportunity_score(vol, diff, trend, apps_count)
-        feas = float(kw.feasibility_score or 0) or _kw_feasibility_score(diff, apps_count, 0.0, 0, trend, False)
+        opp = float(kw.opportunity_score or 0) or _kw_opportunity_score(
+            vol or 0, float(diff or 0), float(trend_val or 0), apps_count
+        )
+        feas = float(kw.feasibility_score or 0) or _kw_feasibility_score(
+            float(diff or 0), apps_count, 0.0, 0, float(trend_val or 0), False
+        )
         cls = _kw_classify(
-            diff,
+            float(diff or 0),
             apps_count,
             0,
             bool(kw.dominance_score and kw.dominance_score >= 80),
@@ -1544,15 +1548,15 @@ def get_keywords_enhanced(
             KeywordListItem(
                 id=kw.id,
                 term=kw.term,
-                search_volume=vol,
-                difficulty=diff,
-                trend=trend,
+                search_volume=vol,               # None = unavailable
+                difficulty=diff,                  # None = unavailable
+                trend=trend_val,                  # None = unavailable
                 opportunity_score=opp,
                 feasibility_score=feas,
                 classification=cls,
                 apps_count=apps_count,
-                ads_presence=0.0,
-                feature_gap_count=0,
+                ads_presence=None,                # not yet scanned
+                feature_gap_count=None,           # not yet analyzed
                 last_updated=kw.last_updated,
                 # External signal fields
                 trend_score=float(kw.trend_score or 0),
@@ -1604,7 +1608,7 @@ def get_trending_keywords(
     items = []
     for kw in rows:
         apps_count = int(kw.apps_count or 0)
-        diff = float(kw.difficulty or 0)
+        diff = float(kw.difficulty or 0) if kw.difficulty is not None else 0
         dominance = float(kw.dominance_score or 0)
         cls = _kw_classify(diff, apps_count, 0, dominance >= 80)
         items.append(
@@ -1616,8 +1620,8 @@ def get_trending_keywords(
                 trend_velocity=float(kw.trend_velocity or 0),
                 opportunity_score=float(kw.opportunity_score or 0),
                 feasibility_score=float(kw.feasibility_score or 0),
-                search_volume=int(kw.search_volume or 0),
-                difficulty=diff,
+                search_volume=kw.search_volume,       # None = unavailable
+                difficulty=kw.difficulty,              # None = unavailable
                 dominance_score=dominance,
                 apps_count=apps_count,
                 classification=cls,
@@ -1630,7 +1634,7 @@ def get_trending_keywords(
 
 
 @router.post("/keywords/pipeline/run")
-async def trigger_keyword_pipeline():
+async def trigger_keyword_pipeline(_user=Depends(get_current_user)):
     """
     Manually trigger the full keyword intelligence pipeline.
     Schedules the pipeline as a background asyncio task; returns immediately.
@@ -1702,7 +1706,7 @@ def get_keyword_pipeline_debug(db: Session = Depends(get_db)):
 
 
 @router.post("/keywords/discovery/run")
-async def run_keyword_discovery():
+async def run_keyword_discovery(_user=Depends(get_current_user)):
     """
     Trigger the keyword discovery engine in the background.
     Runs all three phases (static expansion, Apple suggestions, metadata phrases)
@@ -1755,9 +1759,9 @@ def get_keyword_detail(
 ):
     """Full keyword detail: competitors, ads presence, market fragmentation, related keywords."""
     kw = db.query(models.Keyword).filter(models.Keyword.term == term).first()
-    vol = kw.search_volume if kw else 0
-    diff = float(kw.difficulty if kw else 0)
-    trend_val = float(kw.trend if kw else 0)
+    vol = kw.search_volume if kw else None       # None = no real data
+    diff = kw.difficulty if kw else None          # None = no real data
+    trend_val = kw.trend if kw else None          # None = no real data
     kw_id = kw.id if kw else None
 
     apps_count = 0
@@ -1906,11 +1910,11 @@ def get_keyword_detail(
 
     opp = float(kw.opportunity_score or 0) if kw else 0.0
     if not opp:
-        opp = _kw_opportunity_score(vol, diff, trend_val, eff_apps_count)
+        opp = _kw_opportunity_score(vol or 0, float(diff or 0), float(trend_val or 0), eff_apps_count)
     feas = float(kw.feasibility_score or 0) if kw else 0.0
     if not feas:
-        feas = _kw_feasibility_score(diff, eff_apps_count, ads_presence, feature_gap_count, trend_val, brand_dominated)
-    cls = _kw_classify(diff, eff_apps_count, top_reviews, brand_dominated)
+        feas = _kw_feasibility_score(float(diff or 0), eff_apps_count, ads_presence, feature_gap_count, float(trend_val or 0), brand_dominated)
+    cls = _kw_classify(float(diff or 0), eff_apps_count, top_reviews, brand_dominated)
 
     # Google Trends sparkline points from keyword_trends table
     google_trend_points: list = []
@@ -2114,25 +2118,10 @@ def get_app_analytics(app_id: int, db: Session = Depends(get_db)):
     ).order_by(models.AppAnalytics.computed_at.desc()).first()
     
     if not analytics:
-        return {
-            "id": 0,
-            "app_id": app_id,
-            "review_growth_30d": 0,
-            "review_growth_90d": 0,
-            "rating_change_30d": 0,
-            "rating_change_90d": 0,
-            "sentiment_score": 0,
-            "sentiment_label": "unknown",
-            "common_complaints": [],
-            "common_features": [],
-            "positive_themes": [],
-            "bug_keywords": [],
-            "churn_risk_score": 0,
-            "update_cadence_score": 0,
-            "quality_score": 0,
-            "opportunity_score": 0,
-            "computed_at": datetime.utcnow()
-        }
+        raise HTTPException(
+            status_code=404,
+            detail="Analytics not yet computed for this app. Run the scoring job first.",
+        )
     
     return analytics
 
@@ -2247,6 +2236,7 @@ def get_ideas(
 @router.post("/ideas/generate", response_model=AppIdeaListResponse)
 def trigger_generate_ideas(
     db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ):
     PlanEnforcer.from_token(credentials, db).check_and_increment("ai_requests")
@@ -2265,7 +2255,7 @@ def trigger_generate_ideas(
 
 
 @router.post("/apps/{app_id}/feature-gaps/analyze", response_model=FeatureGapListResponse)
-def analyze_feature_gaps(app_id: int, db: Session = Depends(get_db)):
+def analyze_feature_gaps(app_id: int, db: Session = Depends(get_db), _user=Depends(get_current_user)):
     """
     Re-run feature gap analysis for an app (force refresh).
     """
@@ -2687,7 +2677,7 @@ def get_keywords_intelligence(
 
 
 @router.post("/apps/{app_id}/keywords/intelligence/extract")
-async def trigger_keyword_extraction(app_id: int, db: Session = Depends(get_db)):
+async def trigger_keyword_extraction(app_id: int, db: Session = Depends(get_db), _user=Depends(get_current_user)):
     """
     Immediately trigger keyword extraction in the background.
     Returns right away; poll GET /apps/{id}/keywords/intelligence for results.
@@ -2755,7 +2745,7 @@ def get_discovered_keywords(
 
 
 @router.post("/apps/{app_id}/keywords/discover", response_model=DiscoveredKeywordsResponse)
-async def trigger_keyword_discovery(app_id: int, db: Session = Depends(get_db)):
+async def trigger_keyword_discovery(app_id: int, db: Session = Depends(get_db), _user=Depends(get_current_user)):
     """
     Trigger keyword discovery for this app in the background.
     Returns immediately; poll GET /apps/{id}/keywords/discovered for results.
@@ -2832,6 +2822,7 @@ async def run_keyword_tracker(
     country: str = Query("us"),
     keyword_limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ):
     """
@@ -2865,6 +2856,7 @@ async def search_single_keyword(
     keyword: str = Query(..., description="Keyword to search"),
     country: str = Query("us"),
     db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
 ):
     """
     Scrape App Store search results for a single keyword immediately.
@@ -3121,7 +3113,7 @@ def get_app_autopsy(
 # ---------------------------------------------------------------------------
 
 @router.post("/apps/{app_id}/keywords/discover-phase1", response_model=KeywordOpportunitiesResponse)
-async def trigger_phase1_discovery(app_id: int, db: Session = Depends(get_db)):
+async def trigger_phase1_discovery(app_id: int, db: Session = Depends(get_db), _user=Depends(get_current_user)):
     """
     Trigger Phase-1 keyword discovery pipeline in the background:
       1. Alphabet mining (seed × a-z × autocomplete)
@@ -3276,7 +3268,7 @@ def get_app_metrics(
 
 
 @router.post("/apps/{app_id}/metrics/compute")
-def compute_app_metrics(app_id: int, db: Session = Depends(get_db)):
+def compute_app_metrics(app_id: int, db: Session = Depends(get_db), _user=Depends(get_current_user)):
     """On-demand metric snapshot computation for a single app."""
     from app.services.metric_snapshot_service import MetricSnapshotService
 
@@ -3327,7 +3319,7 @@ def get_app_ad_intelligence(
 
 
 @router.post("/apps/{app_id}/ads/scan")
-async def scan_app_ads(app_id: int, db: Session = Depends(get_db)):
+async def scan_app_ads(app_id: int, db: Session = Depends(get_db), _user=Depends(get_current_user)):
     """Trigger on-demand ad intelligence scan for a single app."""
     import os
     from app.services.ad_intelligence_service import AdIntelligenceService
@@ -3468,7 +3460,7 @@ def get_app_growth_events(
 
 
 @router.post("/apps/{app_id}/growth-events/detect")
-async def detect_app_growth(app_id: int, db: Session = Depends(get_db)):
+async def detect_app_growth(app_id: int, db: Session = Depends(get_db), _user=Depends(get_current_user)):
     """On-demand campaign/growth signal detection for a single app."""
     from app.services.campaign_tracking_service import CampaignTrackingService
 

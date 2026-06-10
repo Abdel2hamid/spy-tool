@@ -20,6 +20,7 @@ import {
   Star,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/lib/auth';
 
 const navSections = [
   {
@@ -102,6 +103,7 @@ function NavLink({
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { user } = useAuth();
 
   return (
     <aside className="fixed left-0 top-0 z-40 h-screen w-64">
@@ -153,8 +155,8 @@ export function Sidebar() {
               <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-white bg-emerald-400 dark:border-gray-950" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-gray-900 dark:text-white">Admin</p>
-              <p className="truncate text-xs text-gray-400">admin@appstore.ai</p>
+              <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{user?.full_name || user?.email || 'User'}</p>
+              <p className="truncate text-xs text-gray-400">{user?.email || ''}</p>
             </div>
           </div>
         </div>

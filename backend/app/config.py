@@ -50,8 +50,15 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Warn loudly if JWT secret is the insecure default
+# JWT secret: fail-fast in production, ephemeral fallback in dev
 if not settings.jwt_secret:
+    import os
+    if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PRODUCTION"):
+        raise RuntimeError(
+            "FATAL: JWT_SECRET env var is not set. "
+            "Refusing to start in production with an ephemeral secret. "
+            "Set JWT_SECRET to a stable random string (e.g. openssl rand -base64 48)."
+        )
     _generated = secrets.token_urlsafe(48)
     logging.getLogger(__name__).warning(
         "JWT_SECRET not set! Using random ephemeral secret — "
