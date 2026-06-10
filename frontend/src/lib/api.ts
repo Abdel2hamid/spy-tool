@@ -30,6 +30,15 @@ function _resolveApiBase(): string {
 
 const API_BASE = _resolveApiBase();
 
+/**
+ * Read the JWT from localStorage and return an Authorization header.
+ * Used by mutation endpoints (POST/PUT/DELETE) that require authentication.
+ */
+function _authHeaders(): Record<string, string> {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export interface DashboardStats {
   total_apps_tracked: number;
   total_keywords: number;
@@ -879,7 +888,7 @@ export async function getTrendingKeywords(limit = 20): Promise<TrendingKeywordsR
 }
 
 export async function triggerKeywordPipeline(): Promise<{ status: string; message: string }> {
-  const res = await fetch(`${API_BASE}/keywords/pipeline/run`, { method: 'POST', cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/keywords/pipeline/run`, { method: 'POST', headers: _authHeaders(), cache: 'no-store' });
   if (!res.ok) return { status: 'error', message: 'Failed to trigger pipeline' };
   return res.json();
 }
@@ -955,6 +964,7 @@ export async function getFeatureGaps(appId: number): Promise<FeatureGapResponse>
 export async function analyzeFeatureGaps(appId: number): Promise<FeatureGapResponse> {
   const res = await fetch(`${API_BASE}/apps/${appId}/feature-gaps/analyze`, {
     method: 'POST',
+    headers: _authHeaders(),
     cache: 'no-store',
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
@@ -1012,6 +1022,7 @@ export async function getIdeas(params: {
 export async function generateIdeas(): Promise<AppIdeaListResponse> {
   const res = await fetch(`${API_BASE}/ideas/generate`, {
     method: 'POST',
+    headers: _authHeaders(),
     cache: 'no-store',
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
@@ -1055,7 +1066,7 @@ export async function getKeywordIntelligence(appId: number): Promise<KeywordInte
 export async function runKeywordSearch(keyword: string, country = 'us'): Promise<{ status: string; total_results: number }> {
   const res = await fetch(
     `${API_BASE}/keyword-tracker/search?keyword=${encodeURIComponent(keyword)}&country=${country}`,
-    { method: 'POST', cache: 'no-store' }
+    { method: 'POST', headers: _authHeaders(), cache: 'no-store' }
   );
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
@@ -1098,6 +1109,7 @@ export async function getExtractedKeywords(
 export async function triggerKeywordExtraction(appId: number): Promise<void> {
   await fetch(`${API_BASE}/apps/${appId}/keywords/intelligence/extract`, {
     method: 'POST',
+    headers: _authHeaders(),
     cache: 'no-store',
   });
 }
@@ -1147,6 +1159,7 @@ export async function triggerKeywordDiscovery(
 ): Promise<DiscoveredKeywordsResponse> {
   const res = await fetch(`${API_BASE}/apps/${appId}/keywords/discover`, {
     method: 'POST',
+    headers: _authHeaders(),
     cache: 'no-store',
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
@@ -1195,6 +1208,7 @@ export async function triggerPhase1Discovery(
 ): Promise<KeywordOpportunitiesResponse> {
   const res = await fetch(`${API_BASE}/apps/${appId}/keywords/discover-phase1`, {
     method: 'POST',
+    headers: _authHeaders(),
     cache: 'no-store',
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
@@ -1637,7 +1651,7 @@ export async function getAppAdIntelligence(appId: number): Promise<AppAdIntellig
 }
 
 export async function scanAppAds(appId: number): Promise<{ status: string; creatives_upserted: number; campaigns_upserted: number }> {
-  const res = await fetch(`${API_BASE}/apps/${appId}/ads/scan`, { method: 'POST', cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/apps/${appId}/ads/scan`, { method: 'POST', headers: _authHeaders(), cache: 'no-store' });
   if (!res.ok) throw new Error(`Ad scan failed: ${res.status}`);
   return res.json();
 }

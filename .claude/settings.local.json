@@ -500,7 +500,12 @@
       "Bash(psql \"postgresql://abdelhamid@localhost:5432/appstore_spy\" -c \"\nSELECT chart_type, COUNT\\(*\\) as new_rows\nFROM rankings\nWHERE recorded_at > NOW\\(\\) - INTERVAL '10 minutes'\nGROUP BY chart_type;\")",
       "Bash(python -c \"from app.workers.scheduler import setup_scheduler, get_job_metrics; print\\('scheduler OK'\\)\" 2>&1)",
       "Bash(python3 -c \"from app.workers.scheduler import setup_scheduler, get_job_metrics; print\\('scheduler OK'\\)\" 2>&1)",
-      "Bash(python3 -c \"from app.workers.tasks import ScraperWorker; print\\('tasks OK'\\)\" 2>&1)"
+      "Bash(python3 -c \"from app.workers.tasks import ScraperWorker; print\\('tasks OK'\\)\" 2>&1)",
+      "Bash(python3 -c \"from app.api.deps import get_current_user; print\\('deps OK'\\)\" 2>&1)",
+      "Bash(cd /Users/abdelhamid/appstore-spy/backend && python3 -c \"from app.api.deps import get_current_user; print\\('deps OK'\\)\" 2>&1)",
+      "Bash(cd /Users/abdelhamid/appstore-spy/frontend && npx tsc --noEmit --pretty 2>&1 | grep -i \"api.ts\" | head -10)",
+      "Bash(cd /Users/abdelhamid/appstore-spy/backend && python3 -c \"from app.main import app; print\\('full app OK'\\)\" 2>&1)",
+      "Bash(git add backend/app/api/deps.py frontend/src/lib/api.ts)"
     ]
   }
 }
