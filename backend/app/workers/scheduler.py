@@ -1100,6 +1100,51 @@ async def job_campaign_detection():
 
 
 # ---------------------------------------------------------------------------
+# One-shot bootstrap: auto-create ranking snapshots if rankings table is empty
+# ---------------------------------------------------------------------------
+
+async def job_bootstrap_data():
+    """
+    One-shot job: if rankings table is empty but apps have current_rank,
+    create initial ranking snapshots so trending/blowing-up pipelines can compute.
+    Runs once at startup, then removes itself.
+    """
+    job_id = "bootstrap_data"
+    t0 = _log_start(job_id)
+    try:
+        from app.database import SessionLocal
+        from sqlalchemy import func as sqla_func
+        from app.models.models import Ranking as RankingModel, App as AppModel
+
+        db = SessionLocal()
+        try:
+            # Check if rankings already exist
+            ranking_count = db.query(sqla_func.count(RankingModel.id)).scalar() or 0
+            if ranking_count > 0:
+                _log_done(job_id, t0, f"Rankings already exist ({ranking_count} rows) — skipping bootstrap")
+                return
+
+            # Check if there are apps with current_rank
+            rankable = (
+                db.query(sqla_func.count(AppModel.id))
+                .filter(AppModel.current_rank.isnot(None), AppModel.current_rank > 0)
+                .scalar() or 0
+            )
+            if rankable == 0:
+                _log_done(job_id, t0, "No apps with current_rank — bootstrap skipped (run /admin/bootstrap first)")
+                return
+
+            logger.info(f"[{job_id}] Rankings empty but {rankable} apps have current_rank — bootstrapping...")
+            from app.services.bootstrap_data_service import run_full_bootstrap
+            result = await asyncio.to_thread(lambda: run_full_bootstrap(db))
+            _log_done(job_id, t0, f"Bootstrap complete: {result}")
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+# ---------------------------------------------------------------------------
 # Scheduler setup
 # ---------------------------------------------------------------------------
 
@@ -1109,6 +1154,18 @@ def setup_scheduler() -> AsyncIOScheduler:
     Must be called before scheduler.start().
     """
     now = datetime.utcnow()
+
+    # ── One-shot: bootstrap ranking data if rankings table is empty ─────────
+    # Runs 1 minute after startup, checks if bootstrap is needed, auto-removes.
+    from apscheduler.triggers.date import DateTrigger
+    scheduler.add_job(
+        job_bootstrap_data,
+        trigger=DateTrigger(run_date=now + timedelta(minutes=1), timezone="UTC"),
+        id="bootstrap_data",
+        name="One-shot: Auto-bootstrap ranking data if empty",
+        max_instances=1,
+        replace_existing=True,
+    )
 
     # ── Discovery: keyword search (100+ keywords → queue) — every 6 h ──────
     # First run staggered to 6 min (was 2 min — avoid startup storm).

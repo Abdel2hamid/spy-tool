@@ -121,15 +121,24 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     total_apps = db.query(func.count(models.App.id)).scalar() or 0
     total_keywords = db.query(func.count(models.Keyword.id)).scalar() or 0
 
-    cutoff = datetime.utcnow() - timedelta(days=7)
+    # Trending: prefer precomputed scores (populated by trending_compute job).
+    # Falls back to ranking velocity if scores table is empty.
     trending_count = (
-        db.query(func.count(func.distinct(models.Ranking.app_id)))
-        .filter(
-            models.Ranking.recorded_at >= cutoff,
-            models.Ranking.rank_velocity > 0,
-        )
+        db.query(func.count(models.AppTrendingScore.id))
+        .filter(models.AppTrendingScore.trend_score > 0)
         .scalar() or 0
     )
+    if trending_count == 0:
+        # Fallback: count apps with positive rank velocity in last 7 days
+        cutoff = datetime.utcnow() - timedelta(days=7)
+        trending_count = (
+            db.query(func.count(func.distinct(models.Ranking.app_id)))
+            .filter(
+                models.Ranking.recorded_at >= cutoff,
+                models.Ranking.rank_velocity > 0,
+            )
+            .scalar() or 0
+        )
 
     opportunities_count = db.query(func.count(models.Opportunity.id)).scalar() or 0
 
@@ -2346,12 +2355,86 @@ async def bootstrap_database(
 
 @router.get("/admin/bootstrap/status", dependencies=[Depends(_require_admin)])
 def bootstrap_status(db: Session = Depends(get_db)):
-    """Check whether a bootstrap is running and how many apps are in the DB."""
+    """Check whether a bootstrap is running and data pipeline state."""
     return {
         "bootstrap_running": _bootstrap_running,
-        "total_apps": db.query(models.App).count(),
-        "total_keywords": db.query(models.Keyword).count(),
-        "total_reviews": db.query(models.Review).count(),
+        "bootstrap_data_running": _bootstrap_data_running,
+        "total_apps": db.query(func.count(models.App.id)).scalar() or 0,
+        "total_keywords": db.query(func.count(models.Keyword.id)).scalar() or 0,
+        "total_reviews": db.query(func.count(models.Review.id)).scalar() or 0,
+        "total_rankings": db.query(func.count(models.Ranking.id)).scalar() or 0,
+        "trending_scores": db.query(func.count(models.AppTrendingScore.id)).scalar() or 0,
+        "apps_with_rank": (
+            db.query(func.count(models.App.id))
+            .filter(models.App.current_rank.isnot(None), models.App.current_rank > 0)
+            .scalar() or 0
+        ),
+    }
+
+
+_bootstrap_data_running = False
+_bootstrap_data_lock = asyncio.Lock()
+
+
+@router.post("/admin/bootstrap-data", dependencies=[Depends(_require_admin)])
+async def bootstrap_data(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    **Bootstrap ranking snapshots + scoring from existing app metadata.**
+
+    Creates ranking rows from apps that already have `current_rank` set,
+    then runs trending/blowing-up/opportunity scoring.
+
+    Use this when apps exist but rankings table is empty (dashboard shows
+    "no ranking history" for trending).
+
+    Returns 409 if already running.
+    """
+    global _bootstrap_data_running
+    if _bootstrap_data_running:
+        raise HTTPException(
+            status_code=409,
+            detail="Bootstrap-data already running — poll /admin/bootstrap/status",
+        )
+
+    # Count current state for the response
+    ranking_count = db.query(func.count(models.Ranking.id)).scalar() or 0
+    trending_count = db.query(func.count(models.AppTrendingScore.id)).scalar() or 0
+
+    async def _run():
+        global _bootstrap_data_running
+        async with _bootstrap_data_lock:
+            if _bootstrap_data_running:
+                return
+            _bootstrap_data_running = True
+        try:
+            from app.services.bootstrap_data_service import run_full_bootstrap
+            from app.database import SessionLocal
+            sess = SessionLocal()
+            try:
+                result = run_full_bootstrap(sess)
+                logger.info(f"[BOOTSTRAP-DATA] Result: {result}")
+            finally:
+                sess.close()
+        except Exception as exc:
+            logger.error(f"[BOOTSTRAP-DATA] Failed: {exc}", exc_info=True)
+        finally:
+            _bootstrap_data_running = False
+
+    background_tasks.add_task(_run)
+
+    return {
+        "status": "started",
+        "rankings_before": ranking_count,
+        "trending_before": trending_count,
+        "message": (
+            "Bootstrap-data started in background. "
+            "Creates ranking snapshots from app metadata, then computes "
+            "trending/blowing-up/opportunity scores. Takes ~1-3 minutes. "
+            "Poll GET /admin/bootstrap/status to track progress."
+        ),
     }
 
 

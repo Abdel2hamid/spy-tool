@@ -16,6 +16,7 @@ import time
 from datetime import datetime, timezone
 from typing import List, Optional
 
+from sqlalchemy import case
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -118,13 +119,58 @@ class KeywordRankTracker:
     # ------------------------------------------------------------------
 
     def _get_tracked_keywords(self, limit: int) -> List[str]:
+        """
+        Select the most useful keywords for rank tracking.
+
+        Priority order:
+          1. High quality_score keywords (quality_tier A/B)
+          2. Keywords linked to many apps (apps_count > 0)
+          3. Keywords seen multiple times (times_seen > 1)
+          4. Reasonable length (3-40 chars, no garbage strings)
+
+        Falls back to search_volume ordering only if quality data is absent.
+        """
+        from sqlalchemy import func as sqla_func
+
+        # Try quality-based selection first
         rows = (
             self.db.query(Keyword.term)
-            .order_by(Keyword.search_volume.desc())
+            .filter(
+                Keyword.term.isnot(None),
+                sqla_func.length(Keyword.term) >= 3,
+                sqla_func.length(Keyword.term) <= 40,
+                # Exclude keywords that are just numbers or single chars
+                Keyword.term.op("~")(r"[a-zA-Z]"),
+            )
+            .order_by(
+                # Prefer keywords with quality data, then by score
+                case(
+                    (Keyword.quality_tier == "A", 3),
+                    (Keyword.quality_tier == "B", 2),
+                    (Keyword.quality_tier == "C", 1),
+                    else_=0,
+                ).desc(),
+                Keyword.quality_score.desc().nullslast(),
+                Keyword.apps_count.desc().nullslast(),
+                Keyword.times_seen.desc().nullslast(),
+                Keyword.search_volume.desc().nullslast(),
+            )
             .limit(limit)
             .all()
         )
-        return [r.term for r in rows]
+
+        terms = [r.term for r in rows]
+        if terms:
+            logger.info(
+                f"[rank_tracker] Selected {len(terms)} keywords "
+                f"(top: {terms[:3]!r})"
+            )
+        else:
+            logger.warning(
+                "[rank_tracker] No suitable keywords found. "
+                "Ensure keyword discovery jobs have run."
+            )
+        return terms
 
     def _save_snapshots(self, search_data: dict) -> int:
         keyword = search_data["keyword"]
