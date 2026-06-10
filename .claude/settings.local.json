@@ -517,7 +517,8 @@
       "Bash(cd /Users/abdelhamid/appstore-spy/frontend && npx tsc --noEmit 2>&1 | tail -20)",
       "Bash(ls /Users/abdelhamid/appstore-spy/backend/app/services/*.py | head -10)",
       "Bash(npx tsc --noEmit 2>&1)",
-      "Bash(npx next build 2>&1 | tail -25)"
+      "Bash(npx next build 2>&1 | tail -25)",
+      "Bash(cd /Users/abdelhamid/appstore-spy/frontend && npx tsc --noEmit 2>&1 | tail -30)"
     ]
   }
 }

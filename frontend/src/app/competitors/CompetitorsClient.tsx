@@ -1,18 +1,23 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import {
   AppListItem,
   CompetitorCompareResponse,
   CompetitorAppSummary,
+  CompetitorRankHistoryResponse,
   getFilteredApps,
+  getAppDetail,
   compareCompetitors,
+  getCompetitorRankHistory,
 } from '@/lib/api';
 import { fmtRange, fmtRevRange, confidenceLabel, CONFIDENCE_BADGE, fmtNum } from '@/lib/estimate-format';
 import { cn } from '@/lib/utils';
+import { setComparisonIds, getComparisonIds } from '@/lib/comparison-store';
 import {
   Users,
   Search,
@@ -23,7 +28,23 @@ import {
   Loader2,
   Key,
   Bug,
+  TrendingUp,
+  BarChart3,
 } from 'lucide-react';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from 'recharts';
+
+// ── Stable distinct colors for up to 5 apps ────────────────────────────────
+
+const APP_COLORS = ['#6366f1', '#f43f5e', '#10b981', '#f59e0b', '#8b5cf6'];
 
 // ── App Picker ──────────────────────────────────────────────────────────────
 
@@ -328,6 +349,135 @@ function ComparisonMatrix({
   );
 }
 
+// ── Rank Trajectory Chart ───────────────────────────────────────────────────
+
+function RankTrajectoryChart({
+  appIds,
+}: {
+  appIds: number[];
+}) {
+  const [data, setData] = useState<CompetitorRankHistoryResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState(30);
+
+  useEffect(() => {
+    if (appIds.length < 2) return;
+    setLoading(true);
+    getCompetitorRankHistory(appIds, days)
+      .then(setData)
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [appIds, days]);
+
+  if (loading) {
+    return (
+      <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+        <div className="h-6 w-40 animate-pulse rounded bg-gray-200 dark:bg-gray-800 mb-4" />
+        <div className="h-64 animate-pulse rounded-xl bg-gray-100 dark:bg-gray-800" />
+      </div>
+    );
+  }
+
+  const hasSeries = data && data.series.length > 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
+          <TrendingUp className="h-5 w-5 text-indigo-500" />
+          Rank Trajectory
+        </h2>
+        <div className="flex items-center gap-1">
+          {[30, 60, 90].map((d) => (
+            <button
+              key={d}
+              onClick={() => setDays(d)}
+              className={cn(
+                'pill text-xs transition-colors',
+                days === d
+                  ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-400'
+                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700',
+              )}
+            >
+              {d}d
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+        {!hasSeries ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <BarChart3 className="h-10 w-10 text-gray-300 dark:text-gray-600" />
+            <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
+              No ranking data available for the selected apps in this period.
+            </p>
+          </div>
+        ) : (
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={data.series}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                <XAxis
+                  dataKey="date"
+                  stroke="#6B7280"
+                  fontSize={11}
+                  tickLine={false}
+                  tickFormatter={(v: string) => {
+                    const d = new Date(v);
+                    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                  }}
+                />
+                <YAxis
+                  stroke="#6B7280"
+                  fontSize={11}
+                  tickLine={false}
+                  reversed
+                  label={{ value: 'Rank (lower = better)', angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9CA3AF' } }}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#fff',
+                    border: '1px solid #E5E7EB',
+                    borderRadius: '8px',
+                    fontSize: '12px',
+                  }}
+                  labelFormatter={(v: string) => {
+                    const d = new Date(v);
+                    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                  }}
+                  formatter={(value: unknown, name: string) => {
+                    const app = data.apps.find((a) => `app_${a.id}` === name);
+                    return [value != null ? `#${value}` : '—', app?.name ?? name];
+                  }}
+                />
+                <Legend
+                  formatter={(value: string) => {
+                    const app = data.apps.find((a) => `app_${a.id}` === value);
+                    return app?.name ?? value;
+                  }}
+                />
+                {data.apps.map((app, i) => (
+                  <Line
+                    key={app.id}
+                    type="monotone"
+                    dataKey={`app_${app.id}`}
+                    stroke={APP_COLORS[i % APP_COLORS.length]}
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4 }}
+                    connectNulls={false}
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Keyword Overlap Section ─────────────────────────────────────────────────
 
 function KeywordOverlapSection({ data }: { data: CompetitorCompareResponse }) {
@@ -436,13 +586,118 @@ function FeatureGapsSection({ data }: { data: CompetitorCompareResponse }) {
   );
 }
 
-// ── Main Page ───────────────────────────────────────────────────────────────
+// ── Helper: resolve numeric IDs → AppListItem stubs ─────────────────────────
 
-export default function CompetitorsClient() {
+async function resolveAppIds(ids: number[]): Promise<AppListItem[]> {
+  const items: AppListItem[] = [];
+  // Fetch each app's detail (parallel); we only need id/name/icon for chips
+  const results = await Promise.allSettled(ids.map((id) => getAppDetail(id)));
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      const d = r.value;
+      items.push({
+        id: d.id,
+        app_id: d.app_id,
+        name: d.name,
+        icon_url: d.icon_url ?? null,
+        developer: d.developer ?? null,
+        primary_category: d.primary_category ?? null,
+        current_rating: d.current_rating ?? null,
+        current_reviews: d.current_reviews ?? 0,
+        current_rank: d.current_rank ?? null,
+        is_free: d.is_free ?? true,
+        price: d.price ?? 0,
+        estimated_installs_min: null,
+        estimated_installs_max: null,
+        estimated_revenue_monthly_min: null,
+        install_confidence: null,
+        release_date: null,
+      });
+    }
+  }
+  return items;
+}
+
+// ── Inner component (uses useSearchParams) ──────────────────────────────────
+
+function CompetitorsInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   const [selected, setSelected] = useState<AppListItem[]>([]);
   const [result, setResult] = useState<CompetitorCompareResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [initializing, setInitializing] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const initRef = useRef(false);
+
+  // On mount: read ids from URL (?ids=) or localStorage store, resolve them, auto-compare
+  useEffect(() => {
+    if (initRef.current) return;
+    initRef.current = true;
+
+    async function init() {
+      const urlIdsRaw = searchParams.get('ids');
+      let ids: number[] = [];
+
+      if (urlIdsRaw) {
+        ids = urlIdsRaw
+          .split(',')
+          .map((s) => parseInt(s.trim(), 10))
+          .filter((n) => !isNaN(n) && n > 0);
+      }
+
+      if (ids.length === 0) {
+        ids = getComparisonIds();
+      }
+
+      // De-duplicate, cap at 5
+      ids = Array.from(new Set(ids)).slice(0, 5);
+
+      if (ids.length === 0) {
+        setInitializing(false);
+        return;
+      }
+
+      // Sync to store
+      setComparisonIds(ids);
+
+      // Resolve ids to display info
+      const apps = await resolveAppIds(ids);
+      setSelected(apps);
+
+      // Auto-compare if >= 2
+      if (apps.length >= 2) {
+        setLoading(true);
+        try {
+          const data = await compareCompetitors(apps.map((a) => a.id));
+          setResult(data);
+        } catch (e) {
+          setError(e instanceof Error ? e.message : 'Comparison failed');
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      setInitializing(false);
+    }
+
+    init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Sync URL when selection changes (skip during initialization)
+  useEffect(() => {
+    if (initializing) return;
+    const ids = selected.map((s) => s.id);
+    setComparisonIds(ids);
+    const idsParam = ids.length > 0 ? ids.join(',') : '';
+    const currentIds = searchParams.get('ids') ?? '';
+    if (idsParam !== currentIds) {
+      router.replace(idsParam ? `/competitors?ids=${idsParam}` : '/competitors', { scroll: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, initializing]);
 
   function handleAdd(app: AppListItem) {
     if (selected.length >= 5) return;
@@ -452,6 +707,10 @@ export default function CompetitorsClient() {
 
   function handleRemove(id: number) {
     setSelected((prev) => prev.filter((s) => s.id !== id));
+    // Clear result if we drop below 2
+    if (selected.length - 1 < 2) {
+      setResult(null);
+    }
   }
 
   async function handleCompare() {
@@ -470,92 +729,117 @@ export default function CompetitorsClient() {
   }
 
   return (
-    <ErrorBoundary>
-      <AppShell>
-        <div className="space-y-6">
-          {/* Header */}
-          <div>
-            <h1 className="flex items-center gap-2 text-2xl font-bold text-gray-900 dark:text-white">
-              <Users className="h-6 w-6 text-indigo-500" />
-              Competitors
-            </h1>
-            <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
-              Compare apps side-by-side: metrics, keywords, and feature gaps
-            </p>
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <h1 className="flex items-center gap-2 text-2xl font-bold text-gray-900 dark:text-white">
+          <Users className="h-6 w-6 text-indigo-500" />
+          Competitors
+        </h1>
+        <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+          Compare apps side-by-side: metrics, keywords, and feature gaps
+        </p>
+      </div>
+
+      {/* App picker */}
+      <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+        <p className="mb-3 text-sm font-medium text-gray-700 dark:text-gray-300">
+          Select 2–5 apps to compare
+        </p>
+        {initializing ? (
+          <div className="flex items-center gap-2 text-sm text-gray-400">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading apps…
           </div>
+        ) : (
+          <AppPicker selected={selected} onAdd={handleAdd} onRemove={handleRemove} />
+        )}
 
-          {/* App picker */}
-          <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
-            <p className="mb-3 text-sm font-medium text-gray-700 dark:text-gray-300">
-              Select 2–5 apps to compare
-            </p>
-            <AppPicker selected={selected} onAdd={handleAdd} onRemove={handleRemove} />
-
-            <div className="mt-4 flex items-center gap-3">
-              <button
-                onClick={handleCompare}
-                disabled={selected.length < 2 || loading}
-                className={cn(
-                  'inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors',
-                  selected.length >= 2
-                    ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'
-                    : 'bg-gray-100 text-gray-400 cursor-not-allowed dark:bg-gray-800 dark:text-gray-500',
-                )}
-              >
-                {loading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <GitCompare className="h-4 w-4" />
-                )}
-                Compare
-              </button>
-              {selected.length > 0 && selected.length < 2 && (
-                <span className="text-xs text-gray-400">Add at least one more app</span>
-              )}
-            </div>
-          </div>
-
-          {/* Error */}
-          {error && (
-            <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-400">
-              <AlertCircle className="h-4 w-4 flex-shrink-0" />
-              {error}
-            </div>
-          )}
-
-          {/* Loading skeleton */}
-          {loading && (
-            <div className="space-y-4">
-              {[...Array(3)].map((_, i) => (
-                <div key={i} className="h-32 animate-pulse rounded-2xl bg-gray-100 dark:bg-gray-800" />
-              ))}
-            </div>
-          )}
-
-          {/* Results */}
-          {result && !loading && (
-            <div className="space-y-8">
-              <ComparisonMatrix data={result} />
-              <KeywordOverlapSection data={result} />
-              <FeatureGapsSection data={result} />
-            </div>
-          )}
-
-          {/* Empty state (no selection yet, no result) */}
-          {!result && !loading && selected.length === 0 && (
-            <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50/50 p-12 text-center dark:border-gray-700 dark:bg-gray-900/30">
-              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-50 dark:bg-indigo-950/40">
-                <GitCompare className="h-8 w-8 text-indigo-500" />
-              </div>
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Side-by-Side Comparison
-              </h2>
-              <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 max-w-md mx-auto">
-                Search and select 2–5 apps above to compare their rankings, downloads, revenue, keywords, and feature gaps.
-              </p>
-            </div>
+        <div className="mt-4 flex items-center gap-3">
+          <button
+            onClick={handleCompare}
+            disabled={selected.length < 2 || loading || initializing}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors',
+              selected.length >= 2 && !initializing
+                ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'
+                : 'bg-gray-100 text-gray-400 cursor-not-allowed dark:bg-gray-800 dark:text-gray-500',
+            )}
+          >
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <GitCompare className="h-4 w-4" />
+            )}
+            Compare
+          </button>
+          {!initializing && selected.length > 0 && selected.length < 2 && (
+            <span className="text-xs text-gray-400">Add at least one more app</span>
           )}
         </div>
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-400">
+          <AlertCircle className="h-4 w-4 flex-shrink-0" />
+          {error}
+        </div>
+      )}
+
+      {/* Loading skeleton */}
+      {loading && (
+        <div className="space-y-4">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="h-32 animate-pulse rounded-2xl bg-gray-100 dark:bg-gray-800" />
+          ))}
+        </div>
+      )}
+
+      {/* Results */}
+      {result && !loading && (
+        <div className="space-y-8">
+          <ComparisonMatrix data={result} />
+          <RankTrajectoryChart appIds={result.apps.map((a) => a.app_id)} />
+          <KeywordOverlapSection data={result} />
+          <FeatureGapsSection data={result} />
+        </div>
+      )}
+
+      {/* Empty state (no selection yet, no result) */}
+      {!result && !loading && !initializing && selected.length === 0 && (
+        <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50/50 p-12 text-center dark:border-gray-700 dark:bg-gray-900/30">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-50 dark:bg-indigo-950/40">
+            <GitCompare className="h-8 w-8 text-indigo-500" />
+          </div>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+            Side-by-Side Comparison
+          </h2>
+          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 max-w-md mx-auto">
+            Search and select 2–5 apps above, or use the <GitCompare className="inline h-3.5 w-3.5" /> button on any app page to add it here.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Exported wrapper (Suspense boundary for useSearchParams) ────────────────
+
+export default function CompetitorsClient() {
+  return (
+    <ErrorBoundary>
+      <AppShell>
+        <Suspense
+          fallback={
+            <div className="space-y-6">
+              <div className="h-8 w-48 animate-pulse rounded bg-gray-200 dark:bg-gray-800" />
+              <div className="h-40 animate-pulse rounded-2xl bg-gray-100 dark:bg-gray-800" />
+            </div>
+          }
+        >
+          <CompetitorsInner />
+        </Suspense>
       </AppShell>
     </ErrorBoundary>
   );

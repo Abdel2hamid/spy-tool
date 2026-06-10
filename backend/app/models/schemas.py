@@ -1383,3 +1383,14 @@ class CompetitorCompareResponse(BaseModel):
     winners: Dict[str, Optional[int]]
     compared_count: int
     generated_at: str
+
+
+class CompetitorRankHistoryApp(BaseModel):
+    id: int
+    name: str
+
+
+class CompetitorRankHistoryResponse(BaseModel):
+    apps: List[CompetitorRankHistoryApp]
+    series: List[Dict[str, Any]]
+    days: int

@@ -11,9 +11,10 @@ import {
   ArrowLeft, Star, Download, Calendar, Globe, MessageSquare,
   TrendingUp, BarChart3, AlertTriangle, ThumbsUp, Code, ExternalLink,
   ChevronRight, Filter, Lightbulb, RefreshCw, Search, Target,
-  Zap, DollarSign, Users, FlaskConical, Sparkles, X as XIcon, Heart
+  Zap, DollarSign, Users, FlaskConical, Sparkles, X as XIcon, Heart, GitCompare, Check
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useComparison, addToComparison, removeFromComparison } from '@/lib/comparison-store';
 
 type TabType = 'overview' | 'versions' | 'reviews' | 'rankings' | 'analytics' | 'market' | 'gaps' | 'keywords' | 'autopsy';
 
@@ -49,7 +50,7 @@ function formatRevenue(min: number | null, max: number | null): string {
   return `${fmt(min ?? 0)}–${fmt(max)}`;
 }
 
-function AppHeader({ app, isFavorited, onToggleFavorite }: { app: AppDetail; isFavorited: boolean; onToggleFavorite: () => void }) {
+function AppHeader({ app, isFavorited, onToggleFavorite, inComparison, comparisonFull, onToggleComparison }: { app: AppDetail; isFavorited: boolean; onToggleFavorite: () => void; inComparison: boolean; comparisonFull: boolean; onToggleComparison: () => void }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
       {/* Gradient accent bar */}
@@ -116,6 +117,21 @@ function AppHeader({ app, isFavorited, onToggleFavorite }: { app: AppDetail; isF
                   )}
                 >
                   <Heart className={cn('h-3.5 w-3.5', isFavorited && 'fill-current')} />
+                </button>
+                <button
+                  onClick={onToggleComparison}
+                  disabled={!inComparison && comparisonFull}
+                  title={inComparison ? 'In comparison' : comparisonFull ? 'Comparison full (5)' : 'Add to comparison'}
+                  className={cn(
+                    'pill transition-colors',
+                    inComparison
+                      ? 'bg-indigo-100 text-indigo-600 hover:bg-indigo-200 dark:bg-indigo-950/50 dark:text-indigo-400 dark:hover:bg-indigo-950'
+                      : comparisonFull
+                        ? 'bg-gray-100 text-gray-300 cursor-not-allowed dark:bg-gray-800 dark:text-gray-600'
+                        : 'bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-indigo-500 dark:bg-gray-800 dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-indigo-400',
+                  )}
+                >
+                  {inComparison ? <Check className="h-3.5 w-3.5" /> : <GitCompare className="h-3.5 w-3.5" />}
                 </button>
               </div>
             </div>
@@ -2727,6 +2743,17 @@ export default function AppDetailPage() {
   const [showSyncBanner, setShowSyncBanner] = useState(searchParams.get('imported') === '1');
   const [reviewsLoaded, setReviewsLoaded] = useState(false);
   const [isFavorited, setIsFavorited] = useState(false);
+  const comparisonIds = useComparison();
+  const inComparison = comparisonIds.includes(appId);
+  const comparisonFull = comparisonIds.length >= 5;
+
+  function toggleComparison() {
+    if (inComparison) {
+      removeFromComparison(appId);
+    } else {
+      addToComparison(appId);
+    }
+  }
 
   useEffect(() => {
     async function fetchData() {
@@ -2870,7 +2897,7 @@ export default function AppDetailPage() {
           </div>
         )}
 
-        <AppHeader app={app} isFavorited={isFavorited} onToggleFavorite={toggleFavorite} />
+        <AppHeader app={app} isFavorited={isFavorited} onToggleFavorite={toggleFavorite} inComparison={inComparison} comparisonFull={comparisonFull} onToggleComparison={toggleComparison} />
 
         {/* Tab navigation — horizontally scrollable on mobile */}
         <div className="relative">

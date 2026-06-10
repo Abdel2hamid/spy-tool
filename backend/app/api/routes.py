@@ -86,6 +86,7 @@ from app.models.schemas import (
     FavoriteAppItem,
     FavoriteListResponse,
     CompetitorCompareResponse,
+    CompetitorRankHistoryResponse,
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
@@ -3801,3 +3802,72 @@ def compare_competitors(
 
     svc = CompetitorCompareService(db)
     return svc.compare(unique_ids)
+
+
+@router.get("/competitors/rank-history", response_model=CompetitorRankHistoryResponse)
+def competitor_rank_history(
+    app_ids: List[int] = Query(...),
+    days: int = Query(30, ge=7, le=90),
+    db: Session = Depends(get_db),
+):
+    """Rank-history overlay for 2–5 apps on a shared date axis."""
+    seen = set()
+    unique_ids = []
+    for aid in app_ids:
+        if aid not in seen:
+            seen.add(aid)
+            unique_ids.append(aid)
+
+    if len(unique_ids) < 2:
+        raise HTTPException(status_code=400, detail="At least 2 distinct app_ids required")
+    if len(unique_ids) > 5:
+        raise HTTPException(status_code=400, detail="At most 5 app_ids allowed")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # Fetch app names
+    apps = db.query(models.App.id, models.App.name).filter(models.App.id.in_(unique_ids)).all()
+    app_names = {aid: name for aid, name in apps}
+    missing = [aid for aid in unique_ids if aid not in app_names]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"App ids not found: {missing}")
+
+    # Fetch rankings — best rank per app per day
+    rows = (
+        db.query(
+            models.Ranking.app_id,
+            func.date(models.Ranking.recorded_at).label("day"),
+            func.min(models.Ranking.rank).label("best_rank"),
+        )
+        .filter(
+            models.Ranking.app_id.in_(unique_ids),
+            models.Ranking.recorded_at >= cutoff,
+        )
+        .group_by(models.Ranking.app_id, func.date(models.Ranking.recorded_at))
+        .order_by(func.date(models.Ranking.recorded_at))
+        .all()
+    )
+
+    # Collect all dates and per-app rank by date
+    from collections import defaultdict
+    date_set: set = set()
+    rank_by_app_date: dict = defaultdict(dict)
+    for app_id, day, best_rank in rows:
+        d = str(day)
+        date_set.add(d)
+        rank_by_app_date[app_id][d] = best_rank
+
+    sorted_dates = sorted(date_set)
+
+    series = []
+    for d in sorted_dates:
+        point: dict = {"date": d}
+        for aid in unique_ids:
+            point[f"app_{aid}"] = rank_by_app_date[aid].get(d)
+        series.append(point)
+
+    return {
+        "apps": [{"id": aid, "name": app_names[aid]} for aid in unique_ids],
+        "series": series,
+        "days": days,
+    }

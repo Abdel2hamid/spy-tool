@@ -1993,3 +1993,26 @@ export async function compareCompetitors(appIds: number[]): Promise<CompetitorCo
   appIds.forEach((id) => params.append('app_ids', String(id)));
   return fetchApi<CompetitorCompareResponse>(`/competitors/compare?${params.toString()}`);
 }
+
+// Rank history overlay for competitor comparison
+
+export interface CompetitorRankHistoryApp {
+  id: number;
+  name: string;
+}
+
+export interface CompetitorRankHistoryResponse {
+  apps: CompetitorRankHistoryApp[];
+  series: Record<string, unknown>[];
+  days: number;
+}
+
+export async function getCompetitorRankHistory(
+  appIds: number[],
+  days = 30,
+): Promise<CompetitorRankHistoryResponse> {
+  const params = new URLSearchParams();
+  appIds.forEach((id) => params.append('app_ids', String(id)));
+  params.set('days', String(days));
+  return fetchApi<CompetitorRankHistoryResponse>(`/competitors/rank-history?${params.toString()}`);
+}
