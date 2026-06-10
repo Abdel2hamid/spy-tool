@@ -556,7 +556,57 @@ def health_check():
         checks["scheduler"] = f"error: {exc}"
         status = "degraded"
 
-    # 3. Scheduled jobs — next run times
+    # 3. Ranking health — critical data pipeline check
+    ranking_health = {}
+    try:
+        from datetime import timezone as _tz
+        from sqlalchemy import func as sqla_func
+        from app.database import SessionLocal
+        from app.models.models import Ranking
+
+        _db = SessionLocal()
+        try:
+            newest = _db.query(sqla_func.max(Ranking.recorded_at)).scalar()
+            if newest is not None:
+                if newest.tzinfo is None:
+                    newest = newest.replace(tzinfo=_tz.utc)
+                from datetime import datetime as _dt
+                age_hours = (_dt.now(_tz.utc) - newest).total_seconds() / 3600
+                cutoff_24h = _dt.now(_tz.utc) - __import__("datetime").timedelta(hours=24)
+                count_24h = (
+                    _db.query(sqla_func.count(Ranking.id))
+                    .filter(Ranking.recorded_at >= cutoff_24h)
+                    .scalar() or 0
+                )
+                if age_hours < 6:
+                    r_status = "healthy"
+                elif age_hours < 24:
+                    r_status = "stale"
+                else:
+                    r_status = "critical"
+                    if status == "healthy":
+                        status = "degraded"
+                ranking_health = {
+                    "latest_ranking_recorded_at": newest.isoformat(),
+                    "ranking_age_hours": round(age_hours, 1),
+                    "rankings_last_24h": count_24h,
+                    "ranking_status": r_status,
+                }
+            else:
+                ranking_health = {
+                    "latest_ranking_recorded_at": None,
+                    "ranking_age_hours": None,
+                    "rankings_last_24h": 0,
+                    "ranking_status": "critical",
+                }
+                if status == "healthy":
+                    status = "degraded"
+        finally:
+            _db.close()
+    except Exception as exc:
+        ranking_health = {"error": str(exc)}
+
+    # 4. Scheduled jobs — next run times
     jobs = []
     try:
         for job in scheduler.get_jobs():
@@ -572,6 +622,7 @@ def health_check():
         "status": status,
         "uptime_seconds": round(time.monotonic() - _APP_START_TIME, 1),
         "checks": checks,
+        "ranking_health": ranking_health,
         "scheduler_jobs": jobs,
         "job_metrics": get_job_metrics(),
         "response_ms": round((time.monotonic() - t0) * 1000, 1),

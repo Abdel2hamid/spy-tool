@@ -5,6 +5,7 @@ Job schedule:
 
   Job ID                   Interval  First run   Purpose
   ───────────────────────  ────────  ──────────  ─────────────────────────────────────────
+  ranking_refresh            2 h      3 min       Chart RSS → ranking rows (skip if fresh)
   opportunity_compute        1 h      5 min       Precompute opportunity of the day → daily_reports
   blowing_up_compute         15 min   3 min       Precompute blowing-up scores → app_blowing_up_scores
   trending_compute           10 min   2 min       Precompute trending scores → app_trending_scores
@@ -58,6 +59,7 @@ _JOB_DEFAULTS = dict(
 # all future runs.  Default 30 min for unlisted jobs.
 # ---------------------------------------------------------------------------
 _JOB_TIMEOUTS = {
+    "ranking_refresh": 600,            # 10 min (chart RSS only, no full scrape)
     "trending_compute": 300,           # 5 min (fast, SQL-only)
     "blowing_up_compute": 600,         # 10 min
     "opportunity_compute": 600,        # 10 min
@@ -321,6 +323,92 @@ async def job_trending_compute():
         _log_fail(job_id, exc)
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Job: every 2 h — lightweight ranking refresh (chart RSS only)
+#
+# Fixes the ranking starvation bug: full_metadata has start_date=now+6h,
+# so if the container restarts within 6h, Ranking rows are never created.
+# This job fires at +3 min after startup and every 2h thereafter, calling
+# ONLY scrape_top_charts().  Skips if fresh rankings exist (< 6h old).
+# ---------------------------------------------------------------------------
+
+_RANKING_FRESHNESS_HOURS = 6  # skip if newest ranking is younger than this
+
+
+@_with_timeout("ranking_refresh")
+async def job_ranking_refresh():
+    """
+    Lightweight ranking-only job.  Calls scrape_top_charts() for the two
+    highest-value chart types (topfree + topgrossing) with categories=None
+    (all-genres).  Skips entirely if rankings were created within the last
+    _RANKING_FRESHNESS_HOURS.
+
+    This is NOT a full metadata refresh — it touches ONLY the rankings table.
+    """
+    job_id = "ranking_refresh"
+    t0 = _log_start(job_id)
+
+    from app.database import SessionLocal
+    from app.models.models import Ranking
+    from sqlalchemy import func as sqla_func
+
+    db = SessionLocal()
+    try:
+        # --- Freshness check: skip if recent rankings exist ---
+        newest = db.query(sqla_func.max(Ranking.recorded_at)).scalar()
+        if newest is not None:
+            from datetime import timezone as _tz
+            if newest.tzinfo is None:
+                newest = newest.replace(tzinfo=_tz.utc)
+            age_hours = (
+                datetime.now(_tz.utc) - newest
+            ).total_seconds() / 3600
+            if age_hours < _RANKING_FRESHNESS_HOURS:
+                _log_done(
+                    job_id, t0,
+                    f"SKIPPED — rankings are fresh ({age_hours:.1f}h old, "
+                    f"threshold={_RANKING_FRESHNESS_HOURS}h)"
+                )
+                return
+            logger.info(
+                f"[{job_id}] Rankings are {age_hours:.1f}h old "
+                f"(threshold={_RANKING_FRESHNESS_HOURS}h) — refreshing"
+            )
+        else:
+            logger.info(f"[{job_id}] No rankings in DB — refreshing")
+    finally:
+        db.close()
+
+    # --- Scrape charts (ranking rows only, no full metadata) ---
+    from app.workers.tasks import ScraperWorker
+
+    worker = ScraperWorker()
+    await worker.initialize()
+    try:
+        await worker.scrape_top_charts(
+            chart_types=["topfree", "topgrossing"],
+            categories=[None],  # all-genres only — lightweight
+        )
+
+        # Count what we just created
+        db2 = SessionLocal()
+        try:
+            from app.models.models import Ranking as R2
+            recent_count = (
+                db2.query(sqla_func.count(R2.id))
+                .filter(R2.recorded_at >= datetime.utcnow() - timedelta(minutes=10))
+                .scalar() or 0
+            )
+            _log_done(job_id, t0, f"{recent_count} ranking rows created")
+        finally:
+            db2.close()
+
+    except Exception as exc:
+        _log_fail(job_id, exc)
+    finally:
+        await worker.cleanup()
 
 
 # ---------------------------------------------------------------------------
@@ -1165,6 +1253,21 @@ def setup_scheduler() -> AsyncIOScheduler:
         name="One-shot: Auto-bootstrap ranking data if empty",
         max_instances=1,
         replace_existing=True,
+    )
+
+    # ── Ranking refresh: lightweight chart-only scrape — every 2 h ──────────
+    # First run: 3 min after startup (fixes ranking starvation bug).
+    # Skips if rankings are < 6h old.  Does NOT do full metadata enrichment.
+    scheduler.add_job(
+        job_ranking_refresh,
+        trigger=IntervalTrigger(
+            hours=2,
+            start_date=now + timedelta(minutes=3),
+            timezone="UTC",
+        ),
+        id="ranking_refresh",
+        name="Every 2h: Ranking Refresh (chart RSS only)",
+        **_JOB_DEFAULTS,
     )
 
     # ── Discovery: keyword search (100+ keywords → queue) — every 6 h ──────
