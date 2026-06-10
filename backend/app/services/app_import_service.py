@@ -34,6 +34,15 @@ _ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
 _ITUNES_LOOKUP_URL = "https://itunes.apple.com/lookup"
 _REQUEST_DELAY = 0.1
 _TIMEOUT = 4  # Hard cap: Apple API must respond within 4 seconds
+_APPLE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+    ),
+    "Accept": "application/json,text/plain,*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Connection": "close",
+}
 _MIN_LOCAL_RESULTS = 10
 _MAX_RESULTS = 20
 _FUZZY_THRESHOLD = 0.35
@@ -271,9 +280,9 @@ def _search_itunes(keyword: str, limit: int = 20) -> Tuple[List[Dict], Optional[
         "entity": "software",
         "limit": limit,
         "lang": "en_us",
-    })
+    }, quote_via=urllib.parse.quote)
     url = f"{_ITUNES_SEARCH_URL}?{params}"
-    req = urllib.request.Request(url, headers={"User-Agent": "AppStoreSpy/1.0"})
+    req = urllib.request.Request(url, headers=_APPLE_HEADERS)
 
     logger.info(f"[Search] iTunes search start: '{keyword}' (timeout={_TIMEOUT}s)")
     t0 = time.time()
@@ -411,8 +420,13 @@ def _get_full_app_details(track_id: str) -> Tuple[Optional[Dict], Optional[str]]
     error_hint is None on success.
     Never raises — always returns within _TIMEOUT seconds.
     """
-    url = f"{_ITUNES_LOOKUP_URL}?id={track_id}&country=us&entity=software"
-    req = urllib.request.Request(url, headers={"User-Agent": "AppStoreSpy/1.0"})
+    params = urllib.parse.urlencode({
+        "id": track_id,
+        "country": "us",
+        "entity": "software",
+    }, quote_via=urllib.parse.quote)
+    url = f"{_ITUNES_LOOKUP_URL}?{params}"
+    req = urllib.request.Request(url, headers=_APPLE_HEADERS)
 
     logger.info(f"[Search] iTunes lookup start: trackId={track_id} (timeout={_TIMEOUT}s)")
     t0 = time.time()
