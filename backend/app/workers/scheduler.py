@@ -20,7 +20,7 @@ Job schedule:
   review_scraper             6 h      90 min      Ingest up to 500 reviews for top 300 ranked apps
   sentiment_analysis         1 h      35 min      Rule-based sentiment classification + app analytics
   feature_gap                2 h      50 min      Feature gap analysis from negative reviews
-  analytics_update           2 h      55 min      Review growth & rating-change roll-up into app_analytics
+  (analytics_update removed — redundant with sentiment_analysis step 2)
 
 Discovery jobs have short first-run delays so coverage starts building
 immediately after deploy without waiting for the bootstrap endpoint.
@@ -63,7 +63,7 @@ _JOB_TIMEOUTS = {
     "opportunity_compute": 600,        # 10 min
     "weekly_opportunities_compute": 600,
     "sentiment_analysis": 600,         # 10 min
-    "analytics_update": 600,           # 10 min
+    # analytics_update: REMOVED — redundant with sentiment_analysis step 2
     "feature_gap": 1800,               # 30 min
     "hourly_reviews_ratings": 3600,    # 1 h (touches all apps)
     "hourly_scoring": 3600,            # 1 h
@@ -1012,29 +1012,6 @@ async def job_feature_gap():
 # Job: every 2 h — analytics update (growth + rating-change roll-up)
 # ---------------------------------------------------------------------------
 
-@_with_timeout("analytics_update")
-async def job_analytics_update():
-    """
-    Recompute review_growth_30d/90d and rating_change_30d/90d for all apps
-    that have sentiment-classified reviews and persist into app_analytics.
-    """
-    job_id = "analytics_update"
-    t0 = _log_start(job_id)
-    try:
-        from app.services.review_sentiment_service import ReviewSentimentService
-        from app.database import SessionLocal
-
-        db = SessionLocal()
-        try:
-            svc = ReviewSentimentService(db)
-            updated = await asyncio.to_thread(svc.update_all_app_analytics)
-            _log_done(job_id, t0, f"{updated} apps updated")
-        finally:
-            db.close()
-    except Exception as exc:
-        _log_fail(job_id, exc)
-
-
 @_with_timeout("keyword_quality_pruning")
 async def job_keyword_quality_pruning():
     """
@@ -1438,19 +1415,8 @@ def setup_scheduler() -> AsyncIOScheduler:
         **_JOB_DEFAULTS,
     )
 
-    # ── every 2 h: analytics update (growth + rating-change roll-up) ──────
-    # First run: 55 min after startup (slightly after sentiment_analysis).
-    scheduler.add_job(
-        job_analytics_update,
-        trigger=IntervalTrigger(
-            hours=2,
-            start_date=now + timedelta(minutes=55),
-            timezone="UTC",
-        ),
-        id="analytics_update",
-        name="Every 2h: Review Growth & Rating-Change Roll-up",
-        **_JOB_DEFAULTS,
-    )
+    # analytics_update: REMOVED — 100% redundant with sentiment_analysis
+    # (both call ReviewSentimentService.update_all_app_analytics)
 
     # ── GROWTH INTELLIGENCE PIPELINE ──────────────────────────────────────────
     # Phase 3: Ad Intelligence — runs AFTER metric snapshots are fresh.

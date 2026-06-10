@@ -32,6 +32,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
+from sqlalchemy import func, and_
 from sqlalchemy.orm import Session
 
 from app.models.models import (
@@ -75,21 +76,231 @@ class CampaignTrackingService:
 
     def run_for_all(self) -> Dict:
         """
-        Run campaign detection for all apps that show any signal above threshold.
+        Run campaign detection for all apps showing signals above threshold.
+
+        Batch-prefetch version: 6 batch queries total instead of ~6N per-app queries.
         """
-        # Candidate apps: anything with a blowing_up_score > threshold
+        from collections import defaultdict
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        cutoff_7d = now - timedelta(days=7)
+        cutoff_14d = now - timedelta(days=14)
+        cutoff_30d = now - timedelta(days=30)
+
+        # Candidate apps with blowing_up_score > threshold
         candidates = (
             self.db.query(App)
             .join(AppBlowingUpScore, AppBlowingUpScore.app_id == App.id)
             .filter(AppBlowingUpScore.blowing_up_score >= _MIN_BU_SCORE)
             .all()
         )
+        if not candidates:
+            return {"candidates": 0, "events_created": 0}
 
+        app_ids = [a.id for a in candidates]
+
+        # ── Batch prefetch 1: recent rankings (7 days) ────────────────────
+        rankings_by_app = defaultdict(list)
+        for row in (
+            self.db.query(Ranking.app_id, Ranking.rank, Ranking.rank_velocity, Ranking.recorded_at)
+            .filter(Ranking.app_id.in_(app_ids), Ranking.recorded_at >= cutoff_7d)
+            .order_by(Ranking.recorded_at.desc())
+            .all()
+        ):
+            rankings_by_app[row.app_id].append(row)
+
+        # ── Batch prefetch 2: review counts (14 days) ─────────────────────
+        review_counts = dict(
+            self.db.query(Review.app_id, func.count(Review.id))
+            .filter(Review.app_id.in_(app_ids), Review.date >= cutoff_14d)
+            .group_by(Review.app_id)
+            .all()
+        )
+
+        # ── Batch prefetch 3: blowing_up_scores ───────────────────────────
+        bu_scores = {}
+        for bu in (
+            self.db.query(AppBlowingUpScore)
+            .filter(AppBlowingUpScore.app_id.in_(app_ids))
+            .all()
+        ):
+            bu_scores[bu.app_id] = bu
+
+        # ── Batch prefetch 4: latest metric snapshots ─────────────────────
+        # Subquery: max snapshot_at per app_id
+        snap_sub = (
+            self.db.query(
+                AppMetricSnapshot.app_id,
+                func.max(AppMetricSnapshot.snapshot_at).label("max_ts"),
+            )
+            .filter(AppMetricSnapshot.app_id.in_(app_ids))
+            .group_by(AppMetricSnapshot.app_id)
+            .subquery()
+        )
+        latest_snaps = {}
+        for snap in (
+            self.db.query(AppMetricSnapshot)
+            .join(
+                snap_sub,
+                and_(
+                    AppMetricSnapshot.app_id == snap_sub.c.app_id,
+                    AppMetricSnapshot.snapshot_at == snap_sub.c.max_ts,
+                ),
+            )
+            .all()
+        ):
+            latest_snaps[snap.app_id] = snap
+
+        # ── Batch prefetch 5: active ad campaigns ─────────────────────────
+        campaigns_by_app = defaultdict(list)
+        for camp in (
+            self.db.query(AdCampaign)
+            .filter(AdCampaign.app_id.in_(app_ids), AdCampaign.status == "active")
+            .all()
+        ):
+            campaigns_by_app[camp.app_id].append(camp)
+
+        # ── Batch prefetch 6: oldest ranking per app (30 days) for start estimate
+        oldest_rank_sub = (
+            self.db.query(
+                Ranking.app_id,
+                func.min(Ranking.recorded_at).label("min_ts"),
+            )
+            .filter(Ranking.app_id.in_(app_ids), Ranking.recorded_at >= cutoff_30d)
+            .group_by(Ranking.app_id)
+            .subquery()
+        )
+        oldest_rankings = {}
+        for row in (
+            self.db.query(Ranking.app_id, Ranking.rank_velocity, Ranking.recorded_at)
+            .join(
+                oldest_rank_sub,
+                and_(
+                    Ranking.app_id == oldest_rank_sub.c.app_id,
+                    Ranking.recorded_at == oldest_rank_sub.c.min_ts,
+                ),
+            )
+            .all()
+        ):
+            oldest_rankings[row.app_id] = row
+
+        # Also prefetch all rankings for 30d for start estimation
+        rankings_30d_by_app = defaultdict(list)
+        for row in (
+            self.db.query(Ranking.app_id, Ranking.rank_velocity, Ranking.recorded_at)
+            .filter(Ranking.app_id.in_(app_ids), Ranking.recorded_at >= cutoff_30d)
+            .order_by(Ranking.recorded_at.asc())
+            .all()
+        ):
+            rankings_30d_by_app[row.app_id].append(row)
+
+        # ── Process each candidate using prefetched data (zero per-app queries)
         events_created = 0
+        dedup_cutoff = now - timedelta(hours=_EVENT_DEDUP_HOURS)
+
         for app in candidates:
             try:
-                new_events = self.run_for_app(app.id)
-                events_created += len(new_events)
+                signals = {}
+                aid = app.id
+
+                # Ranking signals
+                recent = rankings_by_app.get(aid, [])
+                if recent:
+                    velocities = [r.rank_velocity or 0 for r in recent]
+                    avg_velocity = sum(velocities) / len(velocities)
+                    max_velocity = max(velocities)
+                    ranks = [r.rank for r in recent if r.rank]
+                    rank_change = (ranks[-1] - ranks[0]) if len(ranks) >= 2 else 0
+                    signals["avg_rank_velocity"] = round(avg_velocity, 2)
+                    signals["max_rank_velocity"] = round(max_velocity, 2)
+                    signals["rank_change_7d"] = rank_change
+                    signals["current_rank"] = ranks[0] if ranks else None
+
+                # Review velocity
+                rev_count = review_counts.get(aid, 0)
+                signals["review_velocity_14d"] = round(rev_count / 14.0, 2)
+
+                # Blowing Up Score
+                bu = bu_scores.get(aid)
+                if bu:
+                    signals["blowing_up_score"] = bu.blowing_up_score
+                    signals["rank_change_score"] = bu.rank_change_score or 0
+                    signals["reviews_velocity_score"] = bu.reviews_velocity_score or 0
+                    signals["cross_market_score"] = bu.cross_market_score or 0
+                    signals["consistency_score"] = bu.consistency_score or 0
+
+                # Metric Snapshot
+                snap = latest_snaps.get(aid)
+                if snap:
+                    signals["estimated_downloads_max"] = snap.estimated_downloads_max
+                    signals["install_confidence"] = snap.install_confidence
+
+                # Ad Activity
+                camps = campaigns_by_app.get(aid, [])
+                signals["active_ad_campaigns"] = len(camps)
+                signals["ad_networks"] = list({c.network for c in camps})
+                signals["max_ad_confidence"] = (
+                    max((c.campaign_confidence or 0 for c in camps), default=0.0)
+                )
+
+                # Skip if no interesting signals
+                if (
+                    signals.get("avg_rank_velocity", 0) < 0.5
+                    and signals.get("review_velocity_14d", 0) < 0.5
+                    and signals.get("blowing_up_score", 0) < 20
+                    and signals.get("active_ad_campaigns", 0) == 0
+                ):
+                    continue
+
+                # Classify
+                event_type, confidence, explanation = self._classify(signals)
+                if confidence < _MIN_CONFIDENCE:
+                    continue
+
+                # Dedup check
+                existing = (
+                    self.db.query(GrowthEvent)
+                    .filter(
+                        GrowthEvent.app_id == aid,
+                        GrowthEvent.event_type == event_type,
+                        GrowthEvent.detected_at >= dedup_cutoff,
+                        GrowthEvent.active_status == True,
+                    )
+                    .first()
+                )
+                if existing:
+                    continue
+
+                # Deactivate old events
+                self.db.query(GrowthEvent).filter(
+                    GrowthEvent.app_id == aid,
+                    GrowthEvent.active_status == True,
+                ).update({"active_status": False}, synchronize_session=False)
+
+                # Estimate start from prefetched 30d rankings
+                started_at = None
+                for r in rankings_30d_by_app.get(aid, []):
+                    if (r.rank_velocity or 0) >= _MIN_RANK_VELOCITY:
+                        started_at = r.recorded_at
+                        break
+                if started_at is None:
+                    r30 = rankings_30d_by_app.get(aid, [])
+                    if r30:
+                        started_at = r30[0].recorded_at
+
+                event = GrowthEvent(
+                    app_id=aid,
+                    detected_at=now,
+                    event_type=event_type,
+                    confidence=round(confidence, 2),
+                    explanation=explanation,
+                    signals=signals,
+                    started_at_estimate=started_at,
+                    active_status=True,
+                )
+                self.db.add(event)
+                events_created += 1
             except Exception as exc:
                 logger.warning(f"[campaign] Failed for app {app.app_id}: {exc}")
 

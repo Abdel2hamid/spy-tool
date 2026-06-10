@@ -167,21 +167,25 @@ class App(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
+    # category: kept as lazy="select" — FK to-one, small, accessed in get_fresh_risers
     category = relationship("Category", back_populates="apps")
-    rankings = relationship("Ranking", back_populates="app", cascade="all, delete-orphan")
-    reviews = relationship("Review", back_populates="app", cascade="all, delete-orphan")
-    keywords = relationship("AppKeyword", back_populates="app", cascade="all, delete-orphan")
-    opportunities = relationship("Opportunity", back_populates="app", cascade="all, delete-orphan")
-    versions = relationship("AppVersion", back_populates="app", cascade="all, delete-orphan")
-    analytics = relationship("AppAnalytics", back_populates="app", cascade="all, delete-orphan")
-    market_weakness = relationship("AppMarketWeakness", back_populates="app", cascade="all, delete-orphan")
-    feature_gaps = relationship("FeatureGap", back_populates="app", cascade="all, delete-orphan")
-    trending_score = relationship("AppTrendingScore", back_populates="app", uselist=False, cascade="all, delete-orphan")
-    blowing_up_score = relationship("AppBlowingUpScore", back_populates="app", uselist=False, cascade="all, delete-orphan")
-    metric_snapshots = relationship("AppMetricSnapshot", back_populates="app", cascade="all, delete-orphan")
-    ad_creatives = relationship("AdCreative", back_populates="app", cascade="all, delete-orphan")
-    ad_campaigns = relationship("AdCampaign", back_populates="app", cascade="all, delete-orphan")
-    growth_events = relationship("GrowthEvent", back_populates="app", cascade="all, delete-orphan")
+    # All collection relationships set to lazy="noload" — never accessed via ORM
+    # attribute in the codebase (all code queries related tables directly via joins).
+    # This prevents hidden N+1 SELECT storms when App objects are loaded in bulk.
+    rankings = relationship("Ranking", back_populates="app", lazy="noload", cascade="all, delete-orphan")
+    reviews = relationship("Review", back_populates="app", lazy="noload", cascade="all, delete-orphan")
+    keywords = relationship("AppKeyword", back_populates="app", lazy="noload", cascade="all, delete-orphan")
+    opportunities = relationship("Opportunity", back_populates="app", lazy="noload", cascade="all, delete-orphan")
+    versions = relationship("AppVersion", back_populates="app", lazy="noload", cascade="all, delete-orphan")
+    analytics = relationship("AppAnalytics", back_populates="app", lazy="noload", cascade="all, delete-orphan")
+    market_weakness = relationship("AppMarketWeakness", back_populates="app", lazy="noload", cascade="all, delete-orphan")
+    feature_gaps = relationship("FeatureGap", back_populates="app", lazy="noload", cascade="all, delete-orphan")
+    trending_score = relationship("AppTrendingScore", back_populates="app", uselist=False, lazy="noload", cascade="all, delete-orphan")
+    blowing_up_score = relationship("AppBlowingUpScore", back_populates="app", uselist=False, lazy="noload", cascade="all, delete-orphan")
+    metric_snapshots = relationship("AppMetricSnapshot", back_populates="app", lazy="noload", cascade="all, delete-orphan")
+    ad_creatives = relationship("AdCreative", back_populates="app", lazy="noload", cascade="all, delete-orphan")
+    ad_campaigns = relationship("AdCampaign", back_populates="app", lazy="noload", cascade="all, delete-orphan")
+    growth_events = relationship("GrowthEvent", back_populates="app", lazy="noload", cascade="all, delete-orphan")
 
     __table_args__ = (
         # Composite index used by filtered list queries

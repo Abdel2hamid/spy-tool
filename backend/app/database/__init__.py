@@ -4,8 +4,8 @@ from app.config import settings
 
 engine = create_engine(
     settings.database_url.replace("+asyncpg", ""),
-    pool_size=15,          # persistent connections
-    max_overflow=25,       # burst capacity (total max = 40)
+    pool_size=5,           # persistent connections (reduced from 15)
+    max_overflow=10,       # burst capacity (total max = 15, reduced from 40)
     pool_timeout=30,       # wait up to 30s for a connection
     pool_recycle=1800,     # recycle connections every 30min (Railway closes idle)
     pool_pre_ping=True,    # verify connection is alive before use

@@ -2,7 +2,8 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Tuple
 from sqlalchemy.orm import Session
 from collections import defaultdict
-from sqlalchemy import func, and_, distinct
+from sqlalchemy import func, and_, distinct, text
+from sqlalchemy.sql import bindparam
 
 from app.models.models import App, Ranking, Review, Keyword, AppKeyword, Opportunity, Category, AppKeywordIntelligence, AppDiscoveredKeyword, KeywordStatus
 from app.scoring.weights import SCORING_WEIGHTS
@@ -1324,38 +1325,93 @@ class ScoringEngine:
 
     def get_top_trending_apps_v2(self, limit: int = 10, category_id: int = None) -> List[Dict]:
         """
-        New improved trending algorithm.
-        
-        Addresses:
-        - Multi-window momentum (3d, 7d, 14d)
-        - Confidence penalty for sparse data
-        - Consistency bonus for sustained movers
-        - Absolute rank bonus for strong positions
-        - Bounded review growth (tiny apps don't dominate)
-        - Category normalization
+        New improved trending algorithm — batch-prefetch version.
+
+        Uses 4 batch queries total (same pattern as trending_compute_service)
+        instead of ~11N per-app queries.
         """
         cutoff = datetime.utcnow() - timedelta(days=14)
-        
-        query = (
-            self.db.query(Ranking.app_id)
+
+        # 1. All rankings in last 14 days → group by app_id in Python
+        rank_query = (
+            self.db.query(Ranking.app_id, Ranking.rank, Ranking.previous_rank, Ranking.recorded_at)
             .filter(Ranking.recorded_at >= cutoff)
-            .group_by(Ranking.app_id)
         )
-        
         if category_id:
-            query = query.filter(Ranking.category_id == category_id)
-        
-        app_ids = [r[0] for r in query.all()]
-        
+            rank_query = rank_query.filter(Ranking.category_id == category_id)
+
+        rankings_by_app = defaultdict(list)
+        for row in rank_query.order_by(Ranking.app_id, Ranking.recorded_at).all():
+            rankings_by_app[row.app_id].append({
+                "rank": row.rank,
+                "previous_rank": row.previous_rank,
+                "recorded_at": row.recorded_at,
+            })
+
+        app_ids = list(rankings_by_app.keys())
+        if not app_ids:
+            return []
+
+        # 2. App data for all candidate apps
+        app_data_map = {}
+        _BATCH = 2000
+        for i in range(0, len(app_ids), _BATCH):
+            batch = app_ids[i : i + _BATCH]
+            for app in (
+                self.db.query(App)
+                .filter(App.id.in_(batch))
+                .all()
+            ):
+                app_data_map[app.id] = app
+
+        # 3. Review counts (last 7 days)
+        review_cutoff = datetime.utcnow() - timedelta(days=7)
+        review_count_map = {}
+        for i in range(0, len(app_ids), _BATCH):
+            batch = app_ids[i : i + _BATCH]
+            for row in (
+                self.db.query(Review.app_id, func.count(Review.id))
+                .filter(Review.app_id.in_(batch), Review.date >= review_cutoff)
+                .group_by(Review.app_id)
+                .all()
+            ):
+                review_count_map[row[0]] = row[1]
+
+        # 4. Category ranks for normalization
+        category_ids = list({
+            a.category_id for a in app_data_map.values() if a.category_id
+        })
+        category_ranks_map = defaultdict(list)
+        if category_ids:
+            for i in range(0, len(category_ids), _BATCH):
+                batch = category_ids[i : i + _BATCH]
+                for row in (
+                    self.db.query(App.category_id, App.current_rank)
+                    .filter(App.category_id.in_(batch), App.current_rank.isnot(None))
+                    .all()
+                ):
+                    category_ranks_map[row[0]].append(row[1])
+
+        # Score each app using prefetched data (zero per-app queries)
         trending = []
         for app_id in app_ids:
-            app = self.db.query(App).filter(App.id == app_id).first()
+            app = app_data_map.get(app_id)
             if not app:
                 continue
 
-            trend_data = self.compute_trend_score(app_id, use_category_norm=True)
-            
-            if trend_data["final_score"] <= 0:
+            cat_id = app.category_id
+            trend_data = self.compute_trend_score_from_prefetch(
+                app_id=app_id,
+                ranking_history=rankings_by_app.get(app_id, []),
+                current_reviews=app.current_reviews,
+                current_rank=app.current_rank,
+                category_id=cat_id,
+                review_count_7d=review_count_map.get(app_id, 0),
+                category_ranks=category_ranks_map.get(cat_id) if cat_id else None,
+                use_category_norm=True,
+            )
+
+            if not trend_data or trend_data["final_score"] <= 0:
                 continue
 
             trending.append({
@@ -1383,32 +1439,47 @@ class ScoringEngine:
         """
         Estimate keyword metrics from available app-keyword data.
 
-        The iTunes Search API does not expose search-volume or difficulty figures,
-        so all keywords are saved with 0 values by default.  This method derives
-        reasonable estimates so dashboard charts and opportunity scores are useful:
+        Uses a single GROUP BY query to count app-keyword associations for ALL
+        keywords at once (instead of N per-keyword COUNT queries).
 
-          search_volume ≈ app_count × search_volume_per_app   (more ranked apps → higher search volume)
-          difficulty    ≈ min(app_count, difficulty_cap)      (caps so keywords remain visible
-                                                               in the default max_difficulty=60 view)
+          search_volume ≈ app_count × search_volume_per_app
+          difficulty    ≈ min(app_count, difficulty_cap)
           trend         ≈ category-based estimate (AI/chat keywords score higher)
         """
         _tmap = TRENDING_CONFIG["trend_velocity_map"]
         _tdef = TRENDING_CONFIG["trend_velocity_default"]
         _svpa = TRENDING_CONFIG["search_volume_per_app"]
         _dcap = TRENDING_CONFIG["difficulty_cap"]
-        keywords = self.db.query(Keyword).all()
-        for kw in keywords:
-            if not kw.term:
-                continue
-            app_count = (
-                self.db.query(AppKeyword)
-                .filter(AppKeyword.keyword_id == kw.id)
-                .count()
+
+        # Single query: keyword_id → app_count  (replaces N per-keyword COUNTs)
+        counts = dict(
+            self.db.query(AppKeyword.keyword_id, func.count(AppKeyword.app_id))
+            .group_by(AppKeyword.keyword_id)
+            .all()
+        )
+
+        _BATCH = 500
+        offset = 0
+        while True:
+            batch = (
+                self.db.query(Keyword)
+                .order_by(Keyword.id)
+                .offset(offset)
+                .limit(_BATCH)
+                .all()
             )
-            kw.search_volume = app_count * _svpa
-            kw.difficulty = min(float(app_count), _dcap)
-            kw.trend = _tmap.get(kw.term.lower(), _tdef)
-        self.db.commit()
+            if not batch:
+                break
+            for kw in batch:
+                if not kw.term:
+                    continue
+                app_count = counts.get(kw.id, 0)
+                kw.search_volume = app_count * _svpa
+                kw.difficulty = min(float(app_count), _dcap)
+                kw.trend = _tmap.get(kw.term.lower(), _tdef)
+            self.db.commit()
+            self.db.expire_all()
+            offset += _BATCH
 
     def compute_market_weakness(self, app_id: int) -> List[Dict]:
         """
@@ -1649,61 +1720,191 @@ class ScoringEngine:
     ) -> List[Dict]:
         """
         Get fresh riser apps - newly released apps showing early traction.
-        
+
+        Batch-prefetch version: 3 queries total instead of ~4N per-app queries.
+
         Modes:
         - fresh_risers: Default - apps with best fresh_riser_score
         - newest: Most recently released apps
         - hidden_gems: Apps with high momentum but lower visibility
-        
-        Eligibility:
-        - Release date within last 7 days (or fallback to created_at)
-        - At least 5 reviews
-        - At least 3 ranking snapshots in last 7 days
-        - Valid category_id
         """
-        cutoff_7_days = datetime.now(timezone.utc) - timedelta(days=7)
-        cutoff_14_days = datetime.now(timezone.utc) - timedelta(days=14)
-        
-        base_query = self.db.query(App).filter(
-            App.category_id.isnot(None)
-        )
-        
-        if category_id:
-            base_query = base_query.filter(App.category_id == category_id)
-        
-        all_apps = base_query.all()
-        
-        fresh_risers = []
-        
         import logging as _logging
         _log = _logging.getLogger(__name__)
 
-        for app in all_apps:
-            try:
-                eligibility = self._check_fresh_riser_eligibility(app, cutoff_7_days, cutoff_14_days)
+        now = datetime.now(timezone.utc)
+        cutoff_7_days = now - timedelta(days=7)
+        _elig = FRESH_RISERS_CONFIG["eligibility"]
+        max_age = _elig["max_age_days"]
+        min_reviews = _elig["min_reviews"]
+        min_snapshots = _elig["min_ranking_snapshots"]
+        max_rank = _elig["max_rank"]
+        fallback_age = _elig.get("fallback_age_days", 14)
 
-                if not eligibility["eligible"]:
+        # ── Pre-filter candidates in SQL (eliminates 90%+ of apps) ─────────
+        age_cutoff = now - timedelta(days=max_age)
+        base_query = (
+            self.db.query(App)
+            .filter(
+                App.category_id.isnot(None),
+                App.current_reviews >= min_reviews,
+                func.coalesce(App.current_rank, 0) <= max_rank,
+                func.coalesce(App.release_date, App.created_at) >= age_cutoff,
+            )
+        )
+        if category_id:
+            base_query = base_query.filter(App.category_id == category_id)
+
+        candidates = base_query.all()
+        if not candidates:
+            return []
+
+        candidate_ids = [a.id for a in candidates]
+
+        # ── Batch prefetch 1: ranking counts per app (last 7 days) ─────────
+        ranking_counts = dict(
+            self.db.query(Ranking.app_id, func.count(Ranking.id))
+            .filter(Ranking.app_id.in_(candidate_ids), Ranking.recorded_at >= cutoff_7_days)
+            .group_by(Ranking.app_id)
+            .all()
+        )
+
+        # ── Batch prefetch 2: oldest ranking per app (last 7 days) for momentum
+        oldest_rank_sub = (
+            self.db.query(
+                Ranking.app_id,
+                func.min(Ranking.recorded_at).label("min_ts"),
+            )
+            .filter(Ranking.app_id.in_(candidate_ids), Ranking.recorded_at >= cutoff_7_days)
+            .group_by(Ranking.app_id)
+            .subquery()
+        )
+        oldest_ranks = {}
+        for row in (
+            self.db.query(Ranking.app_id, Ranking.rank)
+            .join(
+                oldest_rank_sub,
+                and_(
+                    Ranking.app_id == oldest_rank_sub.c.app_id,
+                    Ranking.recorded_at == oldest_rank_sub.c.min_ts,
+                ),
+            )
+            .all()
+        ):
+            oldest_ranks[row.app_id] = row.rank
+
+        # ── Batch prefetch 3: category avg reviews ─────────────────────────
+        cat_ids = list({a.category_id for a in candidates if a.category_id})
+        cat_avg_reviews = {}
+        if cat_ids:
+            for row in (
+                self.db.query(App.category_id, func.avg(App.current_reviews))
+                .filter(App.category_id.in_(cat_ids), App.current_reviews.isnot(None))
+                .group_by(App.category_id)
+                .all()
+            ):
+                cat_avg_reviews[row[0]] = row[1]
+
+        # ── Batch prefetch 4: category names ───────────────────────────────
+        cat_names = {}
+        if cat_ids:
+            for row in self.db.query(Category.id, Category.name).filter(Category.id.in_(cat_ids)).all():
+                cat_names[row.id] = row.name
+
+        # ── Score each candidate using prefetched data (zero per-app queries)
+        fresh_risers = []
+        for app in candidates:
+            try:
+                # Eligibility check (inline — uses prefetched ranking_counts)
+                def _to_aware(dt):
+                    if dt is None:
+                        return None
+                    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+                release_date = _to_aware(app.release_date)
+                created_at = _to_aware(app.created_at)
+
+                if not release_date:
+                    if created_at and (now - created_at).days <= fallback_age:
+                        release_date = created_at
+                    else:
+                        continue
+                age_days = (now - release_date).days
+                if age_days > max_age:
                     continue
 
-                scores = self._calculate_fresh_riser_scores(app, eligibility, cutoff_7_days)
+                ranking_count = ranking_counts.get(app.id, 0)
+                if ranking_count < min_snapshots:
+                    continue
+
+                reviews_count = app.current_reviews or 0
+
+                # Scores (inline — uses prefetched data)
+                freshness_score = self._calculate_freshness_score(age_days)
+                review_traction_score = self._calculate_review_traction_score(reviews_count, age_days)
+                rank_quality_score = self._calculate_rank_quality_score(app.current_rank)
+
+                # Momentum from prefetched oldest rank
+                current_rank = app.current_rank
+                if not current_rank:
+                    momentum_score = 10.0
+                else:
+                    oldest_r = oldest_ranks.get(app.id)
+                    if oldest_r is None:
+                        momentum_score = FRESH_RISERS_CONFIG["momentum_no_history"]
+                    else:
+                        momentum = oldest_r - current_rank
+                        _mbands = FRESH_RISERS_CONFIG["momentum_bands"]
+                        if momentum >= 100:
+                            momentum_score = _mbands[100]
+                        elif momentum >= 50:
+                            momentum_score = _mbands[50]
+                        elif momentum >= 20:
+                            momentum_score = _mbands[20]
+                        else:
+                            momentum_score = FRESH_RISERS_CONFIG["momentum_floor"]
+
+                # Niche viability from prefetched category avg
+                cat_id = app.category_id
+                if not cat_id:
+                    niche_viability_score = FRESH_RISERS_CONFIG["niche_no_category"]
+                else:
+                    avg_rev = cat_avg_reviews.get(cat_id)
+                    if not avg_rev:
+                        niche_viability_score = FRESH_RISERS_CONFIG["niche_default"]
+                    else:
+                        _nbands = FRESH_RISERS_CONFIG["niche_avg_reviews_bands"]
+                        if avg_rev < 1_000:
+                            niche_viability_score = _nbands[1_000]
+                        elif avg_rev < 5_000:
+                            niche_viability_score = _nbands[5_000]
+                        elif avg_rev < 20_000:
+                            niche_viability_score = _nbands[20_000]
+                        else:
+                            niche_viability_score = FRESH_RISERS_CONFIG["niche_floor"]
+
+                _sw = FRESH_RISERS_CONFIG["score_weights"]
+                fresh_riser_score = (
+                    freshness_score       * _sw["freshness"] +
+                    review_traction_score * _sw["review_traction"] +
+                    rank_quality_score    * _sw["rank_quality"] +
+                    momentum_score        * _sw["momentum"] +
+                    niche_viability_score * _sw["niche_viability"]
+                )
 
                 if mode == "hidden_gems":
                     _hw = FRESH_RISERS_CONFIG["hidden_gems_weights"]
                     final_score = (
-                        scores["momentum_score"]        * _hw["momentum"] +
-                        scores["niche_viability_score"]  * _hw["niche_viability"] +
-                        scores["rank_quality_score"]     * _hw["rank_quality"] +
-                        scores["review_traction_score"]  * _hw["review_traction"]
+                        momentum_score        * _hw["momentum"] +
+                        niche_viability_score * _hw["niche_viability"] +
+                        rank_quality_score    * _hw["rank_quality"] +
+                        review_traction_score * _hw["review_traction"]
                     )
                 elif mode == "newest":
-                    final_score = scores["freshness_score"]
+                    final_score = freshness_score
                 else:
-                    final_score = scores["fresh_riser_score"]
+                    final_score = fresh_riser_score
 
-                try:
-                    category_name = app.category.name if app.category else None
-                except Exception:
-                    category_name = app.primary_category
+                category_name = cat_names.get(cat_id) or app.primary_category
 
                 fresh_risers.append({
                     "app_id": app.id,
@@ -1711,16 +1912,16 @@ class ScoringEngine:
                     "developer": app.developer,
                     "release_date": app.release_date.isoformat() if app.release_date else None,
                     "current_rank": app.current_rank,
-                    "current_reviews": app.current_reviews or 0,
+                    "current_reviews": reviews_count,
                     "category": category_name,
                     "fresh_riser_score": round(final_score, 2),
-                    "freshness_score": scores["freshness_score"],
-                    "review_traction_score": scores["review_traction_score"],
-                    "rank_quality_score": scores["rank_quality_score"],
-                    "momentum_score": scores["momentum_score"],
-                    "niche_viability_score": scores["niche_viability_score"],
-                    "ranking_snapshots_count": eligibility["ranking_count"],
-                    "age_days": eligibility["age_days"],
+                    "freshness_score": freshness_score,
+                    "review_traction_score": review_traction_score,
+                    "rank_quality_score": rank_quality_score,
+                    "momentum_score": momentum_score,
+                    "niche_viability_score": niche_viability_score,
+                    "ranking_snapshots_count": ranking_count,
+                    "age_days": age_days,
                 })
             except Exception as exc:
                 _log.warning(
@@ -1728,7 +1929,7 @@ class ScoringEngine:
                     getattr(app, "id", "?"), getattr(app, "name", "?"), exc
                 )
                 continue
-        
+
         fresh_risers.sort(key=lambda x: x["fresh_riser_score"], reverse=True)
         return fresh_risers[:limit]
 

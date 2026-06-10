@@ -124,16 +124,30 @@ class GlobalKeywordSink:
             min_partial_score = 0.0    # all terms accepted below 900k
 
         # ── Normalise + hard gate + canonical dedup ───────────────────────────
-        # Load existing canonical_terms for dedup (only when >900k where it matters)
+        # Build canonical dedup set ONLY for the canonicals of incoming keywords
+        # (instead of loading ALL 1M+ canonical_terms into memory).
         existing_canonicals: set = set()
         if global_count >= _TIER_C_STOP_THRESHOLD:
             try:
-                rows = (
-                    self.db.query(Keyword.canonical_term)
-                    .filter(Keyword.canonical_term.isnot(None))
-                    .all()
-                )
-                existing_canonicals = {r[0] for r in rows if r[0]}
+                from app.services.keyword_quality_engine import KeywordQualityEngine as _KQE
+                incoming_canonicals = set()
+                for raw in keywords:
+                    if raw:
+                        c = _KQE.canonicalize(raw.strip().lower())
+                        if c:
+                            incoming_canonicals.add(c)
+                _CHUNK = 1000
+                incoming_list = list(incoming_canonicals)
+                for ci in range(0, len(incoming_list), _CHUNK):
+                    chunk = incoming_list[ci : ci + _CHUNK]
+                    found = {
+                        r[0] for r in
+                        self.db.query(Keyword.canonical_term)
+                        .filter(Keyword.canonical_term.in_(chunk))
+                        .all()
+                        if r[0]
+                    }
+                    existing_canonicals.update(found)
             except Exception:
                 pass  # fail open — dedup is best-effort
 

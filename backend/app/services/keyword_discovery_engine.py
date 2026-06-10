@@ -486,12 +486,24 @@ class KeywordDiscoveryEngine:
             }
             existing_terms.update(found)
 
-        canonical_to_id: dict = {
-            row.canonical_term: row.id
-            for row in self.db.query(Keyword.id, Keyword.canonical_term)
-            .filter(Keyword.canonical_term.isnot(None))
-            .all()
-        }
+        # Build canonical→id map ONLY for canonicals of our candidates
+        # (instead of loading ALL 1M+ canonical_term→id pairs into memory).
+        candidate_canonicals = set()
+        for term in candidates:
+            c = KeywordQualityEngine.canonicalize(term)
+            if c:
+                candidate_canonicals.add(c)
+        canonical_to_id = {}
+        canonical_list = list(candidate_canonicals)
+        for ci in range(0, len(canonical_list), _check_batch):
+            chunk = canonical_list[ci : ci + _check_batch]
+            for row in (
+                self.db.query(Keyword.id, Keyword.canonical_term)
+                .filter(Keyword.canonical_term.in_(chunk))
+                .all()
+            ):
+                if row.canonical_term:
+                    canonical_to_id[row.canonical_term] = row.id
 
         for i in range(0, len(candidates), batch_size):
             batch = candidates[i : i + batch_size]

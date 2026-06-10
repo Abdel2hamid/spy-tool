@@ -158,6 +158,7 @@ class ScraperWorker:
                 self.db.commit()
 
             except Exception as e:
+                self.db.rollback()
                 logger.error(f"Error scraping keyword '{keyword}': {e}")
 
         logger.info("Search results scrape completed")
@@ -228,6 +229,7 @@ class ScraperWorker:
                     )
 
                 except Exception as e:
+                    self.db.rollback()
                     logger.error(f"Error scraping chart {chart_type}/{category}: {e}")
 
         logger.info("Top charts scrape completed")
@@ -698,6 +700,7 @@ class ScoringWorker:
                     engine.compute_market_weakness(app_id)
                     mw_count += 1
                 except Exception as e:
+                    self.db.rollback()
                     logger.error(f"Market weakness computation failed for app {app_id}: {e}")
             self.db.commit()
             self.db.expire_all()
@@ -722,6 +725,7 @@ class ScoringWorker:
                     if gaps:
                         fg_count += 1
                 except Exception as e:
+                    self.db.rollback()
                     logger.error(f"Feature gap analysis failed for app {app_id}: {e}")
             self.db.commit()
             self.db.expire_all()
@@ -986,10 +990,12 @@ async def run_scrape_task():
         logger.info("Phase 3: processing discovery queue")
         try:
             db = SessionLocal()
-            from app.workers.discovery_engine import DiscoveryEngine
-            engine = DiscoveryEngine(db)
-            await engine.process_queue(batch_size=50)
-            db.close()
+            try:
+                from app.workers.discovery_engine import DiscoveryEngine
+                engine = DiscoveryEngine(db)
+                await engine.process_queue(batch_size=50)
+            finally:
+                db.close()
         except Exception as e:
             logger.warning(f"Discovery queue processing failed: {e}")
 

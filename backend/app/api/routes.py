@@ -1,6 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 from sqlalchemy import exists, func, and_, or_
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
@@ -234,7 +234,13 @@ def get_apps(
     # page param takes precedence over raw skip when page > 1
     effective_skip = (page - 1) * limit if page > 1 else skip
 
-    query = db.query(models.App)
+    # Defer heavy TEXT/JSON columns not needed by AppListItem
+    query = db.query(models.App).options(
+        defer(models.App.description),
+        defer(models.App.screenshots),
+        defer(models.App.in_app_purchases),
+        defer(models.App.supported_languages),
+    )
 
     # ── full-text search across name / subtitle / developer / description ─
     if search:
@@ -416,7 +422,12 @@ def get_latest_apps_legacy(
     db: Session = Depends(get_db),
 ):
     cutoff = datetime.utcnow() - timedelta(days=60)
-    query = db.query(models.App).filter(
+    query = db.query(models.App).options(
+        defer(models.App.description),
+        defer(models.App.screenshots),
+        defer(models.App.in_app_purchases),
+        defer(models.App.supported_languages),
+    ).filter(
         or_(models.App.release_date >= cutoff, models.App.created_at >= cutoff)
     )
     if category:
@@ -471,7 +482,12 @@ def get_latest_apps(
             models.App.release_date >= cutoff,
         )
 
-    query = db.query(models.App).filter(*date_filter)
+    query = db.query(models.App).options(
+        defer(models.App.description),
+        defer(models.App.screenshots),
+        defer(models.App.in_app_purchases),
+        defer(models.App.supported_languages),
+    ).filter(*date_filter)
 
     if category:
         query = query.filter(
