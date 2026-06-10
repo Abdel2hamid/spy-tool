@@ -383,7 +383,7 @@ class OpportunityBase(BaseModel):
     app_id: Optional[int] = None
     opportunity_type: str
     primary_keyword: Optional[str] = None
-    competition_score: float = 0
+    competition_score: Optional[float] = None  # None = insufficient data
     trend_score: float = 0
     success_probability: float = 0
     ai_integration_potential: float = 0
@@ -457,7 +457,7 @@ class OpportunityOfDayResponse(BaseModel):
     app_id: int
     app_name: str
     primary_keyword: str
-    competition_score: float
+    competition_score: Optional[float] = None  # None = insufficient data
     trend_score: float
     success_probability: float
     attractiveness_score: Optional[float] = None
@@ -508,17 +508,17 @@ class WeeklyOpportunityItem(BaseModel):
     app_id: int
     app_name: str
     primary_keyword: str
-    competition_score: float
-    trend_score: float
-    success_probability: float
-    opportunity_score: float
+    competition_score: Optional[float] = None  # None = insufficient data
+    trend_score: float = 0.0
+    success_probability: float = 0.0
+    opportunity_score: float = 0.0
     attractiveness_score: Optional[float] = None
     feasibility_score: Optional[float] = None
     feasibility_details: Optional[dict] = None
     ai_integration_potential: Optional[float] = None
     rank_velocity: Optional[float] = None
     review_growth: Optional[float] = None
-    category: str
+    category: str = ""
     recommendation: Optional[str] = None
     ai_summary: Optional[str] = None
     related_apps: Optional[List[RelatedAppItem]] = None
@@ -883,10 +883,10 @@ class FactorBreakdown(BaseModel):
 
 class DownloadEstimateResponse(BaseModel):
     app_id: int
-    estimated_downloads_daily: int
-    estimated_downloads_monthly: int
-    downloads_range_low: int
-    downloads_range_high: int
+    estimated_downloads_daily: Optional[int] = None
+    estimated_downloads_monthly: Optional[int] = None
+    downloads_range_low: Optional[int] = None
+    downloads_range_high: Optional[int] = None
     estimated_revenue_monthly: Optional[float] = None
     revenue_range_low: Optional[float] = None
     revenue_range_high: Optional[float] = None

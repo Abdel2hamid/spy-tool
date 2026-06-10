@@ -124,7 +124,7 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     # Trending: prefer precomputed scores (populated by trending_compute job).
     # Falls back to ranking velocity if scores table is empty.
     trending_count = (
-        db.query(func.count(models.AppTrendingScore.id))
+        db.query(func.count(models.AppTrendingScore.app_id))
         .filter(models.AppTrendingScore.trend_score > 0)
         .scalar() or 0
     )
@@ -2979,14 +2979,16 @@ def get_download_estimate(app_id: int, db: Session = Depends(get_db)):
     dl_est = DownloadEstimator(db)
     result = dl_est.estimate(app_id)
 
-    rev_est = RevenueEstimator(db)
-    rev_result = rev_est._compute_from_installs(
-        app, result["downloads_range_low"], result["downloads_range_high"]
-    )
-    result["estimated_revenue_monthly"] = rev_result["estimated_revenue_monthly_min"]
-    result["revenue_range_low"] = rev_result["revenue_range_low"]
-    result["revenue_range_high"] = rev_result["revenue_range_high"]
-    result["monetization_model_hint"] = rev_result.get("monetization_model_hint", "unknown")
+    # Only compute revenue if download estimates are available (confidence >= 20%)
+    if result.get("downloads_range_low") is not None:
+        rev_est = RevenueEstimator(db)
+        rev_result = rev_est._compute_from_installs(
+            app, result["downloads_range_low"], result["downloads_range_high"]
+        )
+        result["estimated_revenue_monthly"] = rev_result["estimated_revenue_monthly_min"]
+        result["revenue_range_low"] = rev_result["revenue_range_low"]
+        result["revenue_range_high"] = rev_result["revenue_range_high"]
+        result["monetization_model_hint"] = rev_result.get("monetization_model_hint", "unknown")
     result["app_id"] = app_id
     return result
 

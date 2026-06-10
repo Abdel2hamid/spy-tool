@@ -235,6 +235,31 @@ class DownloadEstimator:
 
         uncertainty = self._confidence._uncertainty_factor(conf_score, signals)
 
+        # If confidence < 20%, return NULL for all numeric estimates
+        # (rule: unreliable estimates should show "Unavailable" in the UI)
+        if conf_score < 0.20:
+            return {
+                "estimated_downloads_daily": None,
+                "estimated_downloads_monthly": None,
+                "downloads_range_low": None,
+                "downloads_range_high": None,
+                "estimation_confidence": conf_score,
+                "confidence_label": confidence_result["confidence_label"],
+                "factor_breakdown": {
+                    "rank_baseline": round(l1),
+                    "review_velocity_estimate": round(l2),
+                    "visibility_estimate": round(l3),
+                    "momentum_adjustment_pct": round(l4 * 100, 1),
+                    "weights_used": weights,
+                    "confidence_factors": confidence_result["factors"],
+                },
+                "estimation_notes": "Insufficient data for a reliable estimate. Ranking history is too stale or missing.",
+                "estimated_revenue_monthly": None,
+                "revenue_range_low": None,
+                "revenue_range_high": None,
+                "monetization_model_hint": None,
+            }
+
         daily_rounded = round(daily_base)
         monthly = daily_rounded * 30
         range_low = max(1, round(monthly * (1.0 - uncertainty)))
