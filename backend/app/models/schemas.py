@@ -1334,3 +1334,52 @@ class FavoriteListResponse(BaseModel):
     total: int
     skip: int
     limit: int
+
+
+# ---------------------------------------------------------------------------
+# Competitor Comparison
+# ---------------------------------------------------------------------------
+
+class CompetitorAppSummary(BaseModel):
+    app_id: int
+    store_app_id: str
+    name: str
+    icon_url: Optional[str] = None
+    developer: Optional[str] = None
+    primary_category: Optional[str] = None
+    current_rank: Optional[int] = None
+    current_rating: Optional[float] = None
+    current_reviews: Optional[int] = None
+    estimated_installs_min: Optional[int] = None
+    estimated_installs_max: Optional[int] = None
+    install_confidence: Optional[float] = None
+    estimated_revenue_monthly_min: Optional[float] = None
+    estimated_revenue_monthly_max: Optional[float] = None
+    is_free: bool = True
+    price: float = 0
+    review_velocity_30d: int = 0
+    keyword_count: int = 0
+    feature_gaps: List[FeatureGapItem] = []
+
+
+class CompetitorKeywordOverlapApp(BaseModel):
+    app_id: int
+    name: str
+    total: int = 0
+    shared: int = 0
+    unique: int = 0
+    unique_samples: List[str] = []
+
+
+class CompetitorKeywordOverlap(BaseModel):
+    shared_by_all: List[str] = []
+    shared_by_all_count: int = 0
+    per_app: List[CompetitorKeywordOverlapApp] = []
+
+
+class CompetitorCompareResponse(BaseModel):
+    apps: List[CompetitorAppSummary]
+    keyword_overlap: CompetitorKeywordOverlap
+    winners: Dict[str, Optional[int]]
+    compared_count: int
+    generated_at: str

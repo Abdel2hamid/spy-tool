@@ -514,7 +514,10 @@
       "Bash(cd /Users/abdelhamid/appstore-spy/frontend && npx tsc --noEmit 2>&1 | grep -v validator.ts | head -30)",
       "Bash(npx next build 2>&1 | tail -20)",
       "Bash(cd /Users/abdelhamid/appstore-spy/backend && python3 -c \"from app.main import app; print\\('OK'\\)\" 2>&1 | tail -5)",
-      "Bash(cd /Users/abdelhamid/appstore-spy/frontend && npx tsc --noEmit 2>&1 | tail -20)"
+      "Bash(cd /Users/abdelhamid/appstore-spy/frontend && npx tsc --noEmit 2>&1 | tail -20)",
+      "Bash(ls /Users/abdelhamid/appstore-spy/backend/app/services/*.py | head -10)",
+      "Bash(npx tsc --noEmit 2>&1)",
+      "Bash(npx next build 2>&1 | tail -25)"
     ]
   }
 }

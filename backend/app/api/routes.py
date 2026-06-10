@@ -85,6 +85,7 @@ from app.models.schemas import (
     WeeklyOpportunitiesResponse,
     FavoriteAppItem,
     FavoriteListResponse,
+    CompetitorCompareResponse,
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
@@ -3762,3 +3763,41 @@ def remove_favorite(
     db.delete(fav)
     db.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Competitor Comparison
+# ---------------------------------------------------------------------------
+
+@router.get("/competitors/compare", response_model=CompetitorCompareResponse)
+def compare_competitors(
+    app_ids: List[int] = Query(...),
+    db: Session = Depends(get_db),
+):
+    """Side-by-side comparison of 2–5 apps."""
+    # De-duplicate preserving order
+    seen = set()
+    unique_ids = []
+    for aid in app_ids:
+        if aid not in seen:
+            seen.add(aid)
+            unique_ids.append(aid)
+
+    if len(unique_ids) < 2:
+        raise HTTPException(status_code=400, detail="At least 2 distinct app_ids required")
+    if len(unique_ids) > 5:
+        raise HTTPException(status_code=400, detail="At most 5 app_ids allowed")
+
+    # Verify all ids exist
+    existing = {
+        r[0]
+        for r in db.query(models.App.id).filter(models.App.id.in_(unique_ids)).all()
+    }
+    missing = [aid for aid in unique_ids if aid not in existing]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"App ids not found: {missing}")
+
+    from app.services.competitor_compare_service import CompetitorCompareService
+
+    svc = CompetitorCompareService(db)
+    return svc.compare(unique_ids)

@@ -1931,3 +1931,65 @@ export async function removeFavorite(appId: number): Promise<void> {
   });
   if (!res.ok) throw new Error(`Failed to remove favorite (${res.status})`);
 }
+
+
+// ---------------------------------------------------------------------------
+// Competitor Comparison
+// ---------------------------------------------------------------------------
+
+export interface CompetitorFeatureGap {
+  feature: string;
+  mentions: number;
+  detected_at?: string | null;
+}
+
+export interface CompetitorAppSummary {
+  app_id: number;
+  store_app_id: string;
+  name: string;
+  icon_url?: string | null;
+  developer?: string | null;
+  primary_category?: string | null;
+  current_rank?: number | null;
+  current_rating?: number | null;
+  current_reviews?: number | null;
+  estimated_installs_min?: number | null;
+  estimated_installs_max?: number | null;
+  install_confidence?: number | null;
+  estimated_revenue_monthly_min?: number | null;
+  estimated_revenue_monthly_max?: number | null;
+  is_free: boolean;
+  price: number;
+  review_velocity_30d: number;
+  keyword_count: number;
+  feature_gaps: CompetitorFeatureGap[];
+}
+
+export interface CompetitorKeywordOverlapApp {
+  app_id: number;
+  name: string;
+  total: number;
+  shared: number;
+  unique: number;
+  unique_samples: string[];
+}
+
+export interface CompetitorKeywordOverlap {
+  shared_by_all: string[];
+  shared_by_all_count: number;
+  per_app: CompetitorKeywordOverlapApp[];
+}
+
+export interface CompetitorCompareResponse {
+  apps: CompetitorAppSummary[];
+  keyword_overlap: CompetitorKeywordOverlap;
+  winners: Record<string, number | null>;
+  compared_count: number;
+  generated_at: string;
+}
+
+export async function compareCompetitors(appIds: number[]): Promise<CompetitorCompareResponse> {
+  const params = new URLSearchParams();
+  appIds.forEach((id) => params.append('app_ids', String(id)));
+  return fetchApi<CompetitorCompareResponse>(`/competitors/compare?${params.toString()}`);
+}
