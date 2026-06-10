@@ -117,19 +117,27 @@ class ReviewSentimentService:
             label, score = _classify(rating, content)
             updates.append((review_id, label))
 
-        # Batch update in chunks of 500 to avoid oversized queries
+        # Batch update in chunks of 500 using parameterized VALUES + JOIN
         _UPDATE_CHUNK = 500
         updated = 0
         for i in range(0, len(updates), _UPDATE_CHUNK):
             chunk = updates[i : i + _UPDATE_CHUNK]
-            # Build a CASE WHEN for batched update
-            cases = " ".join(
-                f"WHEN id = {rid} THEN '{label}'" for rid, label in chunk
+            # Build parameterized VALUES clause (no f-string interpolation of data)
+            values_parts = []
+            params: Dict = {}
+            for j, (rid, label) in enumerate(chunk):
+                values_parts.append(f"(:id_{j}::integer, :label_{j}::varchar)")
+                params[f"id_{j}"] = rid
+                params[f"label_{j}"] = label
+            values_sql = ", ".join(values_parts)
+            self.db.execute(
+                text(
+                    f"UPDATE reviews SET sentiment = v.sentiment "
+                    f"FROM (VALUES {values_sql}) AS v(id, sentiment) "
+                    f"WHERE reviews.id = v.id"
+                ),
+                params,
             )
-            ids = ", ".join(str(rid) for rid, _ in chunk)
-            self.db.execute(text(
-                f"UPDATE reviews SET sentiment = CASE {cases} END WHERE id IN ({ids})"
-            ))
             updated += len(chunk)
 
         self.db.commit()

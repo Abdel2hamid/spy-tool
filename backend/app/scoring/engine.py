@@ -1156,6 +1156,172 @@ class ScoringEngine:
             "final_score": round(final_score, 2),
         }
 
+    def compute_trend_score_from_prefetch(
+        self,
+        app_id: int,
+        ranking_history: List[Dict],
+        current_reviews: Optional[int],
+        current_rank: Optional[int],
+        category_id: Optional[int],
+        review_count_7d: int,
+        category_ranks: Optional[List[int]],
+        use_category_norm: bool = True,
+    ) -> Optional[Dict]:
+        """
+        Compute trend score using prefetched data — ZERO DB queries.
+
+        Exact same algorithm as compute_trend_score() but all data is passed in
+        so the caller can batch-prefetch for thousands of apps at once.
+        """
+        # Filter to records with non-null rank
+        history_14d = [h for h in ranking_history if h["rank"] is not None]
+
+        if history_14d:
+            latest_ts = history_14d[-1]["recorded_at"]
+            history_7d = [
+                h for h in history_14d
+                if (latest_ts - h["recorded_at"]).total_seconds() <= 7 * 86400
+            ]
+            history_3d = [
+                h for h in history_14d
+                if (latest_ts - h["recorded_at"]).total_seconds() <= 3 * 86400
+            ]
+        else:
+            history_7d = []
+            history_3d = []
+
+        # --- Momentum (same as compute_momentum_score) ---
+        def _calc_momentum(history):
+            if len(history) < 2:
+                return 0.0
+            first_rank = history[0]["rank"]
+            last_rank = history[-1]["rank"]
+            days_span = max(
+                (history[-1]["recorded_at"] - history[0]["recorded_at"]).days, 1
+            )
+            return (first_rank - last_rank) / days_span
+
+        mom_3d = _calc_momentum(history_3d)
+        mom_7d = _calc_momentum(history_7d)
+        mom_14d = _calc_momentum(history_14d)
+
+        _mw = TRENDING_CONFIG["momentum_weights"]
+        momentum_weighted = (
+            mom_3d * _mw["3d"] + mom_7d * _mw["7d"] + mom_14d * _mw["14d"]
+        )
+
+        # --- Consistency (same as compute_consistency_score) ---
+        consistency = 0.0
+        if len(history_14d) >= 3:
+            daily_changes = [
+                history_14d[i - 1]["rank"] - history_14d[i]["rank"]
+                for i in range(1, len(history_14d))
+            ]
+            positive_moves = [c for c in daily_changes if c > 0]
+            if positive_moves and daily_changes:
+                consistency_ratio = len(positive_moves) / len(daily_changes)
+                avg_improvement = sum(positive_moves) / len(positive_moves)
+                consistency = round(
+                    (consistency_ratio * 0.6 + min(avg_improvement / 10, 1.0) * 0.4)
+                    * 100,
+                    2,
+                )
+
+        # --- Confidence (same as compute_confidence_score) ---
+        snapshot_score = min(len(history_14d) / 10, 1.0) * 0.4
+        coverage_14d = len(history_14d) / 14 if history_14d else 0
+        coverage_score = min(coverage_14d, 1.0) * 0.3
+        recent_score = (1.0 if history_7d else 0.0) * 0.3
+        confidence = round(snapshot_score + coverage_score + recent_score, 3)
+
+        # --- Absolute Rank Bonus (same as compute_absolute_rank_bonus) ---
+        rank_bonus = 0.0
+        if history_7d:
+            best_rank = min(h["rank"] for h in history_7d)
+            current_rank_7d = history_7d[-1]["rank"]
+
+            _rbt = TRENDING_CONFIG["rank_bonus_thresholds"]
+            if best_rank <= 5:
+                base_bonus = _rbt[5]
+            elif best_rank <= 10:
+                base_bonus = _rbt[10]
+            elif best_rank <= 25:
+                base_bonus = _rbt[25]
+            elif best_rank <= 50:
+                base_bonus = _rbt[50]
+            else:
+                base_bonus = 0.0
+
+            improvement = history_7d[0]["rank"] - current_rank_7d
+            if improvement > 0:
+                rank_bonus = round(base_bonus * min(improvement / 15, 1.0), 2)
+        rank_bonus = min(rank_bonus, 20.0)
+
+        # --- Bounded Review Momentum (same as compute_bounded_review_momentum) ---
+        base_reviews = current_reviews or 0
+        if base_reviews > 0 and review_count_7d > 0:
+            review_growth_7d = min(review_count_7d / base_reviews * 100, 100)
+        else:
+            review_growth_7d = 0.0
+
+        _df = TRENDING_CONFIG["review_dampen_factors"]
+        if base_reviews < 100:
+            dampen_factor = _df[100]
+        elif base_reviews < 1_000:
+            dampen_factor = _df[1_000]
+        elif base_reviews < 10_000:
+            dampen_factor = _df[10_000]
+        else:
+            dampen_factor = 1.0
+
+        review_momentum = round(
+            min(review_growth_7d * dampen_factor, TRENDING_CONFIG["review_momentum_cap"]),
+            2,
+        )
+
+        # --- Combine (same as compute_trend_score) ---
+        _tsw = TRENDING_CONFIG["trend_score_weights"]
+        momentum_normalized = min(
+            momentum_weighted * _tsw["momentum_normalized_scale"], 60
+        )
+        consistency_normalized = consistency * _tsw["consistency_weight"]
+        rank_bonus_normalized = rank_bonus * _tsw["rank_bonus_weight"]
+        review_normalized = review_momentum * _tsw["review_momentum_weight"]
+
+        raw_score = (
+            momentum_normalized
+            + consistency_normalized
+            + rank_bonus_normalized
+            + review_normalized
+        )
+        final_score = raw_score * confidence
+
+        # --- Category Normalization (same as normalize_within_category) ---
+        if (
+            use_category_norm
+            and category_id
+            and category_ranks
+            and len(category_ranks) >= 5
+        ):
+            app_rank_val = current_rank or 999
+            category_avg_rank = sum(category_ranks) / len(category_ranks)
+            percentile = 1 - (app_rank_val / max(category_avg_rank * 2, 1))
+            final_score = final_score * (0.7 + (0.3 * max(percentile, 0)))
+
+        return {
+            "app_id": app_id,
+            "momentum_3d": round(mom_3d, 3),
+            "momentum_7d": round(mom_7d, 3),
+            "momentum_14d": round(mom_14d, 3),
+            "momentum_weighted": round(momentum_weighted, 3),
+            "consistency_score": consistency,
+            "confidence_factor": confidence,
+            "absolute_rank_bonus": rank_bonus,
+            "review_momentum": review_momentum,
+            "raw_score": round(raw_score, 2),
+            "final_score": round(final_score, 2),
+        }
+
     def get_top_trending_apps_v2(self, limit: int = 10, category_id: int = None) -> List[Dict]:
         """
         New improved trending algorithm.

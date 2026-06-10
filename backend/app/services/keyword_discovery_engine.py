@@ -520,12 +520,13 @@ class KeywordDiscoveryEngine:
 
             if canonical_updates:
                 try:
-                    from sqlalchemy import text
-                    ids_str = ",".join(str(x) for x in set(canonical_updates))
-                    self.db.execute(text(
-                        f"UPDATE keywords SET times_seen = COALESCE(times_seen,0)+1, "
-                        f"last_seen_at = NOW() WHERE id IN ({ids_str})"
-                    ))
+                    from sqlalchemy import text, bindparam
+                    unique_ids = list(set(canonical_updates))
+                    stmt = text(
+                        "UPDATE keywords SET times_seen = COALESCE(times_seen,0)+1, "
+                        "last_seen_at = NOW() WHERE id IN :ids"
+                    ).bindparams(bindparam("ids", expanding=True))
+                    self.db.execute(stmt, {"ids": unique_ids})
                     self.db.commit()
                 except Exception as exc:
                     logger.warning(f"[KeywordDiscovery] canonical update failed: {exc}")

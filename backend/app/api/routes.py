@@ -87,6 +87,7 @@ from app.models.schemas import (
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
 from app.api.deps import _bearer
+from app.utils.rate_limiter import rate_limit
 from app.services.plan_enforcement import PlanEnforcer
 from app.config import settings
 
@@ -644,7 +645,7 @@ def get_blowing_up_apps(
         )
 
 
-@router.get("/apps/import", response_model=AppImportSearchResponse)
+@router.get("/apps/import", response_model=AppImportSearchResponse, dependencies=[Depends(rate_limit(20, 60))])
 def import_search_apps(
     q: str = Query(..., min_length=1, description="App name, App Store URL, or Apple trackId"),
     limit: int = Query(10, ge=1, le=20, description="Max results"),
@@ -786,7 +787,7 @@ def create_app(app: AppCreate, db: Session = Depends(get_db)):
     return db_app
 
 
-@router.get("/search/apps", response_model=KeywordDiscoverResponse)
+@router.get("/search/apps", response_model=KeywordDiscoverResponse, dependencies=[Depends(rate_limit(60, 60))])
 def search_apps_by_keyword(
     keyword: str = Query(..., min_length=2, description="Keyword to search apps"),
     limit: int = Query(50, ge=1, le=100, description="Max results to return"),

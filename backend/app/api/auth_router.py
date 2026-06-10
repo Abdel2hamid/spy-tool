@@ -10,12 +10,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.orm import Session
 
 from app.api.deps import AuthContext, get_auth_context
 from app.database import get_db
+from app.utils.rate_limiter import rate_limit
 from app.services.auth_service import (
     EmailAlreadyRegistered,
     InvalidCredentials,
@@ -148,7 +149,12 @@ def _build_auth_response(user, workspace, membership, subscription, token: str) 
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=AuthResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(rate_limit(3, 60))],
+)
 def register(body: RegisterRequest, db: Session = Depends(get_db)):
     """
     Create a new user account.
@@ -179,7 +185,11 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     return _build_auth_response(user, workspace, membership, subscription, token)
 
 
-@router.post("/login", response_model=AuthResponse)
+@router.post(
+    "/login",
+    response_model=AuthResponse,
+    dependencies=[Depends(rate_limit(5, 60))],
+)
 def login(body: LoginRequest, db: Session = Depends(get_db)):
     """Authenticate with email + password. Returns JWT access token."""
     try:

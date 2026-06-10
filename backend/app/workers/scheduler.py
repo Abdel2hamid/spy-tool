@@ -30,6 +30,7 @@ To disable a job:      comment out its scheduler.add_job() call.
 """
 
 import asyncio
+import functools
 import logging
 from datetime import datetime, timedelta
 
@@ -51,6 +52,101 @@ _JOB_DEFAULTS = dict(
     coalesce=True,       # merge missed fire(s) into a single run
     misfire_grace_time=300,  # allow up to 5 min late start before skipping
 )
+
+# ---------------------------------------------------------------------------
+# Job timeout configuration (seconds) — prevents hung jobs from blocking
+# all future runs.  Default 30 min for unlisted jobs.
+# ---------------------------------------------------------------------------
+_JOB_TIMEOUTS = {
+    "trending_compute": 300,           # 5 min (fast, SQL-only)
+    "blowing_up_compute": 600,         # 10 min
+    "opportunity_compute": 600,        # 10 min
+    "weekly_opportunities_compute": 600,
+    "sentiment_analysis": 600,         # 10 min
+    "analytics_update": 600,           # 10 min
+    "feature_gap": 1800,               # 30 min
+    "hourly_reviews_ratings": 3600,    # 1 h (touches all apps)
+    "hourly_scoring": 3600,            # 1 h
+    "full_metadata": 7200,             # 2 h (full scrape)
+    "discovery_keywords": 3600,        # 1 h
+    "discovery_charts": 1800,          # 30 min
+    "discovery_developer": 1800,       # 30 min
+    "queue_processor": 3600,           # 1 h
+    "keyword_intelligence": 7200,      # 2 h
+    "keyword_scoring": 3600,           # 1 h
+    "keyword_discovery": 7200,         # 2 h
+    "keyword_discovery_daily": 7200,   # 2 h
+    "keyword_discovery_phase1_daily": 7200,
+    "keyword_cleanup_daily": 600,      # 10 min
+    "keyword_quality_pruning": 600,    # 10 min
+    "review_scraper": 3600,            # 1 h
+    "mass_discovery_light": 3600,      # 1 h
+    "tier_reclassify": 600,            # 10 min
+    "enrich_hot": 1800,                # 30 min
+    "enrich_warm": 3600,               # 1 h
+    "enrich_cold": 3600,               # 1 h
+    "keyword_rank_tracker": 3600,      # 1 h
+    "ad_intelligence": 3600,           # 1 h
+    "campaign_detection": 1800,        # 30 min
+}
+_DEFAULT_TIMEOUT = 1800  # 30 min
+
+# ---------------------------------------------------------------------------
+# Execution metrics — survives across runs, exposed via /health
+# ---------------------------------------------------------------------------
+_job_metrics = {}  # type: dict
+
+
+def get_job_metrics() -> dict[str, dict]:
+    """Return a copy of execution metrics for all jobs (used by /health)."""
+    return dict(_job_metrics)
+
+
+# ---------------------------------------------------------------------------
+# Timeout + metrics decorator
+# ---------------------------------------------------------------------------
+
+def _with_timeout(job_id: str, timeout: int = None):
+    """
+    Decorator: wrap a scheduler job with timeout enforcement, execution
+    metrics, and structured logging.
+
+    - If the job exceeds *timeout* seconds, asyncio.TimeoutError is raised
+      and the underlying task is cancelled.
+    - Metrics (runs, successes, failures, timeouts, last_duration) are
+      tracked in ``_job_metrics`` and exposed via ``get_job_metrics()``.
+    """
+    _timeout = timeout or _JOB_TIMEOUTS.get(job_id, _DEFAULT_TIMEOUT)
+
+    def decorator(fn):
+        @functools.wraps(fn)
+        async def wrapper():
+            m = _job_metrics.setdefault(job_id, {
+                "runs": 0, "ok": 0, "fail": 0, "timeout": 0,
+                "last_start": None, "last_end": None, "last_duration_s": None,
+            })
+            m["runs"] += 1
+            m["last_start"] = datetime.utcnow().isoformat()
+            try:
+                await asyncio.wait_for(fn(), timeout=_timeout)
+                m["ok"] += 1
+            except asyncio.TimeoutError:
+                m["timeout"] += 1
+                logger.error(
+                    f"[SCHEDULER] ⏰ {job_id} TIMED OUT after {_timeout}s "
+                    f"(runs={m['runs']}, ok={m['ok']}, timeout={m['timeout']})"
+                )
+            except Exception:
+                m["fail"] += 1
+                raise
+            finally:
+                now = datetime.utcnow()
+                m["last_end"] = now.isoformat()
+                if m["last_start"]:
+                    start = datetime.fromisoformat(m["last_start"])
+                    m["last_duration_s"] = round((now - start).total_seconds(), 1)
+        return wrapper
+    return decorator
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +177,7 @@ def _log_fail(job_id: str, exc: Exception):
 # Job: every 1 h — quick reviews & ratings refresh
 # ---------------------------------------------------------------------------
 
+@_with_timeout("hourly_reviews_ratings")
 async def job_hourly_reviews_ratings():
     """
     Lightweight hourly refresh for all tracked apps:
@@ -108,6 +205,7 @@ async def job_hourly_reviews_ratings():
 # Job: every 1 h — scoring & analytics recompute
 # ---------------------------------------------------------------------------
 
+@_with_timeout("hourly_scoring")
 async def job_hourly_scoring():
     """
     Recompute opportunity scores and regenerate the daily dashboard report.
@@ -129,6 +227,7 @@ async def job_hourly_scoring():
 # Job: every 10 min — precompute trending scores
 # ---------------------------------------------------------------------------
 
+@_with_timeout("opportunity_compute")
 async def job_opportunity_compute():
     """
     Precompute today's Opportunity of the Day (with related apps + AI summary).
@@ -156,6 +255,7 @@ async def job_opportunity_compute():
         db.close()
 
 
+@_with_timeout("weekly_opportunities_compute")
 async def job_weekly_opportunities_compute():
     """
     Precompute this week's Top-5 Opportunities (Mon–Sun ISO week).
@@ -178,6 +278,7 @@ async def job_weekly_opportunities_compute():
         db.close()
 
 
+@_with_timeout("blowing_up_compute")
 async def job_blowing_up_compute():
     """
     Precompute and persist 'blowing up' momentum scores for all apps that
@@ -201,6 +302,7 @@ async def job_blowing_up_compute():
         db.close()
 
 
+@_with_timeout("trending_compute")
 async def job_trending_compute():
     """
     Precompute and persist trending scores for all apps with recent ranking
@@ -225,6 +327,7 @@ async def job_trending_compute():
 # Job: every 6 h — full app metadata refresh
 # ---------------------------------------------------------------------------
 
+@_with_timeout("full_metadata")
 async def job_full_metadata():
     """
     Full re-scrape for all tracked apps:
@@ -257,6 +360,7 @@ async def job_full_metadata():
 # Job: every 6 h — keyword discovery (100+ keywords → discovery queue)
 # ---------------------------------------------------------------------------
 
+@_with_timeout("discovery_keywords")
 async def job_discovery_keywords():
     """
     Run keyword search for all 100+ DISCOVERY_KEYWORDS not yet run today.
@@ -282,6 +386,7 @@ async def job_discovery_keywords():
 # Job: every 2 h — chart discovery (all genres × all countries → queue)
 # ---------------------------------------------------------------------------
 
+@_with_timeout("discovery_charts")
 async def job_discovery_charts():
     """
     Fetch the next batch of (chart × genre × country) combinations not yet
@@ -307,6 +412,7 @@ async def job_discovery_charts():
 # Job: every 12 h — developer expansion (all apps per developer → queue)
 # ---------------------------------------------------------------------------
 
+@_with_timeout("discovery_developer")
 async def job_discovery_developer():
     """
     For recently added apps whose developer hasn't been expanded yet,
@@ -332,6 +438,7 @@ async def job_discovery_developer():
 # Job: every 30 min — queue processor (scrape queued app IDs)
 # ---------------------------------------------------------------------------
 
+@_with_timeout("queue_processor")
 async def job_queue_processor():
     """
     Pick up to 100 pending items from the discovery queue, scrape full
@@ -358,6 +465,7 @@ async def job_queue_processor():
 # Scalable Ingestion Pipeline Jobs (500K target)
 # ---------------------------------------------------------------------------
 
+@_with_timeout("mass_discovery_light")
 async def job_mass_discovery_light():
     """
     Run keyword discovery for 1000+ long-tail MASS_KEYWORDS.
@@ -385,6 +493,7 @@ async def job_mass_discovery_light():
         _log_fail(job_id, exc)
 
 
+@_with_timeout("tier_reclassify")
 async def job_tier_reclassify():
     """
     Reclassify all App rows into HOT / WARM / COLD tiers using a single
@@ -405,6 +514,7 @@ async def job_tier_reclassify():
         _log_fail(job_id, exc)
 
 
+@_with_timeout("enrich_hot")
 async def job_enrich_hot():
     """
     Enqueue HOT light-stage apps for full enrichment and process up to
@@ -429,6 +539,7 @@ async def job_enrich_hot():
         _log_fail(job_id, exc)
 
 
+@_with_timeout("enrich_warm")
 async def job_enrich_warm():
     """
     Enqueue WARM light-stage apps for full enrichment and process up to
@@ -453,6 +564,7 @@ async def job_enrich_warm():
         _log_fail(job_id, exc)
 
 
+@_with_timeout("enrich_cold")
 async def job_enrich_cold():
     """
     Enqueue COLD light-stage apps for full enrichment and process up to
@@ -481,6 +593,7 @@ async def job_enrich_cold():
 # Job: every 6 h — keyword rank tracking (App Store search scraping)
 # ---------------------------------------------------------------------------
 
+@_with_timeout("keyword_rank_tracker")
 async def job_keyword_rank_tracker():
     """
     For each tracked keyword: scrape real App Store search results,
@@ -505,6 +618,7 @@ async def job_keyword_rank_tracker():
 # Job: every 12 h — keyword intelligence pipeline (trends + Apple signals + scoring)
 # ---------------------------------------------------------------------------
 
+@_with_timeout("keyword_intelligence")
 async def job_keyword_intelligence():
     """
     Full keyword intelligence pipeline:
@@ -541,6 +655,7 @@ async def job_keyword_intelligence():
 # Job: every 6 h — keyword scoring only (fast, no external API calls)
 # ---------------------------------------------------------------------------
 
+@_with_timeout("keyword_scoring")
 async def job_keyword_scoring():
     """
     Recompute opportunity_score + feasibility_score for all keywords
@@ -567,6 +682,7 @@ async def job_keyword_scoring():
 # Job: every 24 h — keyword expansion engine (discover 10k-100k new keywords)
 # ---------------------------------------------------------------------------
 
+@_with_timeout("keyword_discovery")
 async def job_keyword_discovery():
     """
     Run the keyword discovery engine to generate new keyword candidates:
@@ -600,6 +716,7 @@ async def job_keyword_discovery():
 # Job: every 24 h — per-app keyword discovery (autocomplete + affix expansion)
 # ---------------------------------------------------------------------------
 
+@_with_timeout("keyword_discovery_daily")
 async def job_keyword_discovery_daily():
     """
     For each tracked app, discover new keyword candidates via:
@@ -651,6 +768,7 @@ async def job_keyword_discovery_daily():
 # Job: every 24 h — Phase-1 discovery (alphabet + competitor + gap + scoring)
 # ---------------------------------------------------------------------------
 
+@_with_timeout("keyword_discovery_phase1_daily")
 async def job_keyword_discovery_phase1_daily():
     """
     For each tracked app, run the full Phase-1 keyword discovery pipeline:
@@ -736,6 +854,7 @@ async def job_keyword_discovery_phase1_daily():
 # Job: every 24 h — keyword pruning (delete low-value stale rows)
 # ---------------------------------------------------------------------------
 
+@_with_timeout("keyword_cleanup_daily")
 async def job_keyword_cleanup_daily():
     """
     Delete low-value keywords that have not been enriched and are stale.
@@ -806,6 +925,7 @@ async def job_keyword_cleanup_daily():
 # Job: every 6 h — deep review ingestion (up to 500 reviews per app)
 # ---------------------------------------------------------------------------
 
+@_with_timeout("review_scraper")
 async def job_review_scraper():
     """
     Fetch up to 500 reviews for the top 300 ranked apps (iTunes RSS pagination).
@@ -837,6 +957,7 @@ async def job_review_scraper():
 # Job: every 1 h — rule-based sentiment classification
 # ---------------------------------------------------------------------------
 
+@_with_timeout("sentiment_analysis")
 async def job_sentiment_analysis():
     """
     Classify all unclassified reviews (sentiment IS NULL) and roll up
@@ -864,6 +985,7 @@ async def job_sentiment_analysis():
 # Job: every 2 h — feature gap analysis
 # ---------------------------------------------------------------------------
 
+@_with_timeout("feature_gap")
 async def job_feature_gap():
     """
     Run FeatureGapAnalyzer for all apps with ≥5 reviews and upsert results
@@ -890,6 +1012,7 @@ async def job_feature_gap():
 # Job: every 2 h — analytics update (growth + rating-change roll-up)
 # ---------------------------------------------------------------------------
 
+@_with_timeout("analytics_update")
 async def job_analytics_update():
     """
     Recompute review_growth_30d/90d and rating_change_30d/90d for all apps
@@ -912,6 +1035,7 @@ async def job_analytics_update():
         _log_fail(job_id, exc)
 
 
+@_with_timeout("keyword_quality_pruning")
 async def job_keyword_quality_pruning():
     """
     Multi-rule quality pruning for the global keywords table:
@@ -946,6 +1070,7 @@ async def job_keyword_quality_pruning():
 # Growth Intelligence Jobs
 # ---------------------------------------------------------------------------
 
+@_with_timeout("ad_intelligence")
 async def job_ad_intelligence():
     """
     Phase 3 of Growth Intelligence pipeline.
@@ -972,6 +1097,7 @@ async def job_ad_intelligence():
         db.close()
 
 
+@_with_timeout("campaign_detection")
 async def job_campaign_detection():
     """
     Phase 4 of Growth Intelligence pipeline.
@@ -1008,12 +1134,12 @@ def setup_scheduler() -> AsyncIOScheduler:
     now = datetime.utcnow()
 
     # ── Discovery: keyword search (100+ keywords → queue) — every 6 h ──────
-    # First run: 2 min after startup so discovery begins immediately on deploy.
+    # First run staggered to 6 min (was 2 min — avoid startup storm).
     scheduler.add_job(
         job_discovery_keywords,
         trigger=IntervalTrigger(
             hours=6,
-            start_date=now + timedelta(minutes=2),
+            start_date=now + timedelta(minutes=6),
             timezone="UTC",
         ),
         id="discovery_keywords",
@@ -1022,13 +1148,12 @@ def setup_scheduler() -> AsyncIOScheduler:
     )
 
     # ── Discovery: chart scraping (all genres × countries → queue) — every 2 h
-    # First run: 5 min after startup; each run processes 12 chart pages.
-    # Full coverage of all charts takes ~44 runs (~88 h) cycling continuously.
+    # First run: 10 min after startup (was 5 — staggered).
     scheduler.add_job(
         job_discovery_charts,
         trigger=IntervalTrigger(
             hours=2,
-            start_date=now + timedelta(minutes=5),
+            start_date=now + timedelta(minutes=10),
             timezone="UTC",
         ),
         id="discovery_charts",
@@ -1037,12 +1162,12 @@ def setup_scheduler() -> AsyncIOScheduler:
     )
 
     # ── Discovery: developer expansion — every 12 h ────────────────────────
-    # First run: 10 min after startup.
+    # First run: 14 min after startup (was 10 — staggered).
     scheduler.add_job(
         job_discovery_developer,
         trigger=IntervalTrigger(
             hours=12,
-            start_date=now + timedelta(minutes=10),
+            start_date=now + timedelta(minutes=14),
             timezone="UTC",
         ),
         id="discovery_developer",
@@ -1117,12 +1242,12 @@ def setup_scheduler() -> AsyncIOScheduler:
     )
 
     # ── every 12 h: full keyword intelligence pipeline ───────────────────────
-    # First run: 3 min after startup so keyword data starts enriching immediately.
+    # First run: 8 min after startup (was 3 — staggered from discovery).
     scheduler.add_job(
         job_keyword_intelligence,
         trigger=IntervalTrigger(
             hours=12,
-            start_date=now + timedelta(minutes=3),
+            start_date=now + timedelta(minutes=8),
             timezone="UTC",
         ),
         id="keyword_intelligence",
@@ -1151,7 +1276,7 @@ def setup_scheduler() -> AsyncIOScheduler:
         job_keyword_discovery,
         trigger=IntervalTrigger(
             hours=24,
-            start_date=now + timedelta(minutes=2),
+            start_date=now + timedelta(minutes=20),
             timezone="UTC",
         ),
         id="keyword_discovery",
@@ -1216,12 +1341,12 @@ def setup_scheduler() -> AsyncIOScheduler:
     )
 
     # ── every 15 min: precompute blowing-up scores ────────────────────────────
-    # First run: 3 min after startup (staggered from trending_compute).
+    # First run: 4 min after startup (staggered from trending_compute at 2 min).
     scheduler.add_job(
         job_blowing_up_compute,
         trigger=IntervalTrigger(
             minutes=15,
-            start_date=now + timedelta(minutes=3),
+            start_date=now + timedelta(minutes=4),
             timezone="UTC",
         ),
         id="blowing_up_compute",

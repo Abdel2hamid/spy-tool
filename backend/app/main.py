@@ -12,7 +12,7 @@ from app.database import engine, Base
 from app.api import router
 from app.api.auth_router import router as auth_router
 from app.workers.tasks import run_scrape_task, run_scoring_task
-from app.workers.scheduler import scheduler, setup_scheduler
+from app.workers.scheduler import scheduler, setup_scheduler, get_job_metrics
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -573,5 +573,6 @@ def health_check():
         "uptime_seconds": round(time.monotonic() - _APP_START_TIME, 1),
         "checks": checks,
         "scheduler_jobs": jobs,
+        "job_metrics": get_job_metrics(),
         "response_ms": round((time.monotonic() - t0) * 1000, 1),
     }
