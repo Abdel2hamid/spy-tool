@@ -505,7 +505,14 @@
       "Bash(cd /Users/abdelhamid/appstore-spy/backend && python3 -c \"from app.api.deps import get_current_user; print\\('deps OK'\\)\" 2>&1)",
       "Bash(cd /Users/abdelhamid/appstore-spy/frontend && npx tsc --noEmit --pretty 2>&1 | grep -i \"api.ts\" | head -10)",
       "Bash(cd /Users/abdelhamid/appstore-spy/backend && python3 -c \"from app.main import app; print\\('full app OK'\\)\" 2>&1)",
-      "Bash(git add backend/app/api/deps.py frontend/src/lib/api.ts)"
+      "Bash(git add backend/app/api/deps.py frontend/src/lib/api.ts)",
+      "Bash(for page in frontend/src/app/alerts frontend/src/app/competitors frontend/src/app/discover frontend/src/app/campaigns frontend/src/app/niche-radar frontend/src/app/ads; do echo \"=== $page ===\" && cat \"$page/page.tsx\" 2>/dev/null | head -40 && echo; done)",
+      "Bash(for svc in backend/app/services/app_autopsy.py backend/app/services/backfill_keyword_structure.py backend/app/services/keyword_quality_backfill.py backend/app/services/confidence_engine.py backend/app/services/install_estimator.py backend/app/services/revenue_estimator.py backend/app/services/post_import_hydration.py backend/app/services/global_keyword_sink.py backend/app/services/keyword_history.py; do echo \"--- $svc ---\" && grep -r \"$\\(basename $svc .py\\)\" --include=\"*.py\" backend/app/ | grep -v \"^$svc\" | grep -v __pycache__ | head -3 && echo; done)",
+      "Bash(cd /Users/abdelhamid/appstore-spy/frontend && npm uninstall date-fns)",
+      "Bash(cd /Users/abdelhamid/appstore-spy/backend && python3 -c \"from app.main import app; print\\('Backend import OK'\\)\")",
+      "Bash(npx tsc --noEmit 2>&1 | grep -v validator.ts | head -20)",
+      "Bash(cd /Users/abdelhamid/appstore-spy/frontend && npx tsc --noEmit 2>&1 | grep -v validator.ts | head -30)",
+      "Bash(npx next build 2>&1 | tail -20)"
     ]
   }
 }
