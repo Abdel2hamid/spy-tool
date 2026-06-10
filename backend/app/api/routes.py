@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from sqlalchemy import exists, func, and_, or_
@@ -88,9 +88,18 @@ from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
 from app.api.deps import _bearer
 from app.services.plan_enforcement import PlanEnforcer
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _require_admin(x_admin_token: Optional[str] = Header(None)):
+    """Verify X-Admin-Token header matches ADMIN_TOKEN env var."""
+    if not settings.admin_token:
+        return  # no token configured — allow (dev mode)
+    if x_admin_token != settings.admin_token:
+        raise HTTPException(status_code=403, detail="Invalid or missing admin token")
 
 # ---------------------------------------------------------------------------
 # Dashboard stats — in-process TTL cache (60 s) to avoid repeated COUNT(*)
@@ -797,7 +806,7 @@ def search_apps_by_keyword(
     service = KeywordSearchService(db)
     result = service.search(keyword, limit=limit)
     
-    if result.get("new_app_ids"):
+    if result.get("new_app_ids") and background_tasks is not None:
         background_tasks.add_task(service.trigger_background_enrichment, result["new_app_ids"])
     
     return result
@@ -997,7 +1006,7 @@ def get_trending_apps(
             "items": [],
         }
 
-    has_ranking_history = _check_ranking_history(db, [])
+    has_ranking_history = db.query(models.Ranking.id).first() is not None
     if not has_ranking_history:
         logger.info("trending endpoint: apps exist but no ranking history")
         return {
@@ -1056,7 +1065,7 @@ def get_trending_apps_v2(
             "items": [],
         }
 
-    has_ranking_history = _check_ranking_history(db, [])
+    has_ranking_history = db.query(models.Ranking.id).first() is not None
     if not has_ranking_history:
         logger.info("trending/v2 endpoint: apps exist but no ranking history")
         return {
@@ -1622,48 +1631,46 @@ async def trigger_keyword_pipeline():
 def get_keyword_pipeline_debug(db: Session = Depends(get_db)):
     """Return enrichment coverage stats for the keyword intelligence pipeline."""
     from app.models.models import KeywordTrend, Keyword as KW, AppKeyword as AKW
-    from sqlalchemy import func as sqlfunc
+    from sqlalchemy import func as sqlfunc, case
     from app.config import settings as cfg
 
-    total = db.query(KW).count()
+    # Single conditional COUNT query instead of 11 separate COUNTs
+    row = db.query(
+        sqlfunc.count(KW.id).label("total"),
+        sqlfunc.count(case((KW.trend_score > 0, 1))).label("google_trends"),
+        sqlfunc.count(case((KW.trend_growth != 0, 1))).label("trend_growth"),
+        sqlfunc.count(case((KW.apps_count > 0, 1))).label("apple_signals"),
+        sqlfunc.count(case((KW.dominance_score > 0, 1))).label("dominance"),
+        sqlfunc.count(case((KW.opportunity_score > 0, 1))).label("opportunity"),
+        sqlfunc.count(case((KW.feasibility_score > 0, 1))).label("feasibility"),
+        sqlfunc.count(case((KW.last_enriched.isnot(None), 1))).label("enriched"),
+        sqlfunc.max(KW.last_enriched).label("last_run"),
+    ).first()
+
     with_app_links = (
-        db.query(KW)
-        .join(AKW, AKW.keyword_id == KW.id)
-        .distinct()
-        .count()
-    )
-    # Google Trends enrichment
-    google_trends_success_count = db.query(KW).filter(KW.trend_score > 0).count()
-    with_trend_growth = db.query(KW).filter(KW.trend_growth != 0).count()
-    # Apple signals enrichment (apps_count > 0 means iTunes returned results)
-    apple_signals_success_count = db.query(KW).filter(KW.apps_count > 0).count()
-    with_dominance = db.query(KW).filter(KW.dominance_score > 0).count()
-    # Scoring
-    with_opportunity = db.query(KW).filter(KW.opportunity_score > 0).count()
-    with_feasibility = db.query(KW).filter(KW.feasibility_score > 0).count()
-    # Pipeline activity
-    with_last_enriched = db.query(KW).filter(KW.last_enriched.isnot(None)).count()
-    last_run_at = db.query(sqlfunc.max(KW.last_enriched)).scalar()
-    # Trend time-series data
-    keyword_trends_rows = db.query(KeywordTrend).count()
+        db.query(sqlfunc.count(sqlfunc.distinct(AKW.keyword_id)))
+        .scalar()
+    ) or 0
+
+    keyword_trends_rows = db.query(sqlfunc.count(KeywordTrend.id)).scalar() or 0
 
     return {
-        "total_keywords": total,
+        "total_keywords": row.total,
         "with_app_links": with_app_links,
         # Google Trends
         "google_trends_enabled": cfg.google_trends_enabled,
-        "google_trends_success_count": google_trends_success_count,
-        "with_trend_growth": with_trend_growth,
+        "google_trends_success_count": row.google_trends,
+        "with_trend_growth": row.trend_growth,
         "keyword_trends_rows": keyword_trends_rows,
         # Apple signals
-        "apple_signals_success_count": apple_signals_success_count,
-        "with_dominance_score": with_dominance,
+        "apple_signals_success_count": row.apple_signals,
+        "with_dominance_score": row.dominance,
         # Scoring
-        "with_opportunity_score": with_opportunity,
-        "with_feasibility_score": with_feasibility,
+        "with_opportunity_score": row.opportunity,
+        "with_feasibility_score": row.feasibility,
         # Pipeline health
-        "with_last_enriched": with_last_enriched,
-        "last_pipeline_run_at": last_run_at.isoformat() if last_run_at else None,
+        "with_last_enriched": row.enriched,
+        "last_pipeline_run_at": row.last_run.isoformat() if row.last_run else None,
         "dataforseo_enabled": cfg.dataforseo_enabled,
     }
 
@@ -2033,11 +2040,10 @@ def get_app_detail(app_id: int, db: Session = Depends(get_db)):
         models.AppAnalytics.app_id == app_id
     ).order_by(models.AppAnalytics.computed_at.desc()).first()
     
-    return {
-        **app.__dict__,
-        "versions": versions,
-        "analytics": analytics
-    }
+    app_data = {c.key: getattr(app, c.key) for c in app.__table__.columns}
+    app_data["versions"] = versions
+    app_data["analytics"] = analytics
+    return app_data
 
 
 @router.get("/apps/{app_id}/versions", response_model=List[AppVersionResponse])
@@ -2258,9 +2264,10 @@ def analyze_feature_gaps(app_id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 _bootstrap_running = False
+_bootstrap_lock = asyncio.Lock()
 
 
-@router.post("/admin/bootstrap")
+@router.post("/admin/bootstrap", dependencies=[Depends(_require_admin)])
 async def bootstrap_database(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
@@ -2290,7 +2297,10 @@ async def bootstrap_database(
 
     async def _run():
         global _bootstrap_running
-        _bootstrap_running = True
+        async with _bootstrap_lock:
+            if _bootstrap_running:
+                return
+            _bootstrap_running = True
         try:
             from app.workers.tasks import run_scrape_task, run_scoring_task
             logger.info("[BOOTSTRAP] Starting full pipeline on empty database")
@@ -2317,7 +2327,7 @@ async def bootstrap_database(
     }
 
 
-@router.get("/admin/bootstrap/status")
+@router.get("/admin/bootstrap/status", dependencies=[Depends(_require_admin)])
 def bootstrap_status(db: Session = Depends(get_db)):
     """Check whether a bootstrap is running and how many apps are in the DB."""
     return {
@@ -2328,7 +2338,7 @@ def bootstrap_status(db: Session = Depends(get_db)):
     }
 
 
-@router.get("/admin/discovery/metrics")
+@router.get("/admin/discovery/metrics", dependencies=[Depends(_require_admin)])
 def get_discovery_metrics(db: Session = Depends(get_db)):
     """
     Live discovery engine metrics:
@@ -2344,7 +2354,7 @@ def get_discovery_metrics(db: Session = Depends(get_db)):
     return engine.get_metrics()
 
 
-@router.post("/admin/discovery/run-charts")
+@router.post("/admin/discovery/run-charts", dependencies=[Depends(_require_admin)])
 async def trigger_chart_discovery(
     batch_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -2359,7 +2369,7 @@ async def trigger_chart_discovery(
     return {"status": "ok", "new_ids_queued": new_ids}
 
 
-@router.post("/admin/discovery/run-keywords")
+@router.post("/admin/discovery/run-keywords", dependencies=[Depends(_require_admin)])
 async def trigger_keyword_discovery(db: Session = Depends(get_db)):
     """
     Manually trigger keyword discovery for all 100+ keywords not yet run today.
@@ -2370,7 +2380,7 @@ async def trigger_keyword_discovery(db: Session = Depends(get_db)):
     return {"status": "ok", "new_ids_queued": new_ids}
 
 
-@router.post("/admin/discovery/process-queue")
+@router.post("/admin/discovery/process-queue", dependencies=[Depends(_require_admin)])
 async def trigger_queue_processing(
     batch_size: int = Query(25, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -2385,7 +2395,7 @@ async def trigger_queue_processing(
     return {"status": "ok", "apps_scraped": scraped}
 
 
-@router.post("/scrape/all")
+@router.post("/scrape/all", dependencies=[Depends(_require_admin)])
 async def scrape_all_apps(db: Session = Depends(get_db)):
     from app.workers.tasks import ScraperWorker
     
@@ -2408,7 +2418,7 @@ async def scrape_all_apps(db: Session = Depends(get_db)):
         await worker.cleanup()
 
 
-@router.post("/apps/{app_id}/refresh")
+@router.post("/apps/{app_id}/refresh", dependencies=[Depends(_require_admin)])
 async def scrape_single_app(app_id: int, db: Session = Depends(get_db)):
     from app.workers.tasks import ScraperWorker
 
@@ -2449,7 +2459,7 @@ async def scrape_single_app(app_id: int, db: Session = Depends(get_db)):
 # Scheduler status & control
 # ---------------------------------------------------------------------------
 
-@router.get("/scheduler/status")
+@router.get("/scheduler/status", dependencies=[Depends(_require_admin)])
 def get_scheduler_status():
     """Return the current state of the scheduler and all registered jobs."""
     from app.workers.scheduler import scheduler
@@ -2469,7 +2479,7 @@ def get_scheduler_status():
     }
 
 
-@router.post("/scheduler/jobs/{job_id}/trigger")
+@router.post("/scheduler/jobs/{job_id}/trigger", dependencies=[Depends(_require_admin)])
 async def trigger_job_now(job_id: str):
     """
     Immediately trigger a scheduled job by its ID.
@@ -3274,19 +3284,33 @@ def get_ad_intelligence_list(
         .all()
     )
 
-    items = []
-    for app, camp_count, max_conf, first_seen, last_seen in rows:
-        networks_for_app = [
-            r[0] for r in db.query(models.AdCampaign.network)
-            .filter(models.AdCampaign.app_id == app.id)
+    app_ids = [app.id for app, *_ in rows]
+
+    # Prefetch networks per app in one query
+    networks_map: dict = {}
+    if app_ids:
+        net_rows = (
+            db.query(models.AdCampaign.app_id, models.AdCampaign.network)
+            .filter(models.AdCampaign.app_id.in_(app_ids))
             .distinct()
             .all()
-        ]
-        active_cr_count = db.query(models.AdCreative).filter(
-            models.AdCreative.app_id == app.id,
-            models.AdCreative.is_active == True,
-        ).count()
+        )
+        for aid, net in net_rows:
+            networks_map.setdefault(aid, []).append(net)
 
+    # Prefetch active creative counts per app in one query
+    creative_map: dict = {}
+    if app_ids:
+        cr_rows = (
+            db.query(models.AdCreative.app_id, sqlfunc.count(models.AdCreative.id))
+            .filter(models.AdCreative.app_id.in_(app_ids), models.AdCreative.is_active == True)
+            .group_by(models.AdCreative.app_id)
+            .all()
+        )
+        creative_map = {aid: cnt for aid, cnt in cr_rows}
+
+    items = []
+    for app, camp_count, max_conf, first_seen, last_seen in rows:
         items.append(AdIntelligenceListItem(
             app_id=app.app_id,
             app_db_id=app.id,
@@ -3294,9 +3318,9 @@ def get_ad_intelligence_list(
             icon_url=app.icon_url,
             primary_category=app.primary_category,
             current_rank=app.current_rank,
-            networks=networks_for_app,
+            networks=networks_map.get(app.id, []),
             active_campaigns=camp_count,
-            active_creatives=active_cr_count,
+            active_creatives=creative_map.get(app.id, 0),
             max_confidence=round(max_conf or 0, 2),
             first_ad_seen=first_seen,
             last_ad_seen=last_seen,
@@ -3397,11 +3421,20 @@ def get_campaigns(
     )
     by_type = {t: c for t, c in type_counts_rows}
 
+    # Batch prefetch blowing_up scores (avoids N+1)
+    bu_app_ids = [app.id for _, app in rows]
+    bu_map = {}
+    if bu_app_ids:
+        bu_rows = (
+            db.query(models.AppBlowingUpScore)
+            .filter(models.AppBlowingUpScore.app_id.in_(bu_app_ids))
+            .all()
+        )
+        bu_map = {bu.app_id: bu for bu in bu_rows}
+
     items = []
     for event, app in rows:
-        bu = db.query(models.AppBlowingUpScore).filter(
-            models.AppBlowingUpScore.app_id == app.id
-        ).first()
+        bu = bu_map.get(app.id)
         items.append(CampaignTrackingListItem(
             app_id=app.app_id,
             app_db_id=app.id,

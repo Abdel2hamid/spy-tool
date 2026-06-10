@@ -17,7 +17,6 @@ Configuration (via .env):
 import asyncio
 import logging
 import time
-import urllib.parse
 from collections import defaultdict
 from datetime import datetime, timedelta
 from math import log10
@@ -325,17 +324,17 @@ class AppleSignalsCollector:
         Search iTunes for `keyword`, return signals:
           {apps_count, dominance_score, top_app_reviews, top_app_rating, top_app_name}
         """
-        encoded = urllib.parse.quote_plus(keyword)
-        url = (
-            f"https://itunes.apple.com/search"
-            f"?term={encoded}&media=software&limit={limit}&country=us"
-        )
+        from app.services.apple_http_client import apple_fetch_json, ITUNES_SEARCH_URL
+
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                r = await client.get(url)
-                if not r.is_success:
-                    return {}
-                data = r.json()
+            data = await asyncio.to_thread(
+                apple_fetch_json,
+                ITUNES_SEARCH_URL,
+                params={"term": keyword, "media": "software", "limit": limit, "country": "us"},
+                timeout=15,
+            )
+            if not data:
+                return {}
         except Exception as e:
             logger.warning(f"Apple signals fetch failed for '{keyword}': {e}")
             return {}

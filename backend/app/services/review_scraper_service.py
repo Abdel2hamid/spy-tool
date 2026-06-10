@@ -58,18 +58,24 @@ class ReviewScraperService:
             logger.error(f"[ReviewScraper] Failed fetching reviews for app {app_id}: {exc}")
             return 0
 
+        # Pre-fetch existing review_ids in one query (avoids N+1)
+        candidate_ids = [str(rv.get("review_id")) for rv in reviews_data if rv.get("review_id")]
+        existing_ids = set()
+        if candidate_ids:
+            existing_ids = {
+                row[0] for row in
+                self.db.query(Review.review_id)
+                .filter(Review.review_id.in_(candidate_ids))
+                .all()
+            }
+
         new_count = 0
         for rv in reviews_data:
             review_id = rv.get("review_id")
             if not review_id:
                 continue
 
-            exists = (
-                self.db.query(Review)
-                .filter(Review.review_id == str(review_id))
-                .first()
-            )
-            if exists:
+            if str(review_id) in existing_ids:
                 continue
 
             review = Review(

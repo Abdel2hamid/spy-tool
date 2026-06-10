@@ -1625,19 +1625,19 @@ export interface CampaignTrackingListResponse {
 // ===========================================================================
 
 export async function getAppMetrics(appId: number, days = 30): Promise<MetricSnapshotHistory> {
-  const res = await fetch(`${API_BASE}/apps/${appId}/metrics?days=${days}`);
+  const res = await fetch(`${API_BASE}/apps/${appId}/metrics?days=${days}`, { cache: 'no-store' });
   if (!res.ok) throw new Error(`Failed to fetch metrics: ${res.status}`);
   return res.json();
 }
 
 export async function getAppAdIntelligence(appId: number): Promise<AppAdIntelligence> {
-  const res = await fetch(`${API_BASE}/apps/${appId}/ads`);
+  const res = await fetch(`${API_BASE}/apps/${appId}/ads`, { cache: 'no-store' });
   if (!res.ok) throw new Error(`Failed to fetch ad intelligence: ${res.status}`);
   return res.json();
 }
 
 export async function scanAppAds(appId: number): Promise<{ status: string; creatives_upserted: number; campaigns_upserted: number }> {
-  const res = await fetch(`${API_BASE}/apps/${appId}/ads/scan`, { method: 'POST' });
+  const res = await fetch(`${API_BASE}/apps/${appId}/ads/scan`, { method: 'POST', cache: 'no-store' });
   if (!res.ok) throw new Error(`Ad scan failed: ${res.status}`);
   return res.json();
 }
@@ -1653,13 +1653,13 @@ export async function getAdIntelligenceList(params: {
   if (params.active_only !== undefined) p.set('active_only', String(params.active_only));
   if (params.skip !== undefined) p.set('skip', String(params.skip));
   if (params.limit !== undefined) p.set('limit', String(params.limit));
-  const res = await fetch(`${API_BASE}/ads?${p}`);
+  const res = await fetch(`${API_BASE}/ads?${p}`, { cache: 'no-store' });
   if (!res.ok) throw new Error(`Failed to fetch ad intelligence list: ${res.status}`);
   return res.json();
 }
 
 export async function getAppGrowthEvents(appId: number, activeOnly = false): Promise<AppGrowthEvents> {
-  const res = await fetch(`${API_BASE}/apps/${appId}/growth-events?active_only=${activeOnly}`);
+  const res = await fetch(`${API_BASE}/apps/${appId}/growth-events?active_only=${activeOnly}`, { cache: 'no-store' });
   if (!res.ok) throw new Error(`Failed to fetch growth events: ${res.status}`);
   return res.json();
 }
@@ -1677,7 +1677,7 @@ export async function getCampaignTrackingList(params: {
   if (params.min_confidence !== undefined) p.set('min_confidence', String(params.min_confidence));
   if (params.skip !== undefined) p.set('skip', String(params.skip));
   if (params.limit !== undefined) p.set('limit', String(params.limit));
-  const res = await fetch(`${API_BASE}/campaigns?${p}`);
+  const res = await fetch(`${API_BASE}/campaigns?${p}`, { cache: 'no-store' });
   if (!res.ok) throw new Error(`Failed to fetch campaigns: ${res.status}`);
   return res.json();
 }

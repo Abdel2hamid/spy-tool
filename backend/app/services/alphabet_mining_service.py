@@ -53,28 +53,23 @@ def _itunes_search_enrichment(keyword: str, app_store_id: str) -> Dict:
     search_volume, difficulty, app_rank, traffic_score.
     Does NOT call Google Trends (too slow per-keyword at scale).
     """
-    import json
     import math
-    import urllib.parse
-    import urllib.request
+    from app.services.apple_http_client import apple_fetch_json, ITUNES_SEARCH_URL
 
-    _URL = "https://itunes.apple.com/search"
     _TIMEOUT = 12
 
-    params = urllib.parse.urlencode({
-        "term": keyword,
-        "country": "us",
-        "entity": "software",
-        "limit": 50,
-        "lang": "en_us",
-    })
-    url = f"{_URL}?{params}"
-    req = urllib.request.Request(url, headers={"User-Agent": "AppStoreSpy/1.0"})
-
-    try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
-            data = json.loads(resp.read())
-    except Exception:
+    data = apple_fetch_json(
+        ITUNES_SEARCH_URL,
+        params={
+            "term": keyword,
+            "country": "us",
+            "entity": "software",
+            "limit": 50,
+            "lang": "en_us",
+        },
+        timeout=_TIMEOUT,
+    )
+    if not data:
         return {
             "search_volume": 0, "difficulty": 0.0, "app_rank": None,
             "traffic_score": 0.0, "competitor_rank": None,

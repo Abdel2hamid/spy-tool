@@ -18,13 +18,12 @@ every queued app in priority order: newer + higher-priority apps first.
 """
 
 import asyncio
-import json
 import logging
 import math
-import urllib.parse
-import urllib.request
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
+
+from app.services.apple_http_client import apple_fetch_json, ITUNES_SEARCH_URL, ITUNES_LOOKUP_URL
 
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -197,9 +196,6 @@ MASS_KEYWORDS: List[str] = _build_mass_keywords()
 # Engine
 # ---------------------------------------------------------------------------
 
-_UA = "Mozilla/5.0 (compatible; AppStoreCrawler/2.0)"
-
-
 class DiscoveryEngine:
     """
     Orchestrates large-scale App Store app ID discovery and queue management.
@@ -312,9 +308,9 @@ class DiscoveryEngine:
         else:
             url = f"https://itunes.apple.com/{country}/rss/{chart_slug}/limit=200/json"
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": _UA})
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+            data = apple_fetch_json(url, timeout=20)
+            if not data:
+                return []
             entries = data.get("feed", {}).get("entry", [])
             return [
                 str(e["id"]["attributes"]["im:id"])
@@ -329,14 +325,13 @@ class DiscoveryEngine:
     def _fetch_keyword(keyword: str) -> List[str]:
         """iTunes Search API → list of app_id strings (up to 200)."""
         try:
-            encoded = urllib.parse.quote(keyword)
-            url = (
-                f"https://itunes.apple.com/search"
-                f"?term={encoded}&entity=software&limit=200&country=us"
+            data = apple_fetch_json(
+                ITUNES_SEARCH_URL,
+                params={"term": keyword, "entity": "software", "limit": 200, "country": "us"},
+                timeout=15,
             )
-            req = urllib.request.Request(url, headers={"User-Agent": _UA})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+            if not data:
+                return []
             return [
                 str(r["trackId"])
                 for r in data.get("results", [])
@@ -354,14 +349,13 @@ class DiscoveryEngine:
         caller can assign higher queue priority to recently released apps.
         """
         try:
-            encoded = urllib.parse.quote(keyword)
-            url = (
-                f"https://itunes.apple.com/search"
-                f"?term={encoded}&entity=software&limit=200&country=us"
+            data = apple_fetch_json(
+                ITUNES_SEARCH_URL,
+                params={"term": keyword, "entity": "software", "limit": 200, "country": "us"},
+                timeout=15,
             )
-            req = urllib.request.Request(url, headers={"User-Agent": _UA})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+            if not data:
+                return []
             results = []
             for r in data.get("results", []):
                 if not r.get("trackId"):
@@ -393,14 +387,13 @@ class DiscoveryEngine:
         Single HTTP call — no extra API cost vs the basic version.
         """
         try:
-            encoded = urllib.parse.quote(keyword)
-            url = (
-                f"https://itunes.apple.com/search"
-                f"?term={encoded}&entity=software&limit=200&country=us"
+            data = apple_fetch_json(
+                ITUNES_SEARCH_URL,
+                params={"term": keyword, "entity": "software", "limit": 200, "country": "us"},
+                timeout=15,
             )
-            req = urllib.request.Request(url, headers={"User-Agent": _UA})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+            if not data:
+                return []
             results = []
             for r in data.get("results", []):
                 if not r.get("trackId"):
@@ -460,13 +453,13 @@ class DiscoveryEngine:
     def _fetch_developer_apps(developer_id: str) -> List[str]:
         """iTunes artist lookup → all app IDs by that developer (up to 200)."""
         try:
-            url = (
-                f"https://itunes.apple.com/lookup"
-                f"?id={developer_id}&entity=software&limit=200"
+            data = apple_fetch_json(
+                ITUNES_LOOKUP_URL,
+                params={"id": developer_id, "entity": "software", "limit": 200},
+                timeout=15,
             )
-            req = urllib.request.Request(url, headers={"User-Agent": _UA})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+            if not data:
+                return []
             return [
                 str(r["trackId"])
                 for r in data.get("results", [])

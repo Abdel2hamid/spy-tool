@@ -24,18 +24,16 @@ stale keyword_gap flag without an extra API call.
 
 from __future__ import annotations
 
-import json
 import logging
 import time
-import urllib.parse
-import urllib.request
 from typing import Optional, Tuple
 
 from sqlalchemy.orm import Session
 
+from app.services.apple_http_client import apple_fetch_json, ITUNES_SEARCH_URL
+
 logger = logging.getLogger(__name__)
 
-_ITUNES_SEARCH = "https://itunes.apple.com/search"
 _REQUEST_DELAY = 0.3
 _TIMEOUT = 12
 _MAX_KEYWORDS = 50    # max keywords to analyse per run
@@ -52,20 +50,19 @@ def _find_ranks(keyword: str, app_store_id: str) -> Tuple[Optional[int], Optiona
     app_rank       — 1-based position of our app; None if not in top-20.
     competitor_rank — best position of any OTHER app in top-10; None if empty.
     """
-    params = urllib.parse.urlencode({
-        "term": keyword,
-        "country": "us",
-        "entity": "software",
-        "limit": 20,
-        "lang": "en_us",
-    })
-    url = f"{_ITUNES_SEARCH}?{params}"
-    req = urllib.request.Request(url, headers={"User-Agent": "AppStoreSpy/1.0"})
-    try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
-            data = json.loads(resp.read())
-    except Exception as exc:
-        logger.debug(f"[GapAnalysis] iTunes search failed for {keyword!r}: {exc}")
+    data = apple_fetch_json(
+        ITUNES_SEARCH_URL,
+        params={
+            "term": keyword,
+            "country": "us",
+            "entity": "software",
+            "limit": 20,
+            "lang": "en_us",
+        },
+        timeout=_TIMEOUT,
+    )
+    if not data:
+        logger.debug(f"[GapAnalysis] iTunes search failed for {keyword!r}")
         return None, None
 
     results = data.get("results", [])

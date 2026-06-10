@@ -17,19 +17,15 @@ Public interface is unchanged — callers are unaffected.
 """
 
 import asyncio
-import json
 import logging
-import urllib.parse
-import urllib.request
 from datetime import datetime, timezone
 from typing import Dict, List
 
+from app.services.apple_http_client import apple_fetch_json, ITUNES_SEARCH_URL, ITUNES_LOOKUP_URL
+
 logger = logging.getLogger(__name__)
 
-_ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
-_ITUNES_LOOKUP_URL = "https://itunes.apple.com/lookup"
-_DEFAULT_TIMEOUT = 12  # seconds for urllib calls
-_USER_AGENT = "AppStoreSpy/1.0"
+_DEFAULT_TIMEOUT = 12  # seconds for apple_fetch_json calls
 
 
 class AppStoreSearchScraper:
@@ -93,24 +89,16 @@ class AppStoreSearchScraper:
                 ]
             }
         """
-        for attempt in range(retries + 1):
-            try:
-                return await asyncio.to_thread(
-                    self._search_sync, keyword, country, max_results
-                )
-            except Exception as exc:
-                if attempt < retries:
-                    wait = 2 ** attempt
-                    logger.warning(
-                        f"[search] attempt {attempt + 1} failed for {keyword!r}: "
-                        f"{exc} — retry in {wait}s"
-                    )
-                    await asyncio.sleep(wait)
-                else:
-                    logger.error(
-                        f"[search] all {retries + 1} attempts failed for {keyword!r}: {exc}"
-                    )
-                    return self._empty_result(keyword, country)
+        # Retries are handled by apple_fetch_json internally
+        try:
+            return await asyncio.to_thread(
+                self._search_sync, keyword, country, max_results
+            )
+        except Exception as exc:
+            logger.error(
+                f"[search] failed for {keyword!r}: {exc}"
+            )
+            return self._empty_result(keyword, country)
 
     async def search_many(
         self,
@@ -139,19 +127,21 @@ class AppStoreSearchScraper:
 
     def _search_sync(self, keyword: str, country: str, max_results: int) -> Dict:
         """Blocking iTunes Search API call — run inside asyncio.to_thread()."""
-        params = urllib.parse.urlencode({
-            "term": keyword.strip(),
-            "country": country.lower(),
-            "entity": "software",
-            "limit": min(max_results, 200),
-            "lang": "en_us",
-        })
-        url = f"{_ITUNES_SEARCH_URL}?{params}"
         logger.info(f"[search] {keyword!r} / {country}")
 
-        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-            data = json.loads(resp.read())
+        data = apple_fetch_json(
+            ITUNES_SEARCH_URL,
+            params={
+                "term": keyword.strip(),
+                "country": country.lower(),
+                "entity": "software",
+                "limit": min(max_results, 200),
+                "lang": "en_us",
+            },
+            timeout=self._timeout,
+        )
+        if not data:
+            return self._empty_result(keyword, country)
 
         items = data.get("results", [])
         results = []
@@ -185,13 +175,13 @@ class AppStoreSearchScraper:
             return {}
         try:
             ids_param = ",".join(app_ids[:50])
-            url = (
-                f"{_ITUNES_LOOKUP_URL}?id={ids_param}"
-                f"&country={country}&entity=software"
+            data = apple_fetch_json(
+                ITUNES_LOOKUP_URL,
+                params={"id": ids_param, "country": country, "entity": "software"},
+                timeout=_DEFAULT_TIMEOUT,
             )
-            req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-            with urllib.request.urlopen(req, timeout=_DEFAULT_TIMEOUT) as resp:
-                data = json.loads(resp.read())
+            if not data:
+                return {}
             return {
                 str(item["trackId"]): item.get("artworkUrl100", "")
                 for item in data.get("results", [])

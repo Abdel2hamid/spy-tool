@@ -18,21 +18,19 @@ Pipeline
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import time
-import urllib.parse
-import urllib.request
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.services.apple_http_client import apple_fetch_json, ITUNES_SEARCH_URL
+
 logger = logging.getLogger(__name__)
 
-_ITUNES_SEARCH = "https://itunes.apple.com/search"
 _REQUEST_DELAY = 0.35
 _TIMEOUT = 12
 _MAX_SEEDS = 10
@@ -51,17 +49,20 @@ _STOP_WORDS = frozenset({
 # ---------------------------------------------------------------------------
 
 def _itunes_search(keyword: str, limit: int = 20) -> List[Dict]:
-    params = urllib.parse.urlencode({
-        "term": keyword,
-        "country": "us",
-        "entity": "software",
-        "limit": limit,
-        "lang": "en_us",
-    })
-    url = f"{_ITUNES_SEARCH}?{params}"
-    req = urllib.request.Request(url, headers={"User-Agent": "AppStoreSpy/1.0"})
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
-        return json.loads(resp.read()).get("results", [])
+    data = apple_fetch_json(
+        ITUNES_SEARCH_URL,
+        params={
+            "term": keyword,
+            "country": "us",
+            "entity": "software",
+            "limit": limit,
+            "lang": "en_us",
+        },
+        timeout=_TIMEOUT,
+    )
+    if not data:
+        return []
+    return data.get("results", [])
 
 
 def _tokenize(text: str) -> List[str]:

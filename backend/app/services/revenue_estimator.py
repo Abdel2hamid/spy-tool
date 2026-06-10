@@ -95,21 +95,25 @@ class RevenueEstimator:
 
     def compute_all(self) -> int:
         """Compute and save revenue estimates for all tracked apps. Returns count updated."""
-        apps = self.db.query(App).filter(
+        from app.utils.batch_utils import iter_batches
+        _BATCH = 200
+        base_q = self.db.query(App).filter(
             App.estimated_installs_min > 0
-        ).all()
+        ).order_by(App.id)
         count = 0
-        for app in apps:
-            try:
-                self.compute_and_save(
-                    app,
-                    int(app.estimated_installs_min or 0),
-                    int(app.estimated_installs_max or 0),
-                )
-                count += 1
-            except Exception as exc:
-                logger.warning(f"Revenue estimate failed for app {app.app_id}: {exc}")
-        self.db.commit()
+        for batch in iter_batches(base_q, _BATCH):
+            for app in batch:
+                try:
+                    self.compute_and_save(
+                        app,
+                        int(app.estimated_installs_min or 0),
+                        int(app.estimated_installs_max or 0),
+                    )
+                    count += 1
+                except Exception as exc:
+                    logger.warning(f"Revenue estimate failed for app {app.app_id}: {exc}")
+            self.db.commit()
+            self.db.expire_all()
         logger.info(f"[revenue_estimator] Updated estimates for {count} apps")
         return count
 

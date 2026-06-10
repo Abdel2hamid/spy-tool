@@ -19,11 +19,11 @@ import logging
 import re
 import string
 import urllib.parse
-import urllib.request
-import json
 from datetime import datetime, timezone
 from itertools import product
 from typing import Dict, List, Optional, Set
+
+from app.services.apple_http_client import apple_fetch_json
 
 from sqlalchemy.orm import Session
 
@@ -128,28 +128,7 @@ _STOP_WORDS: Set[str] = {
 
 async def _fetch_json(url: str, timeout: int = 8) -> Optional[dict]:
     """Fetch a JSON URL asynchronously via asyncio thread executor."""
-    def _get():
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-                        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 "
-                        "Mobile/15E148 Safari/604.1"
-                    ),
-                    "Accept": "application/json",
-                    "Accept-Language": "en-US,en;q=0.9",
-                },
-            )
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except Exception as exc:
-            logger.debug(f"_fetch_json error for {url[:80]}: {exc}")
-            return None
-
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _get)
+    return await asyncio.to_thread(apple_fetch_json, url, timeout=timeout)
 
 
 # ---------------------------------------------------------------------------

@@ -1,3 +1,6 @@
+import logging
+import secrets
+
 from pydantic_settings import BaseSettings
 from typing import Optional
 
@@ -28,12 +31,30 @@ class Settings(BaseSettings):
     dataforseo_password: str = ""
 
     # ── JWT / Auth ────────────────────────────────────────────────────────
-    jwt_secret: str = "change-me-in-production-use-a-long-random-string"
+    jwt_secret: str = ""
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 1440  # 24 hours
+
+    # ── CORS ──────────────────────────────────────────────────────────────
+    # Comma-separated allowed origins. Set via CORS_ORIGINS env var.
+    # e.g. "https://myapp.up.railway.app,http://localhost:3000"
+    cors_origins: str = "http://localhost:3000"
+
+    # ── Admin API protection ──────────────────────────────────────────────
+    # Set ADMIN_TOKEN env var. Admin endpoints require X-Admin-Token header.
+    admin_token: str = ""
 
     class Config:
         env_file = ".env"
 
 
 settings = Settings()
+
+# Warn loudly if JWT secret is the insecure default
+if not settings.jwt_secret:
+    _generated = secrets.token_urlsafe(48)
+    logging.getLogger(__name__).warning(
+        "JWT_SECRET not set! Using random ephemeral secret — "
+        "tokens will NOT survive restarts. Set JWT_SECRET env var."
+    )
+    settings.jwt_secret = _generated

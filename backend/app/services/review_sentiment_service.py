@@ -145,29 +145,41 @@ class ReviewSentimentService:
     def update_app_analytics(self, app_id: int) -> Optional[Dict]:
         """
         Recompute sentiment + growth metrics for *app_id* and upsert into
-        app_analytics.  Returns the metrics dict or None if no reviews exist.
+        app_analytics using SQL aggregation (no ORM object loading).
         """
         now = datetime.utcnow()
         cutoff_30d = now - timedelta(days=30)
         cutoff_90d = now - timedelta(days=90)
 
-        all_reviews = (
-            self.db.query(Review)
-            .filter(Review.app_id == app_id, Review.sentiment.isnot(None))
-            .all()
-        )
-        if not all_reviews:
+        # Single SQL aggregate — replaces loading all Review ORM objects
+        row = self.db.execute(text("""
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE sentiment = 'positive') AS positives,
+                COUNT(*) FILTER (WHERE sentiment = 'negative') AS negatives,
+                COUNT(*) FILTER (WHERE date >= :c30) AS new_30d,
+                COUNT(*) FILTER (WHERE date >= :c90) AS new_90d,
+                AVG(rating) FILTER (WHERE date >= :c30) AS avg_rating_recent_30,
+                AVG(rating) FILTER (WHERE date < :c30) AS avg_rating_older_30,
+                AVG(rating) FILTER (WHERE date >= :c90) AS avg_rating_recent_90,
+                AVG(rating) FILTER (WHERE date < :c90) AS avg_rating_older_90
+            FROM reviews
+            WHERE app_id = :app_id AND sentiment IS NOT NULL
+        """), {"app_id": app_id, "c30": cutoff_30d, "c90": cutoff_90d}).first()
+
+        if not row or row.total == 0:
             return None
 
-        # --- Sentiment aggregation ---
-        scores = [
-            (1.0 if r.sentiment == "positive" else 0.5 if r.sentiment == "neutral" else 0.0)
-            for r in all_reviews
-        ]
-        sentiment_score = round(sum(scores) / len(scores), 4) if scores else 0.5
+        total = row.total
+        positives = row.positives
+        negatives = row.negatives
 
-        positives = sum(1 for r in all_reviews if r.sentiment == "positive")
-        negatives = sum(1 for r in all_reviews if r.sentiment == "negative")
+        # Sentiment score: positive=1.0, neutral=0.5, negative=0.0
+        neutrals = total - positives - negatives
+        sentiment_score = round(
+            (positives * 1.0 + neutrals * 0.5) / total, 4
+        ) if total else 0.5
+
         if positives >= negatives * 2:
             sentiment_label = "positive"
         elif negatives >= positives * 2:
@@ -175,39 +187,23 @@ class ReviewSentimentService:
         else:
             sentiment_label = "mixed"
 
-        # --- Review growth ---
-        def _count_since(cutoff):
-            return sum(
-                1 for r in all_reviews if r.date and r.date.replace(tzinfo=None) >= cutoff
-            )
-
-        new_30d = _count_since(cutoff_30d)
-        new_90d = _count_since(cutoff_90d)
-        before_30d = len(all_reviews) - new_30d
-        before_90d = len(all_reviews) - new_90d
-
+        # Review growth
+        new_30d = row.new_30d
+        new_90d = row.new_90d
+        before_30d = total - new_30d
+        before_90d = total - new_90d
         review_growth_30d = round(new_30d / before_30d * 100, 2) if before_30d > 0 else 0.0
         review_growth_90d = round(new_90d / before_90d * 100, 2) if before_90d > 0 else 0.0
 
-        # --- Rating change ---
-        def _avg_rating(reviews_subset):
-            ratings = [r.rating for r in reviews_subset if r.rating is not None]
-            return sum(ratings) / len(ratings) if ratings else None
+        # Rating change
+        avg_recent_30 = row.avg_rating_recent_30
+        avg_older_30 = row.avg_rating_older_30
+        avg_recent_90 = row.avg_rating_recent_90
+        avg_older_90 = row.avg_rating_older_90
+        rating_change_30d = round(float(avg_recent_30) - float(avg_older_30), 4) if (avg_recent_30 and avg_older_30) else 0.0
+        rating_change_90d = round(float(avg_recent_90) - float(avg_older_90), 4) if (avg_recent_90 and avg_older_90) else 0.0
 
-        recent_30d = [r for r in all_reviews if r.date and r.date.replace(tzinfo=None) >= cutoff_30d]
-        older_30d  = [r for r in all_reviews if r.date and r.date.replace(tzinfo=None) < cutoff_30d]
-        recent_90d = [r for r in all_reviews if r.date and r.date.replace(tzinfo=None) >= cutoff_90d]
-        older_90d  = [r for r in all_reviews if r.date and r.date.replace(tzinfo=None) < cutoff_90d]
-
-        avg_recent_30 = _avg_rating(recent_30d)
-        avg_older_30  = _avg_rating(older_30d)
-        avg_recent_90 = _avg_rating(recent_90d)
-        avg_older_90  = _avg_rating(older_90d)
-
-        rating_change_30d = round(avg_recent_30 - avg_older_30, 4) if (avg_recent_30 and avg_older_30) else 0.0
-        rating_change_90d = round(avg_recent_90 - avg_older_90, 4) if (avg_recent_90 and avg_older_90) else 0.0
-
-        # --- Upsert AppAnalytics ---
+        # Upsert AppAnalytics
         analytics = (
             self.db.query(AppAnalytics)
             .filter(AppAnalytics.app_id == app_id)
@@ -274,7 +270,7 @@ class ReviewSentimentService:
         ]
 
         updated = 0
-        for app_id in stale_app_ids:
+        for i, app_id in enumerate(stale_app_ids):
             try:
                 result = self.update_app_analytics(app_id)
                 if result:
@@ -282,6 +278,8 @@ class ReviewSentimentService:
             except Exception as exc:
                 logger.warning(f"[Sentiment] analytics update failed for app {app_id}: {exc}")
                 self.db.rollback()
+            if (i + 1) % 50 == 0:
+                self.db.expire_all()
 
         logger.info(f"[Sentiment] updated analytics for {updated}/{len(stale_app_ids)} stale apps")
         return updated

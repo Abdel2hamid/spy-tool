@@ -1,13 +1,16 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy.pool import NullPool
 from app.config import settings
 
 engine = create_engine(
     settings.database_url.replace("+asyncpg", ""),
-    poolclass=NullPool,
+    pool_size=15,          # persistent connections
+    max_overflow=25,       # burst capacity (total max = 40)
+    pool_timeout=30,       # wait up to 30s for a connection
+    pool_recycle=1800,     # recycle connections every 30min (Railway closes idle)
+    pool_pre_ping=True,    # verify connection is alive before use
     echo=settings.debug,
-    connect_args={"options": "-c statement_timeout=15000"},  # 15s max per query
+    connect_args={"options": "-c statement_timeout=30000"},  # 30s max per query
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -19,4 +22,5 @@ def get_db():
     try:
         yield db
     finally:
+        db.rollback()
         db.close()

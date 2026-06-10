@@ -26,16 +26,15 @@ Pipeline
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 import re
 import time
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Set, Tuple
+
+from app.services.apple_http_client import apple_fetch_json, ITUNES_SEARCH_URL
 
 from sqlalchemy.orm import Session
 
@@ -131,7 +130,6 @@ class KeywordExtractionService:
         cached   = svc.get_stored(app_id)
     """
 
-    _ITUNES_SEARCH = "https://itunes.apple.com/search"
     _REQUEST_DELAY = 0.35       # polite delay between iTunes requests (s)
     _MAX_KEYWORDS = 120         # candidates to enrich
     _TIMEOUT = 12               # HTTP timeout per request (s)
@@ -403,17 +401,18 @@ class KeywordExtractionService:
     def _itunes_search(
         self, keyword: str, country: str = "us", limit: int = 50
     ) -> Dict:
-        params = urllib.parse.urlencode({
-            "term": keyword,
-            "country": country,
-            "entity": "software",
-            "limit": limit,
-            "lang": "en_us",
-        })
-        url = f"{self._ITUNES_SEARCH}?{params}"
-        req = urllib.request.Request(url, headers={"User-Agent": "AppStoreSpy/1.0"})
-        with urllib.request.urlopen(req, timeout=self._TIMEOUT) as resp:
-            return json.loads(resp.read())
+        data = apple_fetch_json(
+            ITUNES_SEARCH_URL,
+            params={
+                "term": keyword,
+                "country": country,
+                "entity": "software",
+                "limit": limit,
+                "lang": "en_us",
+            },
+            timeout=self._TIMEOUT,
+        )
+        return data or {}
 
     # ── Score heuristics ──────────────────────────────────────────────────────
 

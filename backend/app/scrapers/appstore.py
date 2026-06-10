@@ -1,9 +1,9 @@
 import asyncio
-import urllib.parse
-import urllib.request
 import json
 from typing import Any, List, Dict, Optional
 import logging
+
+from app.services.apple_http_client import apple_fetch_json, ITUNES_SEARCH_URL
 
 # Playwright is an optional dev dependency — only needed for keyword rank tracking.
 # The core scraping paths (iTunes API, RSS feeds) work without it.
@@ -82,14 +82,13 @@ class AppStoreScraper:
         """Blocking iTunes Search API call — always call via asyncio.to_thread."""
         results = []
         try:
-            encoded = urllib.parse.quote(keyword)
-            url = f"https://itunes.apple.com/search?term={encoded}&entity=software&limit={limit}&country=us"
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; AppStoreSpy/1.0)"},
+            data = apple_fetch_json(
+                ITUNES_SEARCH_URL,
+                params={"term": keyword, "entity": "software", "limit": limit, "country": "us"},
+                timeout=15,
             )
-            with urllib.request.urlopen(req, timeout=15) as response:
-                data = json.loads(response.read().decode("utf-8"))
+            if not data:
+                return results
 
             for i, app in enumerate(data.get("results", [])):
                 track_id = app.get("trackId")
@@ -130,12 +129,9 @@ class AppStoreScraper:
 
         results = []
         try:
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; AppStoreSpy/1.0)"},
-            )
-            with urllib.request.urlopen(req, timeout=20) as response:
-                data = json.loads(response.read().decode("utf-8"))
+            data = apple_fetch_json(url, timeout=20)
+            if not data:
+                return results
 
             entries = data.get("feed", {}).get("entry", [])
             for i, entry in enumerate(entries):

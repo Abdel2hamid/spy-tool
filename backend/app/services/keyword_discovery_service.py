@@ -38,11 +38,8 @@ rank_gap_score:
 
 from __future__ import annotations
 
-import json
 import logging
 import time
-import urllib.parse
-import urllib.request
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
 
@@ -50,6 +47,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.services.apple_autocomplete_service import fetch_autocomplete
+from app.services.apple_http_client import apple_fetch_json, ITUNES_SEARCH_URL
 from app.services.keyword_trends_service import fetch_trend_score
 
 logger = logging.getLogger(__name__)
@@ -63,23 +61,23 @@ _SUFFIXES = ["app", "download"]
 # ---------------------------------------------------------------------------
 # iTunes Search API
 # ---------------------------------------------------------------------------
-_ITUNES_SEARCH = "https://itunes.apple.com/search"
 _REQUEST_DELAY = 0.35   # polite delay between iTunes calls (s)
 _TIMEOUT = 12
 
 
 def _itunes_search(keyword: str, limit: int = 50) -> Dict:
-    params = urllib.parse.urlencode({
-        "term": keyword,
-        "country": "us",
-        "entity": "software",
-        "limit": limit,
-        "lang": "en_us",
-    })
-    url = f"{_ITUNES_SEARCH}?{params}"
-    req = urllib.request.Request(url, headers={"User-Agent": "AppStoreSpy/1.0"})
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
-        return json.loads(resp.read())
+    data = apple_fetch_json(
+        ITUNES_SEARCH_URL,
+        params={
+            "term": keyword,
+            "country": "us",
+            "entity": "software",
+            "limit": limit,
+            "lang": "en_us",
+        },
+        timeout=_TIMEOUT,
+    )
+    return data or {}
 
 
 def _opportunity_score(

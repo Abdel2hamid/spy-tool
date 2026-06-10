@@ -165,15 +165,19 @@ class DownloadEstimator:
 
     def compute_all(self) -> int:
         """Compute and save estimates for all tracked apps. Returns count updated."""
-        apps = self.db.query(App).all()
+        from app.utils.batch_utils import iter_batches
+        _BATCH = 200
+        base_q = self.db.query(App).order_by(App.id)
         count = 0
-        for app in apps:
-            try:
-                self.compute_and_save(app)
-                count += 1
-            except Exception as exc:
-                logger.warning(f"[download_estimator] Failed for app {app.app_id}: {exc}")
-        self.db.commit()
+        for batch in iter_batches(base_q, _BATCH):
+            for app in batch:
+                try:
+                    self.compute_and_save(app)
+                    count += 1
+                except Exception as exc:
+                    logger.warning(f"[download_estimator] Failed for app {app.app_id}: {exc}")
+            self.db.commit()
+            self.db.expire_all()
         logger.info(f"[download_estimator] Updated estimates for {count} apps")
         return count
 

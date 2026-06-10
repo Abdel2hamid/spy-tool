@@ -39,46 +39,40 @@ export default function DashboardClient() {
 
   function fetchStats() {
     setLoadingStats(true);
-    getDashboardStats()
+    return getDashboardStats()
       .then(setStats)
-      .catch(() => {})
+      .catch((e) => console.error('[Dashboard] stats fetch failed:', e))
       .finally(() => setLoadingStats(false));
   }
 
   function fetchTrending() {
     setLoadingTrending(true);
-    getTrendingApps(5)
+    return getTrendingApps(5)
       .then(setTrendingApps)
-      .catch(() => {})
+      .catch((e) => console.error('[Dashboard] trending fetch failed:', e))
       .finally(() => setLoadingTrending(false));
   }
 
   function fetchOpportunity() {
     setLoadingOpportunity(true);
-    getOpportunityOfDay()
+    return getOpportunityOfDay()
       .then(setOpportunity)
-      .catch(() => {})
+      .catch((e) => console.error('[Dashboard] opportunity fetch failed:', e))
       .finally(() => setLoadingOpportunity(false));
   }
 
   function fetchKeywords() {
     setLoadingKeywords(true);
-    getDashboardKeywordHighlights()
+    return getDashboardKeywordHighlights()
       .then(setKeywords)
-      .catch(() => {})
+      .catch((e) => console.error('[Dashboard] keywords fetch failed:', e))
       .finally(() => setLoadingKeywords(false));
   }
 
   function fetchAll(isRefresh = false) {
     if (isRefresh) setRefreshing(true);
-    fetchStats();
-    fetchTrending();
-    fetchOpportunity();
-    fetchKeywords();
-    if (isRefresh) {
-      // clear refreshing spinner once all 4 done — simplest: use a short delay
-      setTimeout(() => setRefreshing(false), 1500);
-    }
+    Promise.all([fetchStats(), fetchTrending(), fetchOpportunity(), fetchKeywords()])
+      .finally(() => { if (isRefresh) setRefreshing(false); });
   }
 
   useEffect(() => {

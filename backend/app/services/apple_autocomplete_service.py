@@ -9,19 +9,14 @@ Usage::
     # ["youtube music", "youtube movies", "youtube music app", ...]
 """
 
-import json
 import logging
-import urllib.parse
-import urllib.request
 from typing import List
+
+from app.services.apple_http_client import apple_fetch_json, ITUNES_HINTS_URL
 
 logger = logging.getLogger(__name__)
 
-_HINTS_URL = (
-    "https://search.itunes.apple.com/WebObjects/MZSearchHints.woa/wa/hints"
-)
 _TIMEOUT = 10
-_USER_AGENT = "AppStoreSpy/1.0"
 
 
 def fetch_autocomplete(keyword: str, country: str = "us") -> List[str]:
@@ -36,19 +31,16 @@ def fetch_autocomplete(keyword: str, country: str = "us") -> List[str]:
     if not keyword or len(keyword.strip()) < 2:
         return []
 
-    params = urllib.parse.urlencode({
-        "term": keyword.strip(),
-        "media": "software",
-        "country": country,
-    })
-    url = f"{_HINTS_URL}?{params}"
-
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
-            data = json.loads(resp.read())
-    except Exception as exc:
-        logger.debug(f"[Autocomplete] fetch failed for {keyword!r}: {exc}")
+    data = apple_fetch_json(
+        ITUNES_HINTS_URL,
+        params={
+            "term": keyword.strip(),
+            "media": "software",
+            "country": country,
+        },
+        timeout=_TIMEOUT,
+    )
+    if not data:
         return []
 
     # Apple returns {"hints": [{"term": "youtube music"}, ...]}

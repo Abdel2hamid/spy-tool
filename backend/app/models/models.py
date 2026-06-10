@@ -195,6 +195,9 @@ class App(Base):
         Index("idx_app_freshness", "freshness_score"),
         Index("idx_app_developer", "developer"),
         Index("idx_app_primary_category", "primary_category"),
+        # Scalable ingestion pipeline queries
+        Index("idx_app_ingestion", "ingestion_stage", "sync_tier"),
+        Index("idx_app_developer_id", "developer_id"),
     )
 
 
@@ -216,6 +219,7 @@ class Ranking(Base):
     __table_args__ = (
         Index("idx_ranking_app_date", "app_id", "recorded_at"),
         Index("idx_ranking_chart_date", "chart_type", "recorded_at"),
+        Index("idx_ranking_category_date", "category_id", "recorded_at"),
     )
 
 
@@ -244,6 +248,8 @@ class Review(Base):
 
     __table_args__ = (
         Index("idx_review_app_date", "app_id", "date"),
+        Index("idx_review_app_sentiment", "app_id", "sentiment"),
+        Index("idx_review_app_rating", "app_id", "rating"),
     )
 
 
@@ -262,6 +268,7 @@ class AppVersion(Base):
 
     __table_args__ = (
         Index("idx_app_version", "app_id", "version"),
+        Index("idx_app_version_date", "app_id", release_date.desc()),
     )
 
 
@@ -347,6 +354,7 @@ class Keyword(Base):
         Index("idx_kw_quality_tier", "quality_tier"),
         Index("idx_kw_canonical", "canonical_term"),
         Index("idx_kw_last_seen", "last_seen_at"),
+        Index("idx_kw_status", "status"),
     )
 
 
@@ -429,6 +437,7 @@ class Opportunity(Base):
     app = relationship("App", back_populates="opportunities")
 
     __table_args__ = (
+        Index("idx_opportunity_app_id", "app_id"),
         Index("idx_opportunity_type", "opportunity_type"),
         Index("idx_opportunity_probability", "success_probability"),
     )

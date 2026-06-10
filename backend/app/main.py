@@ -397,6 +397,24 @@ _MIGRATIONS = [
         UNIQUE(workspace_id, month)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_workspace_usage_ws ON workspace_usage (workspace_id)",
+
+    # Production audit indexes (memory/query optimization)
+    "CREATE INDEX IF NOT EXISTS idx_review_app_sentiment ON reviews (app_id, sentiment)",
+    "CREATE INDEX IF NOT EXISTS idx_review_app_rating ON reviews (app_id, rating)",
+    "CREATE INDEX IF NOT EXISTS idx_app_version_date ON app_versions (app_id, release_date DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_ranking_category_date ON rankings (category_id, recorded_at)",
+    "CREATE INDEX IF NOT EXISTS idx_kw_status ON keywords (status)",
+    "CREATE INDEX IF NOT EXISTS idx_app_ingestion ON apps (ingestion_stage, sync_tier)",
+    "CREATE INDEX IF NOT EXISTS idx_app_developer_id ON apps (developer_id)",
+    "CREATE INDEX IF NOT EXISTS idx_opportunity_app_id ON opportunities (app_id)",
+
+    # Scalability audit indexes (100K apps, 1M keywords)
+    "CREATE INDEX IF NOT EXISTS idx_kw_source ON keywords (keyword_source)",
+    "CREATE INDEX IF NOT EXISTS idx_kss_keyword_country_captured ON keyword_search_snapshots (keyword, country, captured_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_opportunity_app_keyword ON opportunities (app_id, primary_keyword)",
+    "CREATE INDEX IF NOT EXISTS idx_app_last_updated ON apps (last_updated)",
+    "CREATE INDEX IF NOT EXISTS idx_review_review_id ON reviews (review_id)",
+    "CREATE INDEX IF NOT EXISTS idx_rankings_recorded_at ON rankings (recorded_at DESC)",
 ]
 
 
@@ -463,7 +481,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -490,8 +508,9 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
         exc,
     )
     origin = request.headers.get("origin")
+    allowed = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
     headers: dict[str, str] = {}
-    if origin:
+    if origin and origin in allowed:
         headers["Access-Control-Allow-Origin"] = origin
         headers["Access-Control-Allow-Credentials"] = "true"
     return JSONResponse(

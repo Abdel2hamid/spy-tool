@@ -13,42 +13,37 @@ Flow:
 6. Trigger background jobs for new apps (keyword extraction, competitor discovery)
 """
 
-import json
 import logging
 import time
-import urllib.parse
-import urllib.request
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
+from app.services.apple_http_client import apple_fetch_json, ITUNES_SEARCH_URL
+
 logger = logging.getLogger(__name__)
 
-_ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
 _REQUEST_DELAY = 0.1
 _TIMEOUT = 15
 
 
 def _search_itunes(keyword: str, limit: int = 50) -> List[Dict]:
     """Call iTunes Search API and return results."""
-    params = urllib.parse.urlencode({
-        "term": keyword,
-        "country": "us",
-        "entity": "software",
-        "limit": limit,
-        "lang": "en_us",
-    })
-    url = f"{_ITUNES_SEARCH_URL}?{params}"
-    req = urllib.request.Request(url, headers={"User-Agent": "AppStoreSpy/1.0"})
-
-    try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
-            data = json.loads(resp.read())
-            return data.get("results", [])
-    except Exception as e:
-        logger.warning(f"[KeywordSearch] iTunes API failed for '{keyword}': {e}")
+    data = apple_fetch_json(
+        ITUNES_SEARCH_URL,
+        params={
+            "term": keyword,
+            "country": "us",
+            "entity": "software",
+            "limit": limit,
+            "lang": "en_us",
+        },
+        timeout=_TIMEOUT,
+    )
+    if not data:
         return []
+    return data.get("results", [])
 
 
 def _get_or_create_app(db: Session, item: Dict) -> tuple:

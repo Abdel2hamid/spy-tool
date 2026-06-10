@@ -1,6 +1,4 @@
 import asyncio
-import urllib.parse
-import urllib.request
 import json
 import re
 from typing import List, Dict, Optional
@@ -8,27 +6,27 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 import logging
 
+from app.services.apple_http_client import apple_fetch, apple_fetch_json, ITUNES_LOOKUP_URL
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 class AppStoreAppScraper:
-    ITUNES_LOOKUP_URL = "https://itunes.apple.com/lookup"
     APPSTORE_BASE_URL = "https://apps.apple.com"
 
     def __init__(self):
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-        }
+        pass
 
     def _make_request_sync(self, url: str) -> Optional[str]:
         """Synchronous HTTP GET — always call via asyncio.to_thread from async code."""
         try:
-            req = urllib.request.Request(url, headers=self.headers)
-            with urllib.request.urlopen(req, timeout=30) as response:
-                return response.read().decode("utf-8")
+            body = apple_fetch(url, timeout=30, headers={
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            })
+            if body is None:
+                return None
+            return body.decode("utf-8")
         except Exception as e:
             logger.error(f"Request failed for {url}: {e}")
             return None
@@ -37,14 +35,9 @@ class AppStoreAppScraper:
         return await asyncio.to_thread(self._make_request_sync, url)
 
     async def _make_json_request(self, url: str) -> Optional[dict]:
-        content = await self._make_request(url)
-        if not content:
-            return None
-        try:
-            return json.loads(content)
-        except Exception as e:
-            logger.error(f"Failed to parse JSON from {url}: {e}")
-            return None
+        """Fetch JSON from a URL using the shared Apple HTTP client."""
+        data = await asyncio.to_thread(apple_fetch_json, url, timeout=30)
+        return data
 
     async def get_app_details(self, app_id: str, country: str = "us") -> Optional[Dict]:
         """
@@ -52,7 +45,7 @@ class AppStoreAppScraper:
         Returns structured data including name, description, developer, icon,
         screenshots, categories, rating, reviews count, version, dates, etc.
         """
-        url = f"{self.ITUNES_LOOKUP_URL}?id={app_id}&country={country}&entity=software"
+        url = f"{ITUNES_LOOKUP_URL}?id={app_id}&country={country}&entity=software"
         data = await self._make_json_request(url)
 
         if not data or not data.get("results"):
