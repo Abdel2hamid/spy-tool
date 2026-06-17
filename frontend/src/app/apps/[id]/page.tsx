@@ -14,6 +14,7 @@ import {
   Zap, DollarSign, Users, FlaskConical, Sparkles, X as XIcon, Heart, GitCompare, Check
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { useComparison, addToComparison, removeFromComparison } from '@/lib/comparison-store';
 
 type TabType = 'overview' | 'versions' | 'reviews' | 'rankings' | 'analytics' | 'market' | 'gaps' | 'keywords' | 'autopsy';
@@ -1494,6 +1495,28 @@ function KeywordOpportunitiesHighlight({ appId, discoveredInitial }: { appId: nu
 // TopKeywordOpportunitiesTable — Phase-1 opportunities (alphabet+competitor+gap)
 // ---------------------------------------------------------------------------
 
+/** Compact SVG donut ring for inline table cells. */
+function MiniDonut({ value, size = 32, invert = false }: { value: number; size?: number; invert?: boolean }) {
+  const pct = Math.min(Math.max(value / 100, 0), 1);
+  const r = (size - 5) / 2;
+  const circ = 2 * Math.PI * r;
+  const offset = circ * (1 - pct);
+  const effective = invert ? 100 - value : value;
+  const stroke = effective >= 60 ? '#22c55e' : effective >= 35 ? '#f59e0b' : '#ef4444';
+  const txt = effective >= 60 ? '#16a34a' : effective >= 35 ? '#d97706' : '#dc2626';
+  return (
+    <div className="relative mx-auto" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#e5e7eb" strokeWidth={2.5} className="dark:stroke-gray-700" />
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={stroke} strokeWidth={2.5} strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round" />
+      </svg>
+      <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold" style={{ color: txt }}>
+        {Math.round(value)}
+      </span>
+    </div>
+  );
+}
+
 function scoreColor(score: number) {
   if (score >= 70) return 'text-emerald-600 dark:text-emerald-400';
   if (score >= 45) return 'text-amber-600 dark:text-amber-400';
@@ -1591,77 +1614,88 @@ function TopKeywordOpportunitiesTable({ appId }: { appId: number }) {
               <thead>
                 <tr>
                   <th>Keyword</th>
-                  <th className="text-right">Volume</th>
-                  <th className="text-right">Difficulty</th>
-                  <th className="text-right">Trend</th>
+                  <th className="text-center">Popularity</th>
+                  <th className="text-center">Difficulty</th>
+                  <th className="text-center">Chance</th>
+                  <th className="text-center">KEI</th>
+                  <th className="text-right">Est. Installs</th>
                   <th className="text-right">Your Rank</th>
-                  <th className="text-right">Comp. Rank</th>
                   <th className="text-right">Score</th>
                 </tr>
               </thead>
               <tbody>
-                {visibleItems.map((item) => (
-                  <tr key={item.keyword}>
-                    <td>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-gray-900 dark:text-white">
-                          {item.keyword}
+                {visibleItems.map((item) => {
+                  const diff = item.difficulty_v2 || item.difficulty;
+                  const vol = item.volume_score || 0;
+                  return (
+                    <tr key={item.keyword}>
+                      <td>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-gray-900 dark:text-white">
+                            {item.keyword}
+                          </span>
+                          {item.keyword_gap && (
+                            <span className="pill bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400">
+                              gap
+                            </span>
+                          )}
+                          {item.source === 'alphabet' && (
+                            <span className="pill bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300">
+                              A-Z
+                            </span>
+                          )}
+                          {item.source === 'competitor' && (
+                            <span className="pill bg-orange-100 text-orange-700 dark:bg-orange-950/50 dark:text-orange-300">
+                              comp
+                            </span>
+                          )}
+                          {item.trend_direction === 'rising' && (
+                            <span className="text-xs text-emerald-500">↑</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="text-center">
+                        <MiniDonut value={vol} size={32} />
+                      </td>
+                      <td className="text-center">
+                        <MiniDonut value={diff} size={32} invert />
+                      </td>
+                      <td className="text-center">
+                        <MiniDonut value={item.chance_score || 0} size={32} />
+                      </td>
+                      <td className="text-center">
+                        <span className={cn('text-sm font-bold', scoreColor(item.kei || 0))}>
+                          {(item.kei || 0).toFixed(0)}
                         </span>
-                        {item.keyword_gap && (
-                          <span className="pill bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400">
-                            gap
+                      </td>
+                      <td className="text-right text-sm text-gray-600 dark:text-gray-300">
+                        {(item.estimated_installs || 0) > 0
+                          ? `${item.estimated_installs.toFixed(1)}/day`
+                          : <span className="text-gray-400">—</span>
+                        }
+                      </td>
+                      <td className="text-right">
+                        {item.app_rank != null ? (
+                          <span className={cn(
+                            'font-semibold',
+                            item.app_rank <= 5 ? 'text-emerald-600 dark:text-emerald-400' :
+                            item.app_rank <= 20 ? 'text-amber-600 dark:text-amber-400' :
+                            'text-gray-500'
+                          )}>
+                            #{item.app_rank}
                           </span>
+                        ) : (
+                          <span className="text-xs text-gray-400">Not ranked</span>
                         )}
-                        {item.source === 'alphabet' && (
-                          <span className="pill bg-indigo-100 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300">
-                            A–Z
-                          </span>
-                        )}
-                        {item.source === 'competitor' && (
-                          <span className="pill bg-orange-100 text-orange-700 dark:bg-orange-950/50 dark:text-orange-300">
-                            comp
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="text-right text-gray-600 dark:text-gray-300">
-                      {item.search_volume}
-                    </td>
-                    <td className="text-right">
-                      <span className={cn(
-                        'pill',
-                        item.difficulty < 40
-                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400'
-                          : item.difficulty < 70
-                          ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400'
-                          : 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400'
-                      )}>
-                        {item.difficulty.toFixed(0)}
-                      </span>
-                    </td>
-                    <td className={cn('text-right text-sm font-medium', item.trend_direction === 'rising' ? 'text-emerald-600 dark:text-emerald-400' : item.trend_direction === 'declining' ? 'text-red-500 dark:text-red-400' : 'text-gray-500 dark:text-gray-400')}>
-                      {item.trend_direction === 'rising' ? '↑' : item.trend_direction === 'declining' ? '↓' : '→'}
-                      {' '}{item.trend_score.toFixed(0)}
-                    </td>
-                    <td className="text-right text-gray-600 dark:text-gray-300">
-                      {item.app_rank != null ? `#${item.app_rank}` : <span className="text-gray-400">—</span>}
-                    </td>
-                    <td className="text-right">
-                      {item.competitor_rank != null ? (
-                        <span className={cn('font-medium', item.competitor_rank <= 10 ? 'text-red-600 dark:text-red-400' : 'text-gray-500')}>
-                          #{item.competitor_rank}
+                      </td>
+                      <td className="text-right">
+                        <span className={cn('text-base font-bold', scoreColor(item.opportunity_score))}>
+                          {item.opportunity_score.toFixed(0)}
                         </span>
-                      ) : (
-                        <span className="text-gray-400">—</span>
-                      )}
-                    </td>
-                    <td className="text-right">
-                      <span className={cn('text-base font-bold', scoreColor(item.opportunity_score))}>
-                        {item.opportunity_score.toFixed(0)}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -2422,35 +2456,45 @@ function KeywordIntelligenceTab({ appId, initialData }: { appId: number; initial
 function KeywordHistoryChart({ history }: { history: { date: string; best_rank: number; is_sponsored: boolean }[] }) {
   if (history.length === 0) return <p className="text-sm text-gray-400">No history data for this keyword yet.</p>;
 
+  // Recharts needs data in array-of-objects, with rank inverted (lower rank = better = higher on chart)
+  const data = history.map(h => ({
+    date: h.date.slice(5), // "MM-DD"
+    rank: h.best_rank,
+  }));
+
   const ranks = history.map(h => h.best_rank);
   const maxRank = Math.max(...ranks);
   const minRank = Math.min(...ranks);
-  const range = maxRank - minRank || 1;
-  const W = 100;
-  const H = 60;
-  const pts = history.map((h, i) => {
-    const x = (i / (history.length - 1 || 1)) * W;
-    const y = H - ((h.best_rank - minRank) / range) * (H - 8) - 4;
-    return `${x},${y}`;
-  }).join(' ');
 
   return (
     <div className="w-full">
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-16 overflow-visible" preserveAspectRatio="none">
-        <polyline points={pts} fill="none" stroke="#6366f1" strokeWidth="1.5" strokeLinejoin="round" />
-        {history.map((h, i) => {
-          const x = (i / (history.length - 1 || 1)) * W;
-          const y = H - ((h.best_rank - minRank) / range) * (H - 8) - 4;
-          return <circle key={i} cx={x} cy={y} r="1.5" fill={h.is_sponsored ? '#f43f5e' : '#6366f1'} />;
-        })}
-      </svg>
-      <div className="mt-1 flex justify-between text-xs text-gray-400">
-        <span>{history[0]?.date}</span>
-        <span className="text-center text-gray-600 dark:text-gray-400">
-          Current: #{history[history.length - 1]?.best_rank ?? '—'}
-        </span>
-        <span>{history[history.length - 1]?.date}</span>
-      </div>
+      <ResponsiveContainer width="100%" height={180}>
+        <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+          <XAxis dataKey="date" tick={{ fontSize: 10 }} stroke="#9ca3af" />
+          <YAxis
+            reversed
+            domain={[Math.max(minRank - 2, 1), maxRank + 2]}
+            tick={{ fontSize: 10 }}
+            stroke="#9ca3af"
+            width={35}
+            tickFormatter={(v: number) => `#${v}`}
+          />
+          <Tooltip
+            contentStyle={{ fontSize: 12, borderRadius: 8, borderColor: '#e5e7eb' }}
+            formatter={(value: number) => [`#${value}`, 'Rank']}
+            labelFormatter={(label: string) => `Date: ${label}`}
+          />
+          <Line
+            type="monotone"
+            dataKey="rank"
+            stroke="#6366f1"
+            strokeWidth={2}
+            dot={{ r: 3, fill: '#6366f1' }}
+            activeDot={{ r: 5, fill: '#4f46e5' }}
+          />
+        </LineChart>
+      </ResponsiveContainer>
     </div>
   );
 }
@@ -2498,20 +2542,38 @@ function KeywordHistoryPanel({ appId }: { appId: number }) {
         ))}
       </div>
       {loading ? (
-        <div className="h-20 animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />
+        <div className="h-48 animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />
       ) : history && history.history.length > 0 ? (
-        <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-          <div className="mb-2 flex items-center justify-between">
-            <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-              Rank history for &quot;{selected}&quot;
-            </h4>
-            <span className="text-xs text-gray-400">{history.total_days} days</span>
+        <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                &quot;{selected}&quot;
+              </h4>
+              <p className="text-xs text-gray-400">{history.total_days} days of tracking</p>
+            </div>
+            <div className="text-right">
+              {history.current_rank != null ? (
+                <>
+                  <p className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">#{history.current_rank}</p>
+                  {history.history.length >= 2 && (() => {
+                    const prev = history.history[history.history.length - 2]?.best_rank;
+                    const curr = history.current_rank!;
+                    const delta = prev - curr; // positive = improved (rank went down numerically)
+                    if (delta === 0) return <p className="text-xs text-gray-400">No change</p>;
+                    return (
+                      <p className={cn('text-xs font-medium', delta > 0 ? 'text-emerald-500' : 'text-red-500')}>
+                        {delta > 0 ? `↑ ${delta} positions` : `↓ ${Math.abs(delta)} positions`}
+                      </p>
+                    );
+                  })()}
+                </>
+              ) : (
+                <p className="text-sm text-gray-400">Not ranked</p>
+              )}
+            </div>
           </div>
           <KeywordHistoryChart history={history.history} />
-          <div className="mt-2 flex gap-4 text-xs text-gray-500">
-            <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-indigo-500" /> Organic</span>
-            <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-rose-400" /> Sponsored</span>
-          </div>
         </div>
       ) : (
         <p className="text-sm text-gray-400">No history data for &quot;{selected}&quot;.</p>
