@@ -1355,7 +1355,7 @@ export default function KeywordsClient() {
                       Trend
                     </th>
                     <th className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                      Est. Downloads
+                      Feasibility
                     </th>
                     <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
                       Top Player
@@ -1483,11 +1483,11 @@ export default function KeywordsClient() {
                             </div>
                           </td>
 
-                          {/* Est. Downloads */}
-                          <td className="px-3 py-3 text-center">
-                            <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
-                              {vol > 0 ? estDownloadsRange(vol) : '—'}
-                            </span>
+                          {/* Feasibility */}
+                          <td className="px-3 py-3">
+                            <div className="flex justify-center">
+                              <DonutRing value={kw.feasibility_score} size={36} />
+                            </div>
                           </td>
 
                           {/* Top Player */}
