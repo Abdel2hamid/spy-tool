@@ -1,0 +1,34 @@
+/**
+ * CSV Export Utility
+ * ==================
+ * Client-side CSV generation and download trigger.
+ */
+
+type Row = Record<string, unknown>;
+
+export function toCSV(rows: Row[], columns: { key: string; label: string }[]): string {
+  const header = columns.map((c) => `"${c.label}"`).join(',');
+  const lines = rows.map((row) =>
+    columns
+      .map((c) => {
+        const val = row[c.key];
+        if (val == null) return '';
+        const str = String(val).replace(/"/g, '""');
+        return `"${str}"`;
+      })
+      .join(','),
+  );
+  return [header, ...lines].join('\n');
+}
+
+export function downloadCSV(csv: string, filename: string): void {
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename.endsWith('.csv') ? filename : `${filename}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}

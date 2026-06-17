@@ -29,7 +29,9 @@ import {
   XCircle,
   RefreshCw,
   Activity,
+  Download,
 } from 'lucide-react';
+import { toCSV, downloadCSV } from '@/lib/csv-export';
 import {
   LineChart,
   Line,
@@ -929,7 +931,7 @@ export default function KeywordsClient() {
             </div>
           </div>
 
-          {/* Sort controls */}
+          {/* Sort controls + Export */}
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Sort by:</span>
             {SORT_OPTIONS.map((opt) => {
@@ -955,6 +957,35 @@ export default function KeywordsClient() {
                 </button>
               );
             })}
+            <button
+              onClick={() => {
+                if (!keywords.length) return;
+                const csv = toCSV(keywords.map((k) => ({
+                  keyword: k.term,
+                  popularity: k.volume_score ?? k.search_volume,
+                  difficulty: k.difficulty_v2 ?? k.difficulty,
+                  opportunity_score: k.opportunity_score,
+                  search_volume: k.search_volume,
+                  trend_score: k.trend_score,
+                  top_player: k.top_player || '',
+                  brands: k.brand_count ?? '',
+                })), [
+                  { key: 'keyword', label: 'Keyword' },
+                  { key: 'popularity', label: 'Popularity' },
+                  { key: 'difficulty', label: 'Difficulty' },
+                  { key: 'opportunity_score', label: 'Opportunity Score' },
+                  { key: 'search_volume', label: 'Search Volume' },
+                  { key: 'trend_score', label: 'Trend Score' },
+                  { key: 'top_player', label: 'Top Player' },
+                  { key: 'brands', label: 'Brands' },
+                ]);
+                downloadCSV(csv, `keywords-${new Date().toISOString().slice(0, 10)}.csv`);
+              }}
+              className="ml-auto flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Export CSV
+            </button>
           </div>
 
           {/* Table */}

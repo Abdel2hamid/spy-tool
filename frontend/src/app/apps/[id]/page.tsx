@@ -14,6 +14,7 @@ import {
   Zap, DollarSign, Users, FlaskConical, Sparkles, X as XIcon, Heart, GitCompare, Check
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { toCSV, downloadCSV } from '@/lib/csv-export';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { useComparison, addToComparison, removeFromComparison } from '@/lib/comparison-store';
 
@@ -2920,13 +2921,41 @@ function KeywordSuggestionsPanel({ appId }: { appId: number }) {
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900 overflow-hidden">
       <div className="border-b border-gray-200 bg-gradient-to-r from-indigo-50 to-purple-50 px-6 py-4 dark:border-gray-800 dark:from-indigo-950/20 dark:to-purple-950/20">
-        <h3 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
-          <Sparkles className="h-5 w-5 text-indigo-500" />
-          Smart Keyword Suggestions
-          <span className="pill bg-indigo-100 text-indigo-700 text-xs dark:bg-indigo-950/40 dark:text-indigo-400">
-            {data.total} found
-          </span>
-        </h3>
+        <div className="flex items-center justify-between">
+          <h3 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
+            <Sparkles className="h-5 w-5 text-indigo-500" />
+            Smart Keyword Suggestions
+            <span className="pill bg-indigo-100 text-indigo-700 text-xs dark:bg-indigo-950/40 dark:text-indigo-400">
+              {data.total} found
+            </span>
+          </h3>
+          <button
+            onClick={() => {
+              const csv = toCSV(data.suggestions.map((s) => ({
+                keyword: s.keyword,
+                strategy: BUCKET_META[s.bucket]?.label || s.bucket,
+                volume_score: s.volume_score,
+                difficulty: s.difficulty_v2,
+                your_rank: s.app_rank,
+                competitor_rank: s.competitor_rank,
+                reason: s.reason,
+              })), [
+                { key: 'keyword', label: 'Keyword' },
+                { key: 'strategy', label: 'Strategy' },
+                { key: 'volume_score', label: 'Volume Score' },
+                { key: 'difficulty', label: 'Difficulty' },
+                { key: 'your_rank', label: 'Your Rank' },
+                { key: 'competitor_rank', label: 'Competitor Rank' },
+                { key: 'reason', label: 'Reason' },
+              ]);
+              downloadCSV(csv, `keyword-suggestions-${data.app_name.replace(/\s+/g, '-').toLowerCase()}.csv`);
+            }}
+            className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50 dark:border-indigo-700 dark:bg-indigo-950/30 dark:text-indigo-400 dark:hover:bg-indigo-950/50"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export CSV
+          </button>
+        </div>
         <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
           AI-prioritised keywords grouped by strategy — click a bucket to filter
         </p>

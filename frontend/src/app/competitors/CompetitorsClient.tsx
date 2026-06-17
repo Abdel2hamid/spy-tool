@@ -33,7 +33,9 @@ import {
   Bug,
   TrendingUp,
   BarChart3,
+  Download,
 } from 'lucide-react';
+import { toCSV, downloadCSV } from '@/lib/csv-export';
 import {
   LineChart,
   Line,
@@ -299,6 +301,32 @@ function ComparisonMatrix({
   ];
 
   return (
+    <div className="space-y-2">
+      <div className="flex justify-end">
+        <button
+          onClick={() => {
+            const rows = metrics.map((m) => {
+              const row: Record<string, unknown> = { metric: m.label };
+              apps.forEach((app) => { row[app.name] = m.render(app); });
+              return row;
+            });
+            const cols = [{ key: 'metric', label: 'Metric' }, ...apps.map((a) => ({ key: a.name, label: a.name }))];
+            const csvRows = metrics.map((m) => {
+              const row: Record<string, unknown> = { metric: m.label };
+              apps.forEach((a) => {
+                const val = m.render(a);
+                row[a.name] = typeof val === 'object' ? '' : val;
+              });
+              return row;
+            });
+            downloadCSV(toCSV(csvRows, cols), `competitor-comparison-${new Date().toISOString().slice(0, 10)}.csv`);
+          }}
+          className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+        >
+          <Download className="h-3.5 w-3.5" />
+          Export CSV
+        </button>
+      </div>
     <div className="overflow-x-auto rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
       <table className="w-full text-left">
         <thead>
@@ -348,6 +376,7 @@ function ComparisonMatrix({
           ))}
         </tbody>
       </table>
+    </div>
     </div>
   );
 }
@@ -692,15 +721,43 @@ function KeywordGapSection({
 
   return (
     <div className="space-y-4">
-      <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
-        <Key className="h-5 w-5 text-indigo-500" />
-        Keyword Gap Analysis
-        {summary.high_priority_gaps > 0 && (
-          <span className="pill bg-red-100 text-red-700 text-xs dark:bg-red-950/40 dark:text-red-400">
-            {summary.high_priority_gaps} high priority
-          </span>
-        )}
-      </h2>
+      <div className="flex items-center justify-between">
+        <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
+          <Key className="h-5 w-5 text-indigo-500" />
+          Keyword Gap Analysis
+          {summary.high_priority_gaps > 0 && (
+            <span className="pill bg-red-100 text-red-700 text-xs dark:bg-red-950/40 dark:text-red-400">
+              {summary.high_priority_gaps} high priority
+            </span>
+          )}
+        </h2>
+        <button
+          onClick={() => {
+            const csv = toCSV(keywords.map((k) => ({
+              keyword: k.keyword,
+              gap_type: k.gap_type,
+              target_rank: k.target_rank,
+              competitor_best_rank: k.competitor_best_rank,
+              volume_score: k.volume_score,
+              difficulty_v2: k.difficulty_v2,
+              priority: k.opportunity_priority,
+            })), [
+              { key: 'keyword', label: 'Keyword' },
+              { key: 'gap_type', label: 'Gap Type' },
+              { key: 'target_rank', label: 'Your Rank' },
+              { key: 'competitor_best_rank', label: 'Competitor Rank' },
+              { key: 'volume_score', label: 'Volume Score' },
+              { key: 'difficulty_v2', label: 'Difficulty' },
+              { key: 'priority', label: 'Priority' },
+            ]);
+            downloadCSV(csv, `keyword-gaps-${target.name.replace(/\s+/g, '-').toLowerCase()}.csv`);
+          }}
+          className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+        >
+          <Download className="h-3.5 w-3.5" />
+          Export CSV
+        </button>
+      </div>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
