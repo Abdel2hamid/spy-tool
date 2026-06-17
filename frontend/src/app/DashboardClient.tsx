@@ -85,10 +85,12 @@ export default function DashboardClient() {
   const keywordChartData = keywords.map((kw) => ({
     name: kw.term?.slice(0, 10) || 'N/A',
     trend: kw.trend_score || 0,
-    volume: kw.search_volume || 0,
+    volume: kw.volume_score || kw.search_volume || 0,
+    opportunity: kw.opportunity_score || 0,
+    difficulty: kw.difficulty_v2 || 0,
   }));
 
-  const hasKeywordData = keywordChartData.some((k) => k.trend > 0 || k.volume > 0);
+  const hasKeywordData = keywordChartData.some((k) => k.opportunity > 0 || k.volume > 0);
 
   return (
     <AppShell>
@@ -201,13 +203,13 @@ export default function DashboardClient() {
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               <div className="card p-6">
                 <div className="mb-4 flex items-center justify-between">
-                  <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Keyword Trends</p>
+                  <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Top Keyword Opportunities</p>
                   <BarChart3 className="h-4 w-4 text-gray-400" />
                 </div>
                 {hasKeywordData ? (
                   <SimpleChart
                     data={keywordChartData}
-                    dataKey="trend"
+                    dataKey="opportunity"
                     xAxisKey="name"
                     type="bar"
                     color="#8b5cf6"
@@ -216,15 +218,15 @@ export default function DashboardClient() {
                 ) : (
                   <div className="flex h-[220px] flex-col items-center justify-center gap-2 text-center">
                     <BarChart3 className="h-8 w-8 text-gray-300 dark:text-gray-600" />
-                    <p className="text-sm text-gray-400 dark:text-gray-500">No trend data yet</p>
-                    <p className="text-xs text-gray-300 dark:text-gray-600">Run the keyword pipeline to populate</p>
+                    <p className="text-sm text-gray-400 dark:text-gray-500">No keyword data yet</p>
+                    <p className="text-xs text-gray-300 dark:text-gray-600">Track apps to discover keyword opportunities</p>
                   </div>
                 )}
               </div>
 
               <div className="card p-6">
                 <div className="mb-4 flex items-center justify-between">
-                  <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Search Volume</p>
+                  <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">Volume Score</p>
                   <Search className="h-4 w-4 text-gray-400" />
                 </div>
                 {hasKeywordData ? (
@@ -240,7 +242,7 @@ export default function DashboardClient() {
                   <div className="flex h-[220px] flex-col items-center justify-center gap-2 text-center">
                     <Search className="h-8 w-8 text-gray-300 dark:text-gray-600" />
                     <p className="text-sm text-gray-400 dark:text-gray-500">No volume data yet</p>
-                    <p className="text-xs text-gray-300 dark:text-gray-600">Run the keyword pipeline to populate</p>
+                    <p className="text-xs text-gray-300 dark:text-gray-600">Track apps to discover keyword volumes</p>
                   </div>
                 )}
               </div>

@@ -1277,18 +1277,27 @@ def get_dashboard_keyword_highlights(
     db: Session = Depends(get_db),
 ):
     """
-    Return top enriched keywords ordered by opportunity_score DESC.
-    Only keywords with last_enriched IS NOT NULL are included so
-    un-scored seed words are excluded from the dashboard chart.
+    Return top scored keywords ordered by opportunity_score DESC.
+    Include keywords that have V2 scoring (volume_score > 0) OR
+    Google Trends enrichment (last_enriched IS NOT NULL) so the
+    dashboard charts always show data when any scoring has run.
     """
     rows = (
         db.query(
             models.Keyword.term,
             models.Keyword.search_volume,
+            models.Keyword.volume_score,
+            models.Keyword.difficulty_v2,
             models.Keyword.trend_score,
             models.Keyword.opportunity_score,
         )
-        .filter(models.Keyword.last_enriched.isnot(None))
+        .filter(
+            or_(
+                models.Keyword.last_enriched.isnot(None),
+                models.Keyword.volume_score > 0,
+                models.Keyword.opportunity_score > 0,
+            )
+        )
         .order_by(models.Keyword.opportunity_score.desc())
         .limit(limit)
         .all()
@@ -1297,6 +1306,8 @@ def get_dashboard_keyword_highlights(
         DashboardKeywordHighlight(
             term=r.term,
             search_volume=r.search_volume or 0,
+            volume_score=float(r.volume_score or 0),
+            difficulty_v2=float(r.difficulty_v2 or 0),
             trend_score=float(r.trend_score or 0),
             opportunity_score=float(r.opportunity_score or 0),
         )

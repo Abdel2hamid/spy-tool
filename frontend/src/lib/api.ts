@@ -726,6 +726,8 @@ export async function getKeywordOpportunities(
 export interface DashboardKeywordHighlight {
   term: string;
   search_volume: number;
+  volume_score: number;
+  difficulty_v2: number;
   trend_score: number;
   opportunity_score: number;
 }

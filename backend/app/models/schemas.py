@@ -1334,6 +1334,8 @@ class DashboardKeywordHighlight(BaseModel):
     """Lightweight keyword row for the dashboard Keyword Intelligence section."""
     term: str
     search_volume: int
+    volume_score: float
+    difficulty_v2: float
     trend_score: float
     opportunity_score: float
 
