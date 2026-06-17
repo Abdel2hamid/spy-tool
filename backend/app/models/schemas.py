@@ -1429,3 +1429,42 @@ class CompetitorRankHistoryResponse(BaseModel):
     apps: List[CompetitorRankHistoryApp]
     series: List[Dict[str, Any]]
     days: int
+
+
+# ---------------------------------------------------------------------------
+# Keyword Gap Analysis
+# ---------------------------------------------------------------------------
+
+class KeywordGapItem(BaseModel):
+    keyword: str
+    gap_type: str  # 'missing', 'weak', 'shared', 'winning', 'unique'
+    target_rank: Optional[int] = None
+    competitor_best_rank: Optional[int] = None
+    competitor_ranks: Dict[int, Optional[int]] = {}
+    volume_score: float = 0
+    difficulty_v2: float = 0
+    opportunity_priority: str = "low"  # 'high', 'medium', 'low', 'info'
+
+
+class KeywordGapAppInfo(BaseModel):
+    app_id: int
+    store_app_id: str
+    name: str
+    icon_url: Optional[str] = None
+
+
+class KeywordGapSummary(BaseModel):
+    total_keywords: int = 0
+    missing: int = 0
+    weak: int = 0
+    shared: int = 0
+    winning: int = 0
+    unique: int = 0
+    high_priority_gaps: int = 0
+
+
+class KeywordGapReportResponse(BaseModel):
+    target: KeywordGapAppInfo
+    competitors: List[KeywordGapAppInfo]
+    keywords: List[KeywordGapItem]
+    summary: KeywordGapSummary

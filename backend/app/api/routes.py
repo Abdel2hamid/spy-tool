@@ -87,6 +87,7 @@ from app.models.schemas import (
     FavoriteListResponse,
     CompetitorCompareResponse,
     CompetitorRankHistoryResponse,
+    KeywordGapReportResponse,
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
@@ -3897,3 +3898,39 @@ def competitor_rank_history(
         "series": series,
         "days": days,
     }
+
+
+@router.get("/competitors/keyword-gaps", response_model=KeywordGapReportResponse)
+def get_keyword_gaps(
+    target_id: int = Query(..., description="The target app's internal ID"),
+    competitor_ids: List[int] = Query(..., description="Competitor app internal IDs"),
+    db: Session = Depends(get_db),
+):
+    """Keyword gap analysis: find keywords competitors rank for that the target app doesn't."""
+    # Validate
+    all_ids = [target_id] + list(competitor_ids)
+    seen = set()
+    unique_comp = []
+    for cid in competitor_ids:
+        if cid != target_id and cid not in seen:
+            seen.add(cid)
+            unique_comp.append(cid)
+
+    if not unique_comp:
+        raise HTTPException(status_code=400, detail="At least 1 competitor required (different from target)")
+    if len(unique_comp) > 4:
+        raise HTTPException(status_code=400, detail="At most 4 competitors allowed")
+
+    # Verify all ids exist
+    existing = {
+        r[0]
+        for r in db.query(models.App.id).filter(models.App.id.in_([target_id] + unique_comp)).all()
+    }
+    missing = [aid for aid in [target_id] + unique_comp if aid not in existing]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"App ids not found: {missing}")
+
+    from app.services.competitor_compare_service import CompetitorCompareService
+
+    svc = CompetitorCompareService(db)
+    return svc.keyword_gap_report(target_id, unique_comp)

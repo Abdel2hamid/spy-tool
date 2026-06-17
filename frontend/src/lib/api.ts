@@ -2041,3 +2041,50 @@ export async function getCompetitorRankHistory(
   params.set('days', String(days));
   return fetchApi<CompetitorRankHistoryResponse>(`/competitors/rank-history?${params.toString()}`);
 }
+
+// Keyword Gap Analysis
+
+export interface KeywordGapItem {
+  keyword: string;
+  gap_type: 'missing' | 'weak' | 'shared' | 'winning' | 'unique';
+  target_rank: number | null;
+  competitor_best_rank: number | null;
+  competitor_ranks: Record<number, number | null>;
+  volume_score: number;
+  difficulty_v2: number;
+  opportunity_priority: 'high' | 'medium' | 'low' | 'info';
+}
+
+export interface KeywordGapAppInfo {
+  app_id: number;
+  store_app_id: string;
+  name: string;
+  icon_url: string | null;
+}
+
+export interface KeywordGapSummary {
+  total_keywords: number;
+  missing: number;
+  weak: number;
+  shared: number;
+  winning: number;
+  unique: number;
+  high_priority_gaps: number;
+}
+
+export interface KeywordGapReportResponse {
+  target: KeywordGapAppInfo;
+  competitors: KeywordGapAppInfo[];
+  keywords: KeywordGapItem[];
+  summary: KeywordGapSummary;
+}
+
+export async function getKeywordGaps(
+  targetId: number,
+  competitorIds: number[],
+): Promise<KeywordGapReportResponse> {
+  const params = new URLSearchParams();
+  params.set('target_id', String(targetId));
+  competitorIds.forEach((id) => params.append('competitor_ids', String(id)));
+  return fetchApi<KeywordGapReportResponse>(`/competitors/keyword-gaps?${params.toString()}`);
+}

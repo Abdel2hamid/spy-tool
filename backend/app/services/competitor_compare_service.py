@@ -179,6 +179,188 @@ class CompetitorCompareService:
             "per_app": per_app,
         }
 
+    # ── Keyword Gap Report ──────────────────────────────────────────────
+
+    def keyword_gap_report(
+        self,
+        target_app_id: int,
+        competitor_ids: List[int],
+    ) -> dict:
+        """
+        Build a detailed keyword gap report: compare keywords between a target
+        app and 1+ competitors.  For each keyword, classify as:
+          missing  — competitor has it, target doesn't
+          weak     — both have it but competitor ≤10 and target >30
+          shared   — both rank for it
+          winning  — target ranks ≤ competitor
+          unique   — only target has it
+        """
+        all_ids = [target_app_id] + competitor_ids
+
+        # ── Load app info ──
+        apps_by_id: Dict[int, App] = {}
+        for row in self.db.query(App).filter(App.id.in_(all_ids)).all():
+            apps_by_id[row.id] = row
+
+        target_app = apps_by_id.get(target_app_id)
+        if not target_app:
+            return {"error": "Target app not found"}
+
+        # ── Collect keyword → rank per app ──
+        # Source 1: AppDiscoveredKeyword (has app_rank = that app's iTunes rank)
+        disc_rows = (
+            self.db.query(AppDiscoveredKeyword)
+            .filter(AppDiscoveredKeyword.app_id.in_(all_ids))
+            .all()
+        )
+
+        # Per-app maps: keyword_lower -> {rank, search_volume}
+        app_kw: Dict[int, Dict[str, dict]] = {aid: {} for aid in all_ids}
+        all_keywords: Set[str] = set()
+
+        for row in disc_rows:
+            kw = row.keyword.lower().strip()
+            existing = app_kw[row.app_id].get(kw)
+            # Keep best rank
+            if existing is None or (row.app_rank and (existing["rank"] is None or row.app_rank < existing["rank"])):
+                app_kw[row.app_id][kw] = {
+                    "rank": row.app_rank,
+                    "sv": row.search_volume or 0,
+                }
+            all_keywords.add(kw)
+
+        # Source 2: AppKeywordIntelligence (fallback for apps with intelligence data)
+        intel_rows = (
+            self.db.query(AppKeywordIntelligence.app_id, Keyword.term)
+            .join(Keyword, AppKeywordIntelligence.keyword_id == Keyword.id)
+            .filter(AppKeywordIntelligence.app_id.in_(all_ids))
+            .all()
+        )
+        for app_id, term in intel_rows:
+            kw = term.lower().strip()
+            if kw not in app_kw[app_id]:
+                app_kw[app_id][kw] = {"rank": None, "sv": 0}
+            all_keywords.add(kw)
+
+        # ── Load v2 scores from keywords table ──
+        kw_scores: Dict[str, tuple] = {}
+        kw_list = list(all_keywords)
+        batch_size = 500
+        for i in range(0, len(kw_list), batch_size):
+            batch = kw_list[i : i + batch_size]
+            rows = (
+                self.db.query(Keyword.term, Keyword.volume_score, Keyword.difficulty_v2)
+                .filter(func.lower(Keyword.term).in_(batch))
+                .all()
+            )
+            for term, vs, dv in rows:
+                kw_scores[term.lower()] = (vs or 0, dv or 0)
+
+        # ── Classify each keyword ──
+        items: List[dict] = []
+        for kw in all_keywords:
+            target_data = app_kw[target_app_id].get(kw)
+            target_rank = target_data["rank"] if target_data else None
+            has_target = target_data is not None
+
+            comp_ranks: Dict[int, Optional[int]] = {}
+            comp_best: Optional[int] = None
+            has_competitor = False
+            for cid in competitor_ids:
+                cd = app_kw.get(cid, {}).get(kw)
+                rank = cd["rank"] if cd else None
+                comp_ranks[cid] = rank
+                if cd is not None:
+                    has_competitor = True
+                if rank is not None and (comp_best is None or rank < comp_best):
+                    comp_best = rank
+
+            # Classify
+            if has_competitor and not has_target:
+                gap_type = "missing"
+            elif has_competitor and has_target:
+                if (
+                    comp_best is not None
+                    and comp_best <= 10
+                    and (target_rank is None or target_rank > 30)
+                ):
+                    gap_type = "weak"
+                elif (
+                    target_rank is not None
+                    and comp_best is not None
+                    and target_rank <= comp_best
+                ):
+                    gap_type = "winning"
+                else:
+                    gap_type = "shared"
+            elif has_target and not has_competitor:
+                gap_type = "unique"
+            else:
+                continue
+
+            vs, dv = kw_scores.get(kw, (0, 0))
+
+            # Priority scoring
+            if gap_type in ("missing", "weak") and vs >= 50:
+                priority = "high"
+            elif gap_type in ("missing", "weak") and vs >= 20:
+                priority = "medium"
+            elif gap_type in ("missing", "weak"):
+                priority = "low"
+            else:
+                priority = "info"
+
+            items.append({
+                "keyword": kw,
+                "gap_type": gap_type,
+                "target_rank": target_rank,
+                "competitor_best_rank": comp_best,
+                "competitor_ranks": comp_ranks,
+                "volume_score": vs,
+                "difficulty_v2": dv,
+                "opportunity_priority": priority,
+            })
+
+        # Sort: missing/weak first (by volume desc), then shared, then winning, unique
+        type_order = {"missing": 0, "weak": 1, "shared": 2, "winning": 3, "unique": 4}
+        items.sort(key=lambda x: (type_order.get(x["gap_type"], 5), -x["volume_score"]))
+
+        # Summary
+        gap_count = sum(1 for i in items if i["gap_type"] == "missing")
+        weak_count = sum(1 for i in items if i["gap_type"] == "weak")
+        shared_count = sum(1 for i in items if i["gap_type"] == "shared")
+        winning_count = sum(1 for i in items if i["gap_type"] == "winning")
+        unique_count = sum(1 for i in items if i["gap_type"] == "unique")
+
+        def _app_info(app):
+            return {
+                "app_id": app.id,
+                "store_app_id": str(app.app_id),
+                "name": app.name,
+                "icon_url": app.icon_url,
+            }
+
+        return {
+            "target": _app_info(target_app),
+            "competitors": [
+                _app_info(apps_by_id[cid])
+                for cid in competitor_ids
+                if cid in apps_by_id
+            ],
+            "keywords": items[:300],
+            "summary": {
+                "total_keywords": len(items),
+                "missing": gap_count,
+                "weak": weak_count,
+                "shared": shared_count,
+                "winning": winning_count,
+                "unique": unique_count,
+                "high_priority_gaps": sum(
+                    1 for i in items if i["opportunity_priority"] == "high"
+                ),
+            },
+        }
+
     @staticmethod
     def _compute_winners(summaries: List[dict]) -> Dict[str, Optional[int]]:
         """Pick winner per metric. Lower is better for current_rank."""

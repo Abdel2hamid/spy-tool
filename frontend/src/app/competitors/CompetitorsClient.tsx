@@ -10,10 +10,13 @@ import {
   CompetitorCompareResponse,
   CompetitorAppSummary,
   CompetitorRankHistoryResponse,
+  KeywordGapReportResponse,
+  KeywordGapItem,
   getFilteredApps,
   getAppDetail,
   compareCompetitors,
   getCompetitorRankHistory,
+  getKeywordGaps,
 } from '@/lib/api';
 import { fmtRange, fmtRevRange, confidenceLabel, CONFIDENCE_BADGE, fmtNum } from '@/lib/estimate-format';
 import { cn } from '@/lib/utils';
@@ -586,6 +589,244 @@ function FeatureGapsSection({ data }: { data: CompetitorCompareResponse }) {
   );
 }
 
+// ── Gap Type Badge ──────────────────────────────────────────────────────────
+
+const GAP_BADGE: Record<string, { label: string; bg: string; text: string }> = {
+  missing: { label: 'Missing', bg: 'bg-red-100 dark:bg-red-950/40', text: 'text-red-700 dark:text-red-400' },
+  weak: { label: 'Weak', bg: 'bg-orange-100 dark:bg-orange-950/40', text: 'text-orange-700 dark:text-orange-400' },
+  shared: { label: 'Shared', bg: 'bg-blue-100 dark:bg-blue-950/40', text: 'text-blue-700 dark:text-blue-400' },
+  winning: { label: 'Winning', bg: 'bg-emerald-100 dark:bg-emerald-950/40', text: 'text-emerald-700 dark:text-emerald-400' },
+  unique: { label: 'Unique', bg: 'bg-purple-100 dark:bg-purple-950/40', text: 'text-purple-700 dark:text-purple-400' },
+};
+
+const PRIORITY_DOT: Record<string, string> = {
+  high: 'bg-red-500',
+  medium: 'bg-orange-400',
+  low: 'bg-gray-400',
+  info: 'bg-gray-300 dark:bg-gray-600',
+};
+
+function MiniDonut({ value, invert = false }: { value: number; invert?: boolean }) {
+  const r = 14;
+  const circ = 2 * Math.PI * r;
+  const eff = invert ? 100 - value : value;
+  const color = eff >= 60 ? '#22c55e' : eff >= 35 ? '#f59e0b' : '#ef4444';
+  const offset = circ - (value / 100) * circ;
+  return (
+    <svg width={32} height={32} className="flex-shrink-0">
+      <circle cx={16} cy={16} r={r} fill="none" stroke="#e5e7eb" strokeWidth={3} className="dark:stroke-gray-700" />
+      <circle
+        cx={16} cy={16} r={r} fill="none" stroke={color} strokeWidth={3}
+        strokeDasharray={circ} strokeDashoffset={offset}
+        strokeLinecap="round" transform="rotate(-90 16 16)"
+      />
+      <text x={16} y={16} textAnchor="middle" dominantBaseline="central" fontSize={9} fontWeight={600} fill={color}>
+        {Math.round(value)}
+      </text>
+    </svg>
+  );
+}
+
+// ── Keyword Gap Analysis Section ────────────────────────────────────────────
+
+function KeywordGapSection({
+  appIds,
+}: {
+  appIds: number[];
+}) {
+  const [data, setData] = useState<KeywordGapReportResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<string>('all');
+
+  useEffect(() => {
+    if (appIds.length < 2) return;
+    setLoading(true);
+    const [targetId, ...compIds] = appIds;
+    getKeywordGaps(targetId, compIds)
+      .then(setData)
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [appIds]);
+
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <div className="h-6 w-56 animate-pulse rounded bg-gray-200 dark:bg-gray-800" />
+        <div className="h-64 animate-pulse rounded-2xl bg-gray-100 dark:bg-gray-800" />
+      </div>
+    );
+  }
+
+  if (!data || data.keywords.length === 0) {
+    return (
+      <div className="space-y-4">
+        <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
+          <Key className="h-5 w-5 text-indigo-500" />
+          Keyword Gap Analysis
+        </h2>
+        <div className="flex flex-col items-center justify-center rounded-2xl border border-gray-200 bg-white p-12 text-center dark:border-gray-800 dark:bg-gray-900">
+          <Key className="h-10 w-10 text-gray-300 dark:text-gray-600" />
+          <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
+            No keyword data available yet. Run keyword discovery on both apps first.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const { summary, keywords, target, competitors } = data;
+
+  const filtered =
+    filter === 'all'
+      ? keywords
+      : keywords.filter((k) => k.gap_type === filter);
+
+  const filterOptions = [
+    { key: 'all', label: 'All', count: summary.total_keywords },
+    { key: 'missing', label: 'Missing', count: summary.missing },
+    { key: 'weak', label: 'Weak', count: summary.weak },
+    { key: 'shared', label: 'Shared', count: summary.shared },
+    { key: 'winning', label: 'Winning', count: summary.winning },
+    { key: 'unique', label: 'Unique', count: summary.unique },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
+        <Key className="h-5 w-5 text-indigo-500" />
+        Keyword Gap Analysis
+        {summary.high_priority_gaps > 0 && (
+          <span className="pill bg-red-100 text-red-700 text-xs dark:bg-red-950/40 dark:text-red-400">
+            {summary.high_priority_gaps} high priority
+          </span>
+        )}
+      </h2>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {filterOptions.map((opt) => (
+          <button
+            key={opt.key}
+            onClick={() => setFilter(opt.key)}
+            className={cn(
+              'rounded-xl border p-3 text-left transition-colors',
+              filter === opt.key
+                ? 'border-indigo-300 bg-indigo-50 dark:border-indigo-700 dark:bg-indigo-950/30'
+                : 'border-gray-200 bg-white hover:border-gray-300 dark:border-gray-800 dark:bg-gray-900 dark:hover:border-gray-700',
+            )}
+          >
+            <p className="text-xl font-bold text-gray-900 dark:text-white">{opt.count}</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">{opt.label}</p>
+          </button>
+        ))}
+      </div>
+
+      {/* Gap table */}
+      <div className="overflow-x-auto rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-950">
+              <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                Keyword
+              </th>
+              <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                Type
+              </th>
+              <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 text-center">
+                Volume
+              </th>
+              <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 text-center">
+                Difficulty
+              </th>
+              <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 text-center">
+                {target.name.length > 12 ? target.name.slice(0, 12) + '…' : target.name}
+              </th>
+              {competitors.map((c) => (
+                <th key={c.app_id} className="px-3 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 text-center">
+                  {c.name.length > 12 ? c.name.slice(0, 12) + '…' : c.name}
+                </th>
+              ))}
+              <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 text-center">
+                Priority
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+            {filtered.slice(0, 100).map((kw) => {
+              const badge = GAP_BADGE[kw.gap_type] || GAP_BADGE.shared;
+              const dot = PRIORITY_DOT[kw.opportunity_priority] || PRIORITY_DOT.info;
+              return (
+                <tr key={kw.keyword} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                  <td className="px-4 py-2.5 font-medium text-gray-900 dark:text-white max-w-[200px] truncate">
+                    {kw.keyword}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <span className={cn('pill text-[10px] font-semibold', badge.bg, badge.text)}>
+                      {badge.label}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2.5 text-center">
+                    <MiniDonut value={kw.volume_score} />
+                  </td>
+                  <td className="px-3 py-2.5 text-center">
+                    <MiniDonut value={kw.difficulty_v2} invert />
+                  </td>
+                  <td className="px-3 py-2.5 text-center">
+                    {kw.target_rank != null ? (
+                      <span className={cn(
+                        'font-mono text-xs font-semibold',
+                        kw.target_rank <= 10 ? 'text-emerald-600 dark:text-emerald-400' :
+                        kw.target_rank <= 30 ? 'text-yellow-600 dark:text-yellow-400' :
+                        'text-gray-500',
+                      )}>
+                        #{kw.target_rank}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-300 dark:text-gray-600">—</span>
+                    )}
+                  </td>
+                  {competitors.map((c) => {
+                    const rank = kw.competitor_ranks[c.app_id];
+                    return (
+                      <td key={c.app_id} className="px-3 py-2.5 text-center">
+                        {rank != null ? (
+                          <span className={cn(
+                            'font-mono text-xs font-semibold',
+                            rank <= 10 ? 'text-emerald-600 dark:text-emerald-400' :
+                            rank <= 30 ? 'text-yellow-600 dark:text-yellow-400' :
+                            'text-gray-500',
+                          )}>
+                            #{rank}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-gray-300 dark:text-gray-600">—</span>
+                        )}
+                      </td>
+                    );
+                  })}
+                  <td className="px-3 py-2.5 text-center">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className={cn('h-2 w-2 rounded-full', dot)} />
+                      <span className="text-[10px] capitalize text-gray-500 dark:text-gray-400">
+                        {kw.opportunity_priority}
+                      </span>
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {filtered.length > 100 && (
+          <div className="border-t border-gray-200 px-4 py-3 text-center text-xs text-gray-400 dark:border-gray-800 dark:text-gray-500">
+            Showing 100 of {filtered.length} keywords
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Helper: resolve numeric IDs → AppListItem stubs ─────────────────────────
 
 async function resolveAppIds(ids: number[]): Promise<AppListItem[]> {
@@ -801,6 +1042,7 @@ function CompetitorsInner() {
         <div className="space-y-8">
           <ComparisonMatrix data={result} />
           <RankTrajectoryChart appIds={result.apps.map((a) => a.app_id)} />
+          <KeywordGapSection appIds={selected.map((s) => s.id)} />
           <KeywordOverlapSection data={result} />
           <FeatureGapsSection data={result} />
         </div>
