@@ -431,8 +431,8 @@ class ScraperWorker:
         seconds of total elapsed time (apps are sorted by priority, so the
         most important ones are always refreshed first).
         """
-        _CONCURRENCY = 15
-        _TIMEOUT = 60.0  # seconds per app
+        _CONCURRENCY = 5   # was 15 — each spawns a SessionLocal, pool max=30
+        _TIMEOUT = 60.0    # seconds per app
         _SEM = asyncio.Semaphore(_CONCURRENCY)
 
         log_memory("quick_refresh", "start")

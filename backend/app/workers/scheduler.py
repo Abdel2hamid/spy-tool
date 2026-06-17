@@ -7,8 +7,8 @@ Job schedule:
   ───────────────────────  ────────  ──────────  ─────────────────────────────────────────
   ranking_refresh            2 h      3 min       Chart RSS → ranking rows (skip if fresh)
   opportunity_compute        1 h      5 min       Precompute opportunity of the day → daily_reports
-  blowing_up_compute         15 min   3 min       Precompute blowing-up scores → app_blowing_up_scores
-  trending_compute           10 min   2 min       Precompute trending scores → app_trending_scores
+  blowing_up_compute         30 min   4 min       Precompute blowing-up scores → app_blowing_up_scores
+  trending_compute           30 min   2 min       Precompute trending scores → app_trending_scores
   discovery_keywords         6 h      2 min       100+ keyword search → queue
   discovery_charts           2 h      5 min       Charts × all genres × 20 countries → queue
   discovery_developer        12 h     10 min      Developer expansion → queue
@@ -562,7 +562,7 @@ async def job_queue_processor():
         db = SessionLocal()
         try:
             engine = DiscoveryEngine(db)
-            scraped = await engine.process_queue(batch_size=100, concurrency=10)
+            scraped = await engine.process_queue(batch_size=100, concurrency=5)
             _log_done(job_id, t0, f"{scraped} apps fully scraped from queue")
         finally:
             db.close()
@@ -627,23 +627,30 @@ async def job_tier_reclassify():
 async def job_enrich_hot():
     """
     Enqueue HOT light-stage apps for full enrichment and process up to
-    200 items with concurrency=15 (highest priority tier).
+    200 items with concurrency=5 (highest priority tier).
     """
     job_id = "enrich_hot"
     t0 = _log_start(job_id)
     try:
         from app.workers.discovery_engine import DiscoveryEngine
         from app.database import SessionLocal
+        # Phase 1: enqueue (quick DB operation) — release session before scraping
         db = SessionLocal()
         try:
             engine = DiscoveryEngine(db)
             enqueued = await asyncio.to_thread(
                 engine._enqueue_light_apps_for_tier, "hot", 200
             )
-            scraped = await engine.process_queue(batch_size=200, concurrency=15, tier="hot")
-            _log_done(job_id, t0, f"enqueued={enqueued}, scraped={scraped}")
         finally:
             db.close()
+        # Phase 2: scrape (long HTTP I/O) — fresh session for queue reads
+        db2 = SessionLocal()
+        try:
+            engine2 = DiscoveryEngine(db2)
+            scraped = await engine2.process_queue(batch_size=200, concurrency=5, tier="hot")
+            _log_done(job_id, t0, f"enqueued={enqueued}, scraped={scraped}")
+        finally:
+            db2.close()
     except Exception as exc:
         _log_fail(job_id, exc)
 
@@ -652,7 +659,7 @@ async def job_enrich_hot():
 async def job_enrich_warm():
     """
     Enqueue WARM light-stage apps for full enrichment and process up to
-    500 items with concurrency=8.
+    500 items with concurrency=5.
     """
     job_id = "enrich_warm"
     t0 = _log_start(job_id)
@@ -665,10 +672,15 @@ async def job_enrich_warm():
             enqueued = await asyncio.to_thread(
                 engine._enqueue_light_apps_for_tier, "warm", 500
             )
-            scraped = await engine.process_queue(batch_size=500, concurrency=8, tier="warm")
-            _log_done(job_id, t0, f"enqueued={enqueued}, scraped={scraped}")
         finally:
             db.close()
+        db2 = SessionLocal()
+        try:
+            engine2 = DiscoveryEngine(db2)
+            scraped = await engine2.process_queue(batch_size=500, concurrency=5, tier="warm")
+            _log_done(job_id, t0, f"enqueued={enqueued}, scraped={scraped}")
+        finally:
+            db2.close()
     except Exception as exc:
         _log_fail(job_id, exc)
 
@@ -677,7 +689,7 @@ async def job_enrich_warm():
 async def job_enrich_cold():
     """
     Enqueue COLD light-stage apps for full enrichment and process up to
-    1000 items with concurrency=5 (background, lowest priority).
+    1000 items with concurrency=3 (background, lowest priority).
     """
     job_id = "enrich_cold"
     t0 = _log_start(job_id)
@@ -690,10 +702,15 @@ async def job_enrich_cold():
             enqueued = await asyncio.to_thread(
                 engine._enqueue_light_apps_for_tier, "cold", 1000
             )
-            scraped = await engine.process_queue(batch_size=1000, concurrency=5, tier="cold")
-            _log_done(job_id, t0, f"enqueued={enqueued}, scraped={scraped}")
         finally:
             db.close()
+        db2 = SessionLocal()
+        try:
+            engine2 = DiscoveryEngine(db2)
+            scraped = await engine2.process_queue(batch_size=1000, concurrency=3, tier="cold")
+            _log_done(job_id, t0, f"enqueued={enqueued}, scraped={scraped}")
+        finally:
+            db2.close()
     except Exception as exc:
         _log_fail(job_id, exc)
 
@@ -1571,31 +1588,33 @@ def setup_scheduler() -> AsyncIOScheduler:
         **_JOB_DEFAULTS,
     )
 
-    # ── every 15 min: precompute blowing-up scores ────────────────────────────
+    # ── every 30 min: precompute blowing-up scores ────────────────────────────
     # First run: 4 min after startup (staggered from trending_compute at 2 min).
+    # Was 15 min — too frequent, holds a connection each time.
     scheduler.add_job(
         job_blowing_up_compute,
         trigger=IntervalTrigger(
-            minutes=15,
+            minutes=30,
             start_date=now + timedelta(minutes=4),
             timezone="UTC",
         ),
         id="blowing_up_compute",
-        name="Every 15min: Precompute Blowing-Up Scores",
+        name="Every 30min: Precompute Blowing-Up Scores",
         **_JOB_DEFAULTS,
     )
 
-    # ── every 10 min: precompute trending scores ─────────────────────────────
+    # ── every 30 min: precompute trending scores ─────────────────────────────
     # First run: 2 min after startup so the /trending endpoint serves data soon.
+    # Was 10 min — too frequent, holds a connection each time.
     scheduler.add_job(
         job_trending_compute,
         trigger=IntervalTrigger(
-            minutes=10,
+            minutes=30,
             start_date=now + timedelta(minutes=2),
             timezone="UTC",
         ),
         id="trending_compute",
-        name="Every 10min: Precompute Trending Scores",
+        name="Every 30min: Precompute Trending Scores",
         **_JOB_DEFAULTS,
     )
 

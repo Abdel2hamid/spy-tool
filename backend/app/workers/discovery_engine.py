@@ -850,7 +850,10 @@ class DiscoveryEngine:
         ).update({"status": "scraping"}, synchronize_session=False)
         self.db.commit()
 
-        semaphore = asyncio.Semaphore(concurrency)
+        # Cap concurrency to avoid pool exhaustion — each worker needs 1
+        # session for scraping + 1 for status update (sequential, not parallel).
+        effective_concurrency = min(concurrency, 5)
+        semaphore = asyncio.Semaphore(effective_concurrency)
         success_count = 0
 
         async def _process_one(item: DiscoveryQueue) -> bool:
@@ -863,7 +866,6 @@ class DiscoveryEngine:
                 try:
                     if mode == "light":
                         ok = await worker.scrape_light_details(item.app_id)
-                        # brief sleep for light path rate-limiting
                         await asyncio.sleep(0.1)
                     else:
                         ok = await worker.scrape_app_full_details(item.app_id)
@@ -871,9 +873,10 @@ class DiscoveryEngine:
                 except Exception as exc:
                     logger.error(f"[DISC] Queue scrape failed {item.app_id}: {exc}")
                 finally:
+                    # Close worker session BEFORE opening status-update session
                     await worker.cleanup()
 
-                # Update queue row in a dedicated session to avoid cross-thread issues
+                # Update queue row in a dedicated session
                 db2 = SessionLocal()
                 try:
                     row = db2.query(DiscoveryQueue).filter(DiscoveryQueue.id == item.id).first()

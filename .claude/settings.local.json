@@ -518,7 +518,21 @@
       "Bash(ls /Users/abdelhamid/appstore-spy/backend/app/services/*.py | head -10)",
       "Bash(npx tsc --noEmit 2>&1)",
       "Bash(npx next build 2>&1 | tail -25)",
-      "Bash(cd /Users/abdelhamid/appstore-spy/frontend && npx tsc --noEmit 2>&1 | tail -30)"
+      "Bash(cd /Users/abdelhamid/appstore-spy/frontend && npx tsc --noEmit 2>&1 | tail -30)",
+      "Bash(cd /Users/abdelhamid/appstore-spy/backend && python3 -c \"from app.main import app; print\\('OK'\\)\")",
+      "Bash(python3 -c \"\nfrom app.services.apple_search_ads_service import AppleSearchAdsService\nfrom app.services.keyword_intelligence_pipeline import KeywordIntelligencePipeline\nsvc = AppleSearchAdsService\\(\\)\nprint\\(f'Apple Search Ads enabled: {svc.enabled}'\\)\nprint\\('Pipeline class loaded OK'\\)\nprint\\('All imports clean'\\)\n\")",
+      "Bash(cd /Users/abdelhamid/appstore-spy/frontend && npx tsc --noEmit 2>&1 | tail -5)",
+      "Bash(git status -u)",
+      "Bash(git restore backend/app/config.py backend/app/main.py backend/app/models/models.py backend/app/services/keyword_intelligence_pipeline.py backend/DEPLOYMENT.md)",
+      "Bash(git status -u -- backend/)",
+      "Bash(cd /Users/abdelhamid/appstore-spy/backend && python3 -c \"\nfrom app.services.keyword_intelligence_pipeline import KeywordIntelligencePipeline\nprint\\('Pipeline loaded OK'\\)\nprint\\('Has apple_ads_service attr:', hasattr\\(KeywordIntelligencePipeline, 'enrich_with_apple_search_ads'\\)\\)\n\")",
+      "Bash(python3 -c \"\nimport os, importlib, pkgutil\n# Verify apple_search_ads_service.py is gone\nassert not os.path.exists\\('app/services/apple_search_ads_service.py'\\), 'Service file still exists!'\nprint\\('apple_search_ads_service.py deleted: OK'\\)\n\" && grep -r \"apple_search_ads\" backend/app/ 2>/dev/null; echo \"Grep exit: $?\")",
+      "Bash(python3 -m pytest tests/ -x --tb=short -q 2>&1 | tail -30)",
+      "Bash(git stash list && python3 -m pytest tests/test_download_estimator.py::TestDownloadEstimatorCompute::test_floor_is_at_least_1_daily -x --tb=line -q 2>&1 | tail -5)",
+      "Bash(find /Users/abdelhamid/appstore-spy/backend -name \"*.py\" -exec grep -l \"SessionLocal\" {} \\\\; | head -3)",
+      "Bash(cd /Users/abdelhamid/appstore-spy/backend && python -c \"import ast; ast.parse\\(open\\('app/database/__init__.py'\\).read\\(\\)\\); ast.parse\\(open\\('app/workers/scheduler.py'\\).read\\(\\)\\); ast.parse\\(open\\('app/workers/discovery_engine.py'\\).read\\(\\)\\); ast.parse\\(open\\('app/workers/tasks.py'\\).read\\(\\)\\); ast.parse\\(open\\('app/services/review_scraper_service.py'\\).read\\(\\)\\); ast.parse\\(open\\('app/main.py'\\).read\\(\\)\\); print\\('All files parse OK'\\)\")",
+      "Bash(cd /Users/abdelhamid/appstore-spy/backend && python3 -c \"import ast; ast.parse\\(open\\('app/database/__init__.py'\\).read\\(\\)\\); ast.parse\\(open\\('app/workers/scheduler.py'\\).read\\(\\)\\); ast.parse\\(open\\('app/workers/discovery_engine.py'\\).read\\(\\)\\); ast.parse\\(open\\('app/workers/tasks.py'\\).read\\(\\)\\); ast.parse\\(open\\('app/services/review_scraper_service.py'\\).read\\(\\)\\); ast.parse\\(open\\('app/main.py'\\).read\\(\\)\\); print\\('All files parse OK'\\)\")",
+      "WebSearch"
     ]
   }
 }

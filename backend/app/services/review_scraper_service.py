@@ -20,7 +20,7 @@ from app.models.models import App, Review
 
 logger = logging.getLogger(__name__)
 
-_CONCURRENT_APPS = 20   # max apps scraped simultaneously
+_CONCURRENT_APPS = 5    # max apps scraped simultaneously (was 20 — pool exhaustion)
 _DEFAULT_LIMIT   = 500  # reviews per app
 
 

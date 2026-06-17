@@ -630,11 +630,27 @@ def health_check():
     except Exception:
         pass
 
+    # 5. Connection pool status — critical for diagnosing pool exhaustion
+    pool_status = {}
+    try:
+        pool = engine.pool
+        pool_status = {
+            "pool_size": pool.size(),
+            "checked_in": pool.checkedin(),
+            "checked_out": pool.checkedout(),
+            "overflow": pool.overflow(),
+            "max_overflow": pool._max_overflow,
+            "total_connections": pool.checkedin() + pool.checkedout(),
+        }
+    except Exception as exc:
+        pool_status = {"error": str(exc)}
+
     return {
         "status": status,
         "uptime_seconds": round(time.monotonic() - _APP_START_TIME, 1),
         "checks": checks,
         "ranking_health": ranking_health,
+        "pool_status": pool_status,
         "scheduler_jobs": jobs,
         "job_metrics": get_job_metrics(),
         "response_ms": round((time.monotonic() - t0) * 1000, 1),
