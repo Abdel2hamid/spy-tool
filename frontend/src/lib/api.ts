@@ -934,6 +934,33 @@ export async function getAppVersions(appId: number): Promise<AppVersion[]> {
   return fetchApi<AppVersion[]>(`/apps/${appId}/versions`);
 }
 
+// ASO Score
+
+export interface ASOBreakdownItem {
+  score: number;
+  weight: number;
+  label: string;
+}
+
+export interface ASOTip {
+  category: string;
+  text: string;
+  impact: 'high' | 'medium' | 'low';
+}
+
+export interface ASOScoreResponse {
+  overall_score: number;
+  grade: string;
+  breakdown: Record<string, ASOBreakdownItem>;
+  tips: ASOTip[];
+  app_id: number;
+  app_name: string;
+}
+
+export async function getASOScore(appId: number): Promise<ASOScoreResponse> {
+  return fetchApi<ASOScoreResponse>(`/apps/${appId}/aso-score`);
+}
+
 export async function getAppReviews(
   appId: number,
   rating?: number,

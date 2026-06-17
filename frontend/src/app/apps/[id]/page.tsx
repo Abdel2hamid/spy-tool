@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useState, useEffect } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components';
-import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, DownloadEstimate, getAppDetail, getAppReviews, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, getDownloadEstimate, RankHistory, getFavoriteIds, addFavorite, removeFavorite } from '@/lib/api';
+import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, DownloadEstimate, ASOScoreResponse, ASOBreakdownItem, getAppDetail, getAppReviews, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, getDownloadEstimate, getASOScore, RankHistory, getFavoriteIds, addFavorite, removeFavorite } from '@/lib/api';
 import { fmtNum, fmtRev, fmtRange, fmtRevRange, confidenceLabel, CONFIDENCE_BADGE } from '@/lib/estimate-format';
 import {
   ArrowLeft, Star, Download, Calendar, Globe, MessageSquare,
@@ -390,6 +390,142 @@ function MarketEstimatesCard({ appId, app }: { appId: number; app: AppDetail }) 
 }
 
 
+// ── ASO Score Card ──────────────────────────────────────────────────────────
+
+const GRADE_COLORS: Record<string, string> = {
+  A: 'from-emerald-500 to-emerald-600',
+  B: 'from-blue-500 to-blue-600',
+  C: 'from-yellow-500 to-yellow-600',
+  D: 'from-orange-500 to-orange-600',
+  F: 'from-red-500 to-red-600',
+};
+
+const IMPACT_BADGE: Record<string, { bg: string; text: string }> = {
+  high: { bg: 'bg-red-100 dark:bg-red-950/40', text: 'text-red-700 dark:text-red-400' },
+  medium: { bg: 'bg-orange-100 dark:bg-orange-950/40', text: 'text-orange-700 dark:text-orange-400' },
+  low: { bg: 'bg-gray-100 dark:bg-gray-800', text: 'text-gray-600 dark:text-gray-400' },
+};
+
+function ASOScoreRing({ score, size = 80 }: { score: number; size?: number }) {
+  const r = (size - 8) / 2;
+  const circ = 2 * Math.PI * r;
+  const offset = circ - (score / 100) * circ;
+  const color = score >= 80 ? '#22c55e' : score >= 60 ? '#3b82f6' : score >= 40 ? '#f59e0b' : '#ef4444';
+  return (
+    <svg width={size} height={size} className="flex-shrink-0">
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e5e7eb" strokeWidth={6} className="dark:stroke-gray-700" />
+      <circle
+        cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={6}
+        strokeDasharray={circ} strokeDashoffset={offset}
+        strokeLinecap="round" transform={`rotate(-90 ${size / 2} ${size / 2})`}
+      />
+      <text x={size / 2} y={size / 2} textAnchor="middle" dominantBaseline="central" fontSize={size * 0.28} fontWeight={700} fill={color}>
+        {score}
+      </text>
+    </svg>
+  );
+}
+
+function BreakdownBar({ item }: { item: ASOBreakdownItem }) {
+  const color = item.score >= 70 ? 'bg-emerald-500' : item.score >= 40 ? 'bg-yellow-500' : 'bg-red-500';
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-gray-600 dark:text-gray-400">{item.label}</span>
+        <span className="font-semibold text-gray-900 dark:text-white">{item.score}/100</span>
+      </div>
+      <div className="h-1.5 w-full rounded-full bg-gray-200 dark:bg-gray-700">
+        <div className={cn('h-1.5 rounded-full transition-all', color)} style={{ width: `${item.score}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function ASOScoreCard({ appId }: { appId: number }) {
+  const [data, setData] = useState<ASOScoreResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    getASOScore(appId)
+      .then(setData)
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [appId]);
+
+  if (loading) {
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+        <div className="flex items-center gap-4">
+          <div className="h-20 w-20 animate-pulse rounded-full bg-gray-200 dark:bg-gray-800" />
+          <div className="flex-1 space-y-2">
+            <div className="h-5 w-32 animate-pulse rounded bg-gray-200 dark:bg-gray-800" />
+            <div className="h-3 w-48 animate-pulse rounded bg-gray-100 dark:bg-gray-800" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const breakdownEntries = Object.entries(data.breakdown);
+  const gradeColor = GRADE_COLORS[data.grade] || GRADE_COLORS.C;
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900 overflow-hidden">
+      {/* Header with gradient */}
+      <div className={cn('bg-gradient-to-r px-6 py-4 text-white', gradeColor)}>
+        <div className="flex items-center gap-4">
+          <ASOScoreRing score={data.overall_score} size={72} />
+          <div>
+            <h3 className="text-lg font-bold">ASO Score: {data.overall_score}/100</h3>
+            <p className="text-sm opacity-90">
+              Grade {data.grade} — {data.overall_score >= 80 ? 'Excellent optimization' : data.overall_score >= 60 ? 'Good, room to improve' : data.overall_score >= 40 ? 'Needs work' : 'Major improvements needed'}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="p-6">
+        {/* Breakdown bars */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 mb-6">
+          {breakdownEntries.map(([key, item]) => (
+            <BreakdownBar key={key} item={item} />
+          ))}
+        </div>
+
+        {/* Tips */}
+        {data.tips.length > 0 && (
+          <div>
+            <h4 className="flex items-center gap-1.5 text-sm font-semibold text-gray-900 dark:text-white mb-3">
+              <Lightbulb className="h-4 w-4 text-yellow-500" />
+              Optimization Tips
+            </h4>
+            <div className="space-y-2">
+              {data.tips.map((tip, i) => {
+                const badge = IMPACT_BADGE[tip.impact] || IMPACT_BADGE.low;
+                return (
+                  <div
+                    key={i}
+                    className="flex items-start gap-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5 dark:border-gray-800 dark:bg-gray-900/50"
+                  >
+                    <span className={cn('pill mt-0.5 text-[10px] font-semibold flex-shrink-0', badge.bg, badge.text)}>
+                      {tip.impact}
+                    </span>
+                    <p className="text-sm text-gray-700 dark:text-gray-300">{tip.text}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 function OverviewTab({ app, appId }: { app: AppDetail; appId: number }) {
   return (
     <div className="space-y-6">
@@ -432,6 +568,9 @@ function OverviewTab({ app, appId }: { app: AppDetail; appId: number }) {
 
       {/* Market Estimates — full rich card */}
       <MarketEstimatesCard appId={appId} app={app} />
+
+      {/* ASO Score */}
+      <ASOScoreCard appId={appId} />
 
       {app.screenshots && app.screenshots.length > 0 && (
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">

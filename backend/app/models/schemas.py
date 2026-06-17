@@ -1435,6 +1435,35 @@ class CompetitorRankHistoryResponse(BaseModel):
 # Keyword Gap Analysis
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# ASO Score
+# ---------------------------------------------------------------------------
+
+class ASOBreakdownItem(BaseModel):
+    score: int
+    weight: int
+    label: str
+
+
+class ASOTip(BaseModel):
+    category: str
+    text: str
+    impact: str  # 'high', 'medium', 'low'
+
+
+class ASOScoreResponse(BaseModel):
+    overall_score: int
+    grade: str
+    breakdown: Dict[str, ASOBreakdownItem]
+    tips: List[ASOTip]
+    app_id: int
+    app_name: str
+
+
+# ---------------------------------------------------------------------------
+# Keyword Gap Analysis
+# ---------------------------------------------------------------------------
+
 class KeywordGapItem(BaseModel):
     keyword: str
     gap_type: str  # 'missing', 'weak', 'shared', 'winning', 'unique'

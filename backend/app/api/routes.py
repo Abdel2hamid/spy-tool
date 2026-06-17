@@ -88,6 +88,7 @@ from app.models.schemas import (
     CompetitorCompareResponse,
     CompetitorRankHistoryResponse,
     KeywordGapReportResponse,
+    ASOScoreResponse,
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
@@ -2155,6 +2156,18 @@ def get_app_analytics(app_id: int, db: Session = Depends(get_db)):
         )
     
     return analytics
+
+
+@router.get("/apps/{app_id}/aso-score", response_model=ASOScoreResponse)
+def get_aso_score(app_id: int, db: Session = Depends(get_db)):
+    """Compute ASO optimization score with actionable tips."""
+    app = db.query(models.App).filter(models.App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    from app.services.aso_score_service import ASOScoreService
+    svc = ASOScoreService(db)
+    return svc.score(app_id)
 
 
 @router.get("/apps/{app_id}/market-weakness", response_model=MarketWeaknessResponse)
