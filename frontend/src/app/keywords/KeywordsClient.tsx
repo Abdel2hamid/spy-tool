@@ -113,27 +113,102 @@ function trendGrowthColor(growth: number): string {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function ScoreRing({ score, size = 40 }: { score: number; size?: number }) {
-  const color =
-    score >= 70 ? '#10b981' : score >= 50 ? '#f59e0b' : score >= 30 ? '#ef4444' : '#9ca3af';
-  const ring =
-    score >= 70
-      ? 'border-emerald-500'
-      : score >= 50
-      ? 'border-amber-500'
-      : score >= 30
-      ? 'border-red-500'
-      : 'border-gray-300 dark:border-gray-600';
+/** SVG donut ring — AppTweak-style circular progress indicator. */
+function DonutRing({
+  value,
+  max = 100,
+  size = 40,
+  invert = false,
+}: {
+  value: number;
+  max?: number;
+  size?: number;
+  invert?: boolean;
+}) {
+  const pct = Math.min(Math.max(value / max, 0), 1);
+  const r = (size - 6) / 2;
+  const circ = 2 * Math.PI * r;
+  const offset = circ * (1 - pct);
+
+  // invert = true → low values are green (difficulty), false → high values are green (popularity)
+  const effective = invert ? 100 - value : value;
+  const strokeColor =
+    effective >= 60 ? '#22c55e' : effective >= 35 ? '#f59e0b' : '#ef4444';
+  const textColor =
+    effective >= 60 ? '#16a34a' : effective >= 35 ? '#d97706' : '#dc2626';
+
   return (
-    <div
-      className={cn('flex flex-shrink-0 items-center justify-center rounded-full border-2', ring)}
-      style={{ width: size, height: size }}
-    >
-      <span className="text-xs font-bold" style={{ color }}>
-        {Math.round(score)}
+    <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={3}
+          className="text-gray-200 dark:text-gray-700"
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke={strokeColor}
+          strokeWidth={3}
+          strokeDasharray={circ}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+        />
+      </svg>
+      <span
+        className="absolute inset-0 flex items-center justify-center text-xs font-bold"
+        style={{ color: textColor }}
+      >
+        {Math.round(value)}
       </span>
     </div>
   );
+}
+
+/** Kept for drawer and other non-table uses */
+function ScoreRing({ score, size = 40 }: { score: number; size?: number }) {
+  return <DonutRing value={score} size={size} />;
+}
+
+/** Target badge — Moderate / High Competition / Avoid */
+function TargetBadge({ difficulty, opportunity }: { difficulty: number; opportunity: number }) {
+  if (difficulty <= 35 && opportunity >= 40) {
+    return (
+      <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+        Moderate
+      </span>
+    );
+  }
+  if (difficulty >= 70 || (difficulty >= 50 && opportunity < 30)) {
+    return (
+      <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-700 dark:bg-red-950 dark:text-red-300">
+        Avoid
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-medium text-orange-700 dark:bg-orange-950 dark:text-orange-300">
+      High Competition
+    </span>
+  );
+}
+
+/** Estimate daily downloads range from volume_score using exponential curve. */
+function estDownloadsRange(volumeScore: number): string {
+  if (volumeScore <= 0) return '0';
+  // Maps volume_score → estimated daily searches, then applies CTR range for top-5
+  const dailySearches = 10 * Math.pow(1.055, volumeScore);
+  const low = Math.round(dailySearches * 0.06 * 0.3);   // rank 5 CTR × conversion
+  const high = Math.round(dailySearches * 0.35 * 0.3);  // rank 1 CTR × conversion
+  if (high <= 0) return '0';
+  const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
+  return `${fmt(low)} - ${fmt(high)}`;
 }
 
 function DifficultyDots({ difficulty }: { difficulty: number }) {
@@ -887,38 +962,38 @@ export default function KeywordsClient() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-gray-100 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                  <tr className="border-b border-gray-200 bg-gray-50/80 dark:border-gray-700 dark:bg-gray-800/60">
+                    <th className="sticky left-0 z-10 bg-gray-50/80 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:bg-gray-800/60">
                       Keyword
                     </th>
-                    <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
-                      Volume
+                    <th className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+                      Popularity
                     </th>
-                    <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+                    <th className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
                       Difficulty
                     </th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
-                      Trend
+                    <th className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+                      Target
                     </th>
-                    <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
-                      Opp.
+                    <th className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+                      Top 5 Daily Downloads
                     </th>
-                    <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
-                      Feasibility
+                    <th className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+                      Opportunity
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                    <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
                       Top Player
                     </th>
-                    <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
-                      Class
+                    <th className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
+                      Brands
                     </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                   {loading ? (
                     Array.from({ length: 10 }).map((_, i) => (
                       <tr key={i}>
-                        <td colSpan={8} className="px-4 py-3">
+                        <td colSpan={8} className="px-4 py-3.5">
                           <div className="h-5 w-full animate-pulse rounded bg-gray-100 dark:bg-gray-800" />
                         </td>
                       </tr>
@@ -935,72 +1010,105 @@ export default function KeywordsClient() {
                       </td>
                     </tr>
                   ) : (
-                    keywords.map((kw) => (
-                      <tr
-                        key={kw.id}
-                        onClick={() => setSelectedTerm(kw.term)}
-                        className={cn(
-                          'cursor-pointer transition-colors hover:bg-indigo-50/50 dark:hover:bg-indigo-950/20',
-                          selectedTerm === kw.term && 'bg-indigo-50 dark:bg-indigo-950/30'
-                        )}
-                      >
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium text-gray-900 dark:text-white">{kw.term}</span>
-                            {kw.trend_score > 50 && (
-                              <span title="High Google Trends interest">
-                                <Activity className="h-3 w-3 text-indigo-400" />
-                              </span>
-                            )}
-                            {kw.trend_growth > 20 && (
-                              <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-xs text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400">
-                                +{Math.round(kw.trend_growth)}%
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex justify-center">
-                            <ScoreRing score={kw.volume_score || 0} size={36} />
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex justify-center">
-                            <ScoreRing score={kw.difficulty_v2 || kw.difficulty || 0} size={36} />
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <TrendBadge
-                            trend={kw.trend}
-                            trendScore={kw.trend_score > 0 ? kw.trend_score : undefined}
-                          />
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex justify-center">
-                            <ScoreRing score={kw.opportunity_score} size={36} />
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex justify-center">
-                            <ScoreRing score={kw.feasibility_score} size={36} />
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-left">
-                          {kw.top_player ? (
-                            <span className="max-w-[120px] truncate text-xs text-gray-500 dark:text-gray-400" title={kw.top_player}>
-                              {kw.top_player}
-                            </span>
-                          ) : (
-                            <span className="text-xs text-gray-300 dark:text-gray-600">—</span>
+                    keywords.map((kw) => {
+                      const diff = kw.difficulty_v2 || kw.difficulty || 0;
+                      const vol = kw.volume_score || 0;
+                      return (
+                        <tr
+                          key={kw.id}
+                          onClick={() => setSelectedTerm(kw.term)}
+                          className={cn(
+                            'cursor-pointer transition-colors hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20',
+                            selectedTerm === kw.term && 'bg-indigo-50 dark:bg-indigo-950/30'
                           )}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex justify-center">
-                            <ClassBadge cls={kw.classification as Classification} />
-                          </div>
-                        </td>
-                      </tr>
-                    ))
+                        >
+                          {/* Keyword */}
+                          <td className="sticky left-0 z-10 bg-white px-4 py-3 dark:bg-gray-900">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-gray-900 dark:text-white">{kw.term}</span>
+                              {kw.trend_growth > 20 && (
+                                <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400">
+                                  +{Math.round(kw.trend_growth)}%
+                                </span>
+                              )}
+                              {kw.trend_score > 50 && (
+                                <span title="High Google Trends interest"><Activity className="h-3 w-3 text-indigo-400" /></span>
+                              )}
+                            </div>
+                            {kw.last_enriched && (
+                              <p className="mt-0.5 text-[10px] text-gray-400">
+                                {(() => {
+                                  const hrs = Math.round((Date.now() - new Date(kw.last_enriched).getTime()) / 3600000);
+                                  return hrs < 1 ? 'just now' : hrs < 24 ? `${hrs} hr ago` : `${Math.round(hrs / 24)}d ago`;
+                                })()}
+                              </p>
+                            )}
+                          </td>
+
+                          {/* Popularity (volume_score) */}
+                          <td className="px-3 py-3">
+                            <div className="flex justify-center">
+                              <DonutRing value={vol} size={38} />
+                            </div>
+                          </td>
+
+                          {/* Difficulty */}
+                          <td className="px-3 py-3">
+                            <div className="flex justify-center">
+                              <DonutRing value={diff} size={38} invert />
+                            </div>
+                          </td>
+
+                          {/* Target */}
+                          <td className="px-3 py-3 text-center">
+                            <TargetBadge difficulty={diff} opportunity={kw.opportunity_score} />
+                          </td>
+
+                          {/* Top 5 Daily Downloads */}
+                          <td className="px-3 py-3 text-center">
+                            <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                              {vol > 0 ? estDownloadsRange(vol) : '—'}
+                            </span>
+                          </td>
+
+                          {/* Opportunity */}
+                          <td className="px-3 py-3">
+                            <div className="flex justify-center">
+                              <DonutRing value={kw.opportunity_score} size={38} />
+                            </div>
+                          </td>
+
+                          {/* Top Player */}
+                          <td className="max-w-[140px] px-3 py-3">
+                            {kw.top_player ? (
+                              <span className="block truncate text-xs text-gray-600 dark:text-gray-400" title={kw.top_player}>
+                                {kw.top_player}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-gray-300 dark:text-gray-600">—</span>
+                            )}
+                          </td>
+
+                          {/* Brands */}
+                          <td className="px-3 py-3 text-center">
+                            {(kw.brand_count || 0) > 0 ? (
+                              <span className={cn(
+                                'inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold',
+                                kw.brand_count >= 4
+                                  ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400'
+                                  : kw.brand_count >= 2
+                                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400'
+                                  : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
+                              )}>
+                                {kw.brand_count}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-gray-300 dark:text-gray-600">0</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
