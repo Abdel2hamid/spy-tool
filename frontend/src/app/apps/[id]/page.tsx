@@ -2174,17 +2174,26 @@ function DiscoveredKeywordsTable({ appId, initialData }: { appId: number; initia
     setDiscovering(true);
     setError(null);
     try {
-      await triggerKeywordDiscovery(appId);
+      try {
+        await triggerKeywordDiscovery(appId);
+      } catch (firstErr: unknown) {
+        const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+        if (msg.includes('400')) {
+          // No extracted keywords yet — auto-extract first, then retry discovery
+          setError(null);
+          await triggerKeywordExtraction(appId);
+          await new Promise(r => setTimeout(r, 5000));
+          await triggerKeywordDiscovery(appId);
+        } else {
+          throw firstErr;
+        }
+      }
       // Poll after a delay — discovery takes a while
       await new Promise(r => setTimeout(r, 8000));
       await load();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('400')) {
-        setError('No extracted keywords found. Run keyword extraction first (click "Extract Keywords" above), then retry.');
-      } else {
-        setError(`Discovery failed: ${msg}. Check Railway logs for details.`);
-      }
+      setError(`Discovery failed: ${msg}. Check Railway logs for details.`);
     }
     setDiscovering(false);
   };
