@@ -448,6 +448,18 @@ _MIGRATIONS = [
     "ALTER TABLE app_keywords ADD COLUMN IF NOT EXISTS estimated_installs FLOAT DEFAULT 0.0",
     "CREATE INDEX IF NOT EXISTS idx_ak_chance ON app_keywords (app_id, chance_score)",
     "CREATE INDEX IF NOT EXISTS idx_ak_kei ON app_keywords (app_id, kei)",
+
+    # ── Keyword data cleanup: purge junk from alphabet expansion ──────────
+    # Delete keywords ending in isolated single/double letters (e.g. "timer x", "exercise s j")
+    # Pattern: " x" or " x y" at end of term — uses PostgreSQL ~ regex operator
+    """DELETE FROM keyword_queue WHERE keyword_id IN (SELECT id FROM keywords WHERE term ~ ' [a-z]( [a-z])*$')""",
+    """DELETE FROM app_keywords WHERE keyword_id IN (SELECT id FROM keywords WHERE term ~ ' [a-z]( [a-z])*$')""",
+    """DELETE FROM keyword_trends WHERE keyword_id IN (SELECT id FROM keywords WHERE term ~ ' [a-z]( [a-z])*$')""",
+    """DELETE FROM keywords WHERE term ~ ' [a-z]( [a-z])*$'""",
+    # Also purge from app_discovered_keywords
+    """DELETE FROM app_discovered_keywords WHERE keyword ~ ' [a-z]( [a-z])*$'""",
+    # Reset enrichment status so pipeline re-scores everything with v2
+    "UPDATE keywords SET status = 'raw', volume_score = 0, difficulty_v2 = 0 WHERE volume_score = 0 AND status != 'raw'",
 ]
 
 

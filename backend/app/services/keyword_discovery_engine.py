@@ -251,18 +251,17 @@ class KeywordDiscoveryEngine:
     def _static_expand(self, seeds: List[str]) -> Set[str]:
         """
         Generate variants without any network calls:
-        - seed + single letter (a–z)
         - seed + each suffix modifier
         - prefix + seed
+
+        NOTE: Single-letter alphabet expansion (seed + "a"…"z") was removed
+        because it produced junk like "fitness a", "timer x".  Phase B already
+        queries Apple autocomplete with "seed letter" and stores the *real*
+        suggestions that Apple returns — not the raw queries themselves.
         """
         results: Set[str] = set()
-        letters = list(string.ascii_lowercase)
 
         for seed in seeds:
-            # alphabet expansion: "fitness " + "a" … "z"
-            for letter in letters:
-                results.add(f"{seed} {letter}")
-
             # suffix modifiers
             for suffix in _SUFFIXES:
                 results.add(f"{seed} {suffix}")
@@ -396,6 +395,10 @@ class KeywordDiscoveryEngine:
     # Normalisation + deduplication
     # -----------------------------------------------------------------------
 
+    # Regex to reject keywords ending in isolated single letters or letter pairs
+    # e.g. "fitness a", "timer x y", "breathing exercise s j"
+    _JUNK_TAIL_RE = re.compile(r"\s[a-z](\s[a-z])*$")
+
     @staticmethod
     def _normalize_batch(candidates: List[str]) -> List[str]:
         """
@@ -417,6 +420,10 @@ class KeywordDiscoveryEngine:
                 continue
             # ASCII-ish guard
             if re.search(r"[^\x20-\x7e]", term):
+                rejected += 1
+                continue
+            # Reject trailing isolated single letters ("fitness a", "timer x y")
+            if KeywordDiscoveryEngine._JUNK_TAIL_RE.search(term):
                 rejected += 1
                 continue
             # Hard quality gate
