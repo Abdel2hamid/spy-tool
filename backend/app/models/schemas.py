@@ -1464,6 +1464,43 @@ class ASOScoreResponse(BaseModel):
 # Keyword Gap Analysis
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Keyword Suggestions
+# ---------------------------------------------------------------------------
+
+class KeywordSuggestionItem(BaseModel):
+    keyword: str
+    bucket: str  # 'quick_win', 'high_value_gap', 'untapped', 'long_tail', 'defend'
+    reason: str
+    app_rank: Optional[int] = None
+    competitor_rank: Optional[int] = None
+    keyword_gap: bool = False
+    search_volume: int = 0
+    difficulty: float = 0
+    volume_score: float = 0
+    difficulty_v2: float = 0
+    trend_score: float = 0
+    trend_direction: str = "stable"
+    opportunity_score: float = 0
+    source: str = ""
+
+
+class KeywordSuggestionBucketCounts(BaseModel):
+    quick_wins: int = 0
+    high_value_gaps: int = 0
+    untapped: int = 0
+    long_tail: int = 0
+    defend: int = 0
+
+
+class KeywordSuggestionsResponse(BaseModel):
+    app_id: int
+    app_name: str
+    suggestions: List[KeywordSuggestionItem]
+    total: int
+    bucket_counts: KeywordSuggestionBucketCounts
+
+
 class KeywordGapItem(BaseModel):
     keyword: str
     gap_type: str  # 'missing', 'weak', 'shared', 'winning', 'unique'

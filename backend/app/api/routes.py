@@ -89,6 +89,7 @@ from app.models.schemas import (
     CompetitorRankHistoryResponse,
     KeywordGapReportResponse,
     ASOScoreResponse,
+    KeywordSuggestionsResponse,
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
@@ -2168,6 +2169,18 @@ def get_aso_score(app_id: int, db: Session = Depends(get_db)):
     from app.services.aso_score_service import ASOScoreService
     svc = ASOScoreService(db)
     return svc.score(app_id)
+
+
+@router.get("/apps/{app_id}/keyword-suggestions", response_model=KeywordSuggestionsResponse)
+def get_keyword_suggestions(app_id: int, db: Session = Depends(get_db)):
+    """Smart keyword suggestions categorised into actionable buckets."""
+    app = db.query(models.App).filter(models.App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    from app.services.keyword_suggestions_service import KeywordSuggestionsService
+    svc = KeywordSuggestionsService(db)
+    return svc.suggest(app_id)
 
 
 @router.get("/apps/{app_id}/market-weakness", response_model=MarketWeaknessResponse)

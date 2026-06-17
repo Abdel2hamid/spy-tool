@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useState, useEffect } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components';
-import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, DownloadEstimate, ASOScoreResponse, ASOBreakdownItem, getAppDetail, getAppReviews, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, getDownloadEstimate, getASOScore, RankHistory, getFavoriteIds, addFavorite, removeFavorite } from '@/lib/api';
+import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, DownloadEstimate, ASOScoreResponse, ASOBreakdownItem, KeywordSuggestionsResponse, KeywordSuggestionItem, getAppDetail, getAppReviews, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, getDownloadEstimate, getASOScore, getKeywordSuggestions, RankHistory, getFavoriteIds, addFavorite, removeFavorite } from '@/lib/api';
 import { fmtNum, fmtRev, fmtRange, fmtRevRange, confidenceLabel, CONFIDENCE_BADGE } from '@/lib/estimate-format';
 import {
   ArrowLeft, Star, Download, Calendar, Globe, MessageSquare,
@@ -2850,6 +2850,170 @@ function AppAutopsyTab({ appId }: { appId: number }) {
 }
 
 
+// ── Smart Keyword Suggestions ───────────────────────────────────────────────
+
+const BUCKET_META: Record<string, { label: string; color: string; icon: string; bg: string }> = {
+  quick_win: { label: 'Quick Wins', color: 'text-emerald-700 dark:text-emerald-400', icon: '⚡', bg: 'bg-emerald-100 dark:bg-emerald-950/40' },
+  high_value_gap: { label: 'High-Value Gaps', color: 'text-red-700 dark:text-red-400', icon: '🎯', bg: 'bg-red-100 dark:bg-red-950/40' },
+  untapped: { label: 'Untapped', color: 'text-blue-700 dark:text-blue-400', icon: '💎', bg: 'bg-blue-100 dark:bg-blue-950/40' },
+  long_tail: { label: 'Long Tail', color: 'text-purple-700 dark:text-purple-400', icon: '🌱', bg: 'bg-purple-100 dark:bg-purple-950/40' },
+  defend: { label: 'Defend', color: 'text-orange-700 dark:text-orange-400', icon: '🛡️', bg: 'bg-orange-100 dark:bg-orange-950/40' },
+};
+
+function SuggestionMiniDonut({ value, invert = false }: { value: number; invert?: boolean }) {
+  const r = 12;
+  const circ = 2 * Math.PI * r;
+  const eff = invert ? 100 - value : value;
+  const color = eff >= 60 ? '#22c55e' : eff >= 35 ? '#f59e0b' : '#ef4444';
+  const offset = circ - (value / 100) * circ;
+  return (
+    <svg width={28} height={28} className="flex-shrink-0">
+      <circle cx={14} cy={14} r={r} fill="none" stroke="#e5e7eb" strokeWidth={2.5} className="dark:stroke-gray-700" />
+      <circle cx={14} cy={14} r={r} fill="none" stroke={color} strokeWidth={2.5}
+        strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round" transform="rotate(-90 14 14)" />
+      <text x={14} y={14} textAnchor="middle" dominantBaseline="central" fontSize={8} fontWeight={600} fill={color}>
+        {Math.round(value)}
+      </text>
+    </svg>
+  );
+}
+
+function KeywordSuggestionsPanel({ appId }: { appId: number }) {
+  const [data, setData] = useState<KeywordSuggestionsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [activeBucket, setActiveBucket] = useState<string>('all');
+
+  useEffect(() => {
+    setLoading(true);
+    getKeywordSuggestions(appId)
+      .then(setData)
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [appId]);
+
+  if (loading) {
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+        <div className="h-5 w-48 animate-pulse rounded bg-gray-200 dark:bg-gray-800 mb-4" />
+        <div className="space-y-2">
+          {[...Array(4)].map((_, i) => <div key={i} className="h-12 animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />)}
+        </div>
+      </div>
+    );
+  }
+
+  if (!data || data.total === 0) return null;
+
+  const filtered = activeBucket === 'all'
+    ? data.suggestions
+    : data.suggestions.filter((s) => s.bucket === activeBucket);
+
+  const bucketFilters = [
+    { key: 'all', label: 'All', count: data.total },
+    { key: 'quick_win', count: data.bucket_counts.quick_wins },
+    { key: 'high_value_gap', count: data.bucket_counts.high_value_gaps },
+    { key: 'untapped', count: data.bucket_counts.untapped },
+    { key: 'long_tail', count: data.bucket_counts.long_tail },
+    { key: 'defend', count: data.bucket_counts.defend },
+  ].filter((b) => b.count > 0);
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900 overflow-hidden">
+      <div className="border-b border-gray-200 bg-gradient-to-r from-indigo-50 to-purple-50 px-6 py-4 dark:border-gray-800 dark:from-indigo-950/20 dark:to-purple-950/20">
+        <h3 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
+          <Sparkles className="h-5 w-5 text-indigo-500" />
+          Smart Keyword Suggestions
+          <span className="pill bg-indigo-100 text-indigo-700 text-xs dark:bg-indigo-950/40 dark:text-indigo-400">
+            {data.total} found
+          </span>
+        </h3>
+        <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+          AI-prioritised keywords grouped by strategy — click a bucket to filter
+        </p>
+      </div>
+
+      {/* Bucket filter pills */}
+      <div className="flex flex-wrap gap-2 px-6 py-3 border-b border-gray-100 dark:border-gray-800">
+        {bucketFilters.map((b) => {
+          const meta = BUCKET_META[b.key];
+          return (
+            <button
+              key={b.key}
+              onClick={() => setActiveBucket(b.key)}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
+                activeBucket === b.key
+                  ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-300 dark:bg-indigo-950/40 dark:text-indigo-400 dark:ring-indigo-700'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700',
+              )}
+            >
+              {meta && <span>{meta.icon}</span>}
+              {b.key === 'all' ? 'All' : meta?.label || b.key}
+              <span className="font-bold">{b.count}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Suggestions table */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50/50 dark:border-gray-800 dark:bg-gray-950/50">
+              <th className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Keyword</th>
+              <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Strategy</th>
+              <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 text-center">Vol</th>
+              <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 text-center">Diff</th>
+              <th className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 text-center">Your Rank</th>
+              <th className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Why</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+            {filtered.map((s) => {
+              const meta = BUCKET_META[s.bucket] || BUCKET_META.quick_win;
+              return (
+                <tr key={s.keyword} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                  <td className="px-4 py-2.5 font-medium text-gray-900 dark:text-white max-w-[180px] truncate">
+                    {s.keyword}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <span className={cn('pill text-[10px] font-semibold', meta.bg, meta.color)}>
+                      {meta.icon} {meta.label}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2.5 text-center">
+                    <SuggestionMiniDonut value={s.volume_score} />
+                  </td>
+                  <td className="px-3 py-2.5 text-center">
+                    <SuggestionMiniDonut value={s.difficulty_v2} invert />
+                  </td>
+                  <td className="px-3 py-2.5 text-center">
+                    {s.app_rank != null ? (
+                      <span className={cn(
+                        'font-mono text-xs font-semibold',
+                        s.app_rank <= 10 ? 'text-emerald-600 dark:text-emerald-400' :
+                        s.app_rank <= 30 ? 'text-yellow-600 dark:text-yellow-400' :
+                        'text-gray-500',
+                      )}>
+                        #{s.app_rank}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-300 dark:text-gray-600">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-gray-500 dark:text-gray-400 max-w-[280px]">
+                    {s.reason}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function KeywordsTabContent({ appId }: { appId: number }) {
   const [discoveredData, setDiscoveredData] = useState<DiscoveredKeywordsResponse | null | undefined>(undefined);
   const [kwIntelData, setKwIntelData] = useState<KeywordIntelligence | null | undefined>(undefined);
@@ -2863,6 +3027,9 @@ function KeywordsTabContent({ appId }: { appId: number }) {
 
   return (
     <div className="space-y-8">
+      {/* ── Smart Suggestions ── */}
+      <KeywordSuggestionsPanel appId={appId} />
+
       {/* ── Best Opportunities highlight ── */}
       <KeywordOpportunitiesHighlight appId={appId} discoveredInitial={discoveredData} />
 

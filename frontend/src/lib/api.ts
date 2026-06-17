@@ -961,6 +961,45 @@ export async function getASOScore(appId: number): Promise<ASOScoreResponse> {
   return fetchApi<ASOScoreResponse>(`/apps/${appId}/aso-score`);
 }
 
+// Keyword Suggestions
+
+export interface KeywordSuggestionItem {
+  keyword: string;
+  bucket: 'quick_win' | 'high_value_gap' | 'untapped' | 'long_tail' | 'defend';
+  reason: string;
+  app_rank: number | null;
+  competitor_rank: number | null;
+  keyword_gap: boolean;
+  search_volume: number;
+  difficulty: number;
+  volume_score: number;
+  difficulty_v2: number;
+  trend_score: number;
+  trend_direction: string;
+  opportunity_score: number;
+  source: string;
+}
+
+export interface KeywordSuggestionBucketCounts {
+  quick_wins: number;
+  high_value_gaps: number;
+  untapped: number;
+  long_tail: number;
+  defend: number;
+}
+
+export interface KeywordSuggestionsResponse {
+  app_id: number;
+  app_name: string;
+  suggestions: KeywordSuggestionItem[];
+  total: number;
+  bucket_counts: KeywordSuggestionBucketCounts;
+}
+
+export async function getKeywordSuggestions(appId: number): Promise<KeywordSuggestionsResponse> {
+  return fetchApi<KeywordSuggestionsResponse>(`/apps/${appId}/keyword-suggestions`);
+}
+
 export async function getAppReviews(
   appId: number,
   rating?: number,
