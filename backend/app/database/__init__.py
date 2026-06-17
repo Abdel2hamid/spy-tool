@@ -25,9 +25,11 @@ Base = declarative_base()
 def _on_checkin(dbapi_conn, connection_record):
     """Reset statement_timeout when a connection returns to the pool."""
     try:
+        dbapi_conn.rollback()
         cursor = dbapi_conn.cursor()
         cursor.execute("RESET statement_timeout")
         cursor.close()
+        dbapi_conn.commit()
     except Exception:
         pass
 
