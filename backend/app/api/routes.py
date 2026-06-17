@@ -1404,6 +1404,11 @@ def create_keyword(keyword: KeywordCreate, db: Session = Depends(get_db), _user=
 
 def _kw_opportunity_score(search_volume: int, difficulty: float, trend: float, apps_count: int) -> float:
     """Composite keyword opportunity score 0–100."""
+    # No real data → low-confidence score
+    has_data = search_volume > 0 or difficulty > 0 or apps_count > 0
+    if not has_data:
+        return round(max(min(trend + 10.0, 20.0), 0.0) * 0.5, 1)
+
     vol_pts = min(search_volume / 1000.0 * 3.0, 30.0)
     diff_pts = (1.0 - difficulty / 100.0) * 30.0
     trend_pts = min(max(trend, -10.0) + 10.0, 20.0)
@@ -1431,6 +1436,11 @@ def _kw_feasibility_score(
     brand_dominated: bool,
 ) -> float:
     """Feasibility score 0–100 (can you actually win this keyword)."""
+    # No real data → unknown feasibility, return low score
+    has_data = difficulty > 0 or apps_count > 0 or ads_presence > 0 or feature_gap_count > 0
+    if not has_data:
+        return 10.0
+
     diff_pts = (1.0 - difficulty / 100.0) * 25.0
     if apps_count < 5:
         scar_pts = 25.0
@@ -1459,6 +1469,11 @@ def _kw_feasibility_score(
 
 
 def _kw_classify(difficulty: float, apps_count: int, top_reviews: int, brand_dominated: bool) -> str:
+    # No real data — don't label as "easy", treat as unknown → medium
+    has_data = difficulty > 0 or apps_count > 0 or top_reviews > 0
+    if not has_data:
+        return "medium"
+
     if brand_dominated or difficulty > 80 or top_reviews > 500_000:
         return "impossible"
     if difficulty > 60 or top_reviews > 100_000 or apps_count > 150:

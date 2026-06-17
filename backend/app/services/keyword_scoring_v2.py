@@ -435,6 +435,10 @@ def compute_opportunity_score_v2(
     0-100 opportunity score.
     """
 
+    # No real data → low-confidence score (don't reward zero difficulty)
+    if volume_score <= 0 and difficulty_score <= 0 and trend_score <= 0:
+        return 0.0
+
     # Volume component (0-35).
     volume_component = volume_score / 100.0 * 35.0
 

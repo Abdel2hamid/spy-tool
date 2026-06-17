@@ -164,6 +164,10 @@ def _compute_feasibility_score(
       vel_pts   (0-20): positive trend velocity = rising tide lifts all boats
       scar_pts  (0-10): fewer competing apps = less noise to cut through
     """
+    # No real data → unknown, return low score
+    if difficulty <= 0 and dominance_score <= 0 and apps_count <= 0:
+        return 10.0
+
     diff_pts = (1.0 - min(difficulty, 100.0) / 100.0) * 35.0
     dom_pts = (1.0 - min(dominance_score, 100.0) / 100.0) * 35.0
     vel_pts = min(max(trend_velocity, 0.0) / 50.0 * 20.0, 20.0)
