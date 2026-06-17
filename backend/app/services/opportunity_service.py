@@ -153,7 +153,7 @@ class OpportunityScoreService:
         Return top keywords sorted by opportunity_score DESC.
         Includes all fields needed for the frontend opportunities table.
         """
-        from app.models.models import AppDiscoveredKeyword
+        from app.models.models import AppDiscoveredKeyword, Keyword as KW, AppKeyword as AKW
 
         rows = (
             self.db.query(AppDiscoveredKeyword)
@@ -163,8 +163,28 @@ class OpportunityScoreService:
             .all()
         )
 
-        return [
-            {
+        # Batch-load v2 scores from Keyword + AppKeyword tables
+        terms = [r.keyword for r in rows]
+        kw_map = {}
+        if terms:
+            kw_rows = self.db.query(KW).filter(KW.term.in_(terms)).all()
+            kw_map = {k.term: k for k in kw_rows}
+        akw_map = {}
+        if terms:
+            kw_ids = [k.id for k in kw_map.values()]
+            if kw_ids:
+                akw_rows = (
+                    self.db.query(AKW)
+                    .filter(AKW.app_id == app_id, AKW.keyword_id.in_(kw_ids))
+                    .all()
+                )
+                akw_map = {a.keyword_id: a for a in akw_rows}
+
+        result = []
+        for r in rows:
+            kw = kw_map.get(r.keyword)
+            akw = akw_map.get(kw.id) if kw else None
+            result.append({
                 "keyword": r.keyword,
                 "search_volume": r.search_volume,
                 "difficulty": r.difficulty,
@@ -175,6 +195,11 @@ class OpportunityScoreService:
                 "keyword_gap": bool(getattr(r, "keyword_gap", False)),
                 "opportunity_score": r.opportunity_score,
                 "source": r.source,
-            }
-            for r in rows
-        ]
+                # V2 scores
+                "chance_score": float(akw.chance_score or 0) if akw else 0.0,
+                "kei": float(akw.kei or 0) if akw else 0.0,
+                "estimated_installs": float(akw.estimated_installs or 0) if akw else 0.0,
+                "volume_score": float(kw.volume_score or 0) if kw else 0.0,
+                "difficulty_v2": float(kw.difficulty_v2 or 0) if kw else 0.0,
+            })
+        return result

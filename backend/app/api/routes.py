@@ -1518,6 +1518,9 @@ def get_keywords_enhanced(
         "trend_velocity":   models.Keyword.trend_velocity,
         "dominance_score":  models.Keyword.dominance_score,
         "apps_count":       func.coalesce(apps_count_sq.c.cnt, 0),
+        # V2 scoring sorts
+        "volume_score":     models.Keyword.volume_score,
+        "difficulty_v2":    models.Keyword.difficulty_v2,
     }
     sort_col = _DB_SORT_MAP.get(sort_by, models.Keyword.opportunity_score)
     q = q.order_by(sort_col.desc() if sort_order == "desc" else sort_col.asc())
@@ -1570,6 +1573,16 @@ def get_keywords_enhanced(
                 competition_score=float(kw.competition_score or 0),
                 cpc=float(kw.cpc or 0),
                 last_enriched=kw.last_enriched,
+                # V2 scoring fields
+                volume_score=float(kw.volume_score or 0),
+                difficulty_v2=float(kw.difficulty_v2 or 0),
+                autocomplete_rank=int(kw.autocomplete_rank or 0),
+                incumbent_strength=float(kw.incumbent_strength or 0),
+                title_saturation=float(kw.title_saturation or 0),
+                brand_dominance=float(kw.brand_dominance or 0),
+                market_concentration=float(kw.market_concentration or 0),
+                top_player=kw.top_player,
+                brand_count=int(kw.brand_count or 0),
             )
         )
 
@@ -1629,6 +1642,9 @@ def get_trending_keywords(
                 dominance_score=dominance,
                 apps_count=apps_count,
                 classification=cls,
+                # V2
+                volume_score=float(kw.volume_score or 0),
+                difficulty_v2=float(kw.difficulty_v2 or 0),
             )
         )
         if len(items) >= limit:
@@ -1962,6 +1978,16 @@ def get_keyword_detail(
         cpc=kw_cpc,
         last_enriched=kw_last_enriched,
         google_trend_points=google_trend_points,
+        # V2 scoring fields
+        volume_score=float(kw.volume_score or 0) if kw else 0.0,
+        difficulty_v2=float(kw.difficulty_v2 or 0) if kw else 0.0,
+        autocomplete_rank=int(kw.autocomplete_rank or 0) if kw else 0,
+        incumbent_strength=float(kw.incumbent_strength or 0) if kw else 0.0,
+        title_saturation=float(kw.title_saturation or 0) if kw else 0.0,
+        brand_dominance=float(kw.brand_dominance or 0) if kw else 0.0,
+        market_concentration=float(kw.market_concentration or 0) if kw else 0.0,
+        top_player=kw.top_player if kw else None,
+        brand_count=int(kw.brand_count or 0) if kw else 0,
     )
 
 

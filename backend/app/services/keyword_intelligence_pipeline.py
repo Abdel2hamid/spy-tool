@@ -315,33 +315,57 @@ class GoogleTrendsCollector:
 class AppleSignalsCollector:
     """
     Derives keyword signals from the iTunes Search API.
-    Measures: how many apps rank for a keyword, and how dominant the top app is.
+    Returns full top-10 data for v2 difficulty scoring plus legacy dominance.
     Free, no credentials needed.
     """
 
     async def fetch(self, keyword: str, limit: int = 50) -> Dict:
         """
-        Search iTunes for `keyword`, return signals:
-          {apps_count, dominance_score, top_app_reviews, top_app_rating, top_app_name}
+        Search iTunes for `keyword`, return signals including full top-10
+        app data for v2 difficulty analysis + autocomplete rank.
         """
         from app.services.apple_http_client import apple_fetch_json, ITUNES_SEARCH_URL
+        from app.services.apple_autocomplete_service import fetch_autocomplete
 
         try:
-            data = await asyncio.to_thread(
+            # Fetch iTunes search AND autocomplete concurrently
+            itunes_task = asyncio.to_thread(
                 apple_fetch_json,
                 ITUNES_SEARCH_URL,
                 params={"term": keyword, "media": "software", "limit": limit, "country": "us"},
                 timeout=15,
             )
+            autocomplete_task = asyncio.to_thread(
+                fetch_autocomplete, keyword, "us"
+            )
+            data, suggestions = await asyncio.gather(
+                itunes_task, autocomplete_task, return_exceptions=True
+            )
+            # Handle exceptions from gather
+            if isinstance(data, Exception):
+                logger.warning(f"Apple signals fetch failed for '{keyword}': {data}")
+                return {}
+            if isinstance(suggestions, Exception):
+                logger.debug(f"Autocomplete fetch failed for '{keyword}': {suggestions}")
+                suggestions = []
             if not data:
                 return {}
         except Exception as e:
             logger.warning(f"Apple signals fetch failed for '{keyword}': {e}")
             return {}
 
+        # Determine autocomplete rank (1-based position of keyword in suggestions)
+        autocomplete_rank = 0
+        kw_lower = keyword.strip().lower()
+        if isinstance(suggestions, list):
+            for idx, term in enumerate(suggestions, 1):
+                if term == kw_lower:
+                    autocomplete_rank = idx
+                    break
+
         results = data.get("results", [])
         if not results:
-            return {"apps_count": 0, "dominance_score": 0.0}
+            return {"apps_count": 0, "dominance_score": 0.0, "top_apps": []}
 
         apps_count = data.get("resultCount", len(results))
         top = results[0]
@@ -358,7 +382,7 @@ class AppleSignalsCollector:
         top_name = top.get("trackName", "")
         top_dev = (top.get("artistName") or "").strip().lower()
 
-        # Dominance score from top app review count
+        # Legacy dominance score from top app review count
         if top_reviews >= 1_000_000:
             dominance_score = 100.0
         elif top_reviews >= 500_000:
@@ -379,12 +403,33 @@ class AppleSignalsCollector:
         if is_big_brand:
             dominance_score = max(dominance_score, 80.0)
 
+        # Build top-10 dicts for v2 difficulty scoring
+        top_apps = []
+        for item in results[:10]:
+            top_apps.append({
+                "trackName": item.get("trackName", ""),
+                "artistName": item.get("artistName", ""),
+                "userRatingCount": item.get("userRatingCount", 0) or 0,
+                "averageUserRating": item.get("averageUserRating", 0.0) or 0.0,
+                "trackId": item.get("trackId"),
+            })
+
+        # Compute top-5 average rating count (ecosystem size signal)
+        top5_counts = [
+            int(item.get("userRatingCount", 0) or 0)
+            for item in results[:5]
+        ]
+        top5_avg_ratings = sum(top5_counts) / len(top5_counts) if top5_counts else 0.0
+
         return {
             "apps_count": apps_count,
             "dominance_score": round(dominance_score, 1),
             "top_app_reviews": top_reviews,
             "top_app_rating": round(float(top_rating), 2),
             "top_app_name": top_name,
+            "top_apps": top_apps,
+            "top5_avg_ratings": round(top5_avg_ratings, 1),
+            "autocomplete_rank": autocomplete_rank,
         }
 
 
@@ -678,6 +723,22 @@ class KeywordIntelligencePipeline:
                     kw.dominance_score = dominance
                     # Use max of stored vs fresh apps_count
                     kw.apps_count = max(kw.apps_count or 0, apps_count)
+                    # V2 enrichment: autocomplete rank + top5 avg + full difficulty breakdown
+                    ac_rank = result.get("autocomplete_rank", 0)
+                    if ac_rank > 0:
+                        kw.autocomplete_rank = ac_rank
+                    kw.top5_avg_ratings = result.get("top5_avg_ratings", 0.0)
+                    top_apps = result.get("top_apps", [])
+                    if top_apps:
+                        from app.services.keyword_scoring_v2 import compute_difficulty_score
+                        diff = compute_difficulty_score(top_apps, keyword=kw.term)
+                        kw.difficulty_v2 = diff["difficulty_score"]
+                        kw.incumbent_strength = diff["incumbent_strength"]
+                        kw.title_saturation = diff["title_saturation"]
+                        kw.brand_dominance = diff["brand_dominance"]
+                        kw.market_concentration = diff["market_concentration"]
+                        kw.top_player = diff["top_player"]
+                        kw.brand_count = diff["brand_count"]
                     updated += 1
                     batch_success += 1
 
@@ -782,41 +843,71 @@ class KeywordIntelligencePipeline:
 
     def recompute_scores(self, keywords: List[Keyword]) -> int:
         """
-        Recompute opportunity_score, feasibility_score, and quality_score/tier
-        for all keywords using whatever signals are available (graceful fallback).
+        Recompute all keyword scores using v2 multi-signal fusion.
+
+        For each keyword:
+          1. volume_score      — fused from autocomplete, trends, ecosystem, iTunes, DataForSEO
+          2. difficulty_v2     — kept from Apple enrichment (full top-10 analysis)
+          3. opportunity_score — v2 formula using volume_score + difficulty_v2 + trends
+          4. feasibility_score — legacy formula (kept for backwards compat)
+          5. quality_score/tier — existing quality engine
+
+        Also recomputes per-app scores (chance, KEI, installs) for app_keywords.
         Returns count of keywords scored.
         """
         from app.services.keyword_quality_engine import KeywordQualityEngine
+        from app.services.keyword_scoring_v2 import (
+            compute_volume_score,
+            compute_opportunity_score_v2,
+            compute_chance_score,
+            compute_kei,
+            estimate_organic_installs,
+        )
 
-        logger.info(f"recompute_scores: scoring {len(keywords)} keywords")
+        logger.info(f"recompute_scores: scoring {len(keywords)} keywords (v2)")
         updated = 0
         failed = 0
-        high_opp = 0  # opportunity_score >= 40
+        high_opp = 0
         tier_counts = {"A": 0, "B": 0, "C": 0, "unscored": 0}
 
         for kw in keywords:
             try:
-                opp = _compute_opportunity_score(
+                # ── V2 Volume Score (multi-signal fusion) ────────────────
+                vol = compute_volume_score(
+                    apps_count=kw.apps_count or 0,
+                    autocomplete_rank=kw.autocomplete_rank or 0,
+                    trend_score=kw.trend_score or 0.0,
+                    search_volume=kw.search_volume or 0,
+                    top5_avg_ratings=kw.top5_avg_ratings or 0.0,
+                )
+                kw.volume_score = vol
+
+                # Use v2 difficulty if available, else fallback to legacy
+                diff = kw.difficulty_v2 if (kw.difficulty_v2 or 0) > 0 else (kw.difficulty or 30.0)
+
+                # ── V2 Opportunity Score ─────────────────────────────────
+                opp = compute_opportunity_score_v2(
+                    volume_score=vol,
+                    difficulty_score=diff,
                     trend_score=kw.trend_score or 0.0,
                     trend_growth=kw.trend_growth or 0.0,
-                    search_volume=kw.search_volume or 0,
-                    difficulty=kw.difficulty or 30.0,
-                    dominance_score=kw.dominance_score or 0.0,
-                    apps_count=kw.apps_count or 0,
                 )
+                kw.opportunity_score = opp
+
+                # ── Legacy feasibility (kept for backwards compat) ───────
                 feas = _compute_feasibility_score(
-                    difficulty=kw.difficulty or 30.0,
+                    difficulty=diff,
                     dominance_score=kw.dominance_score or 0.0,
                     trend_velocity=kw.trend_velocity or 0.0,
                     apps_count=kw.apps_count or 0,
                 )
-                kw.opportunity_score = opp
                 kw.feasibility_score = feas
+
                 updated += 1
                 if opp >= 40:
                     high_opp += 1
 
-                # Re-score quality tier using updated signals
+                # ── Quality tier ─────────────────────────────────────────
                 q_score, v_score, _ = KeywordQualityEngine.compute_quality_score(
                     term=kw.term,
                     keyword_source=kw.keyword_source,
@@ -832,18 +923,60 @@ class KeywordIntelligencePipeline:
                 tier_counts[tier if tier in tier_counts else "unscored"] += 1
 
                 logger.debug(
-                    f"recompute_scores: '{kw.term}' → opp={opp:.1f} feas={feas:.1f} "
-                    f"quality={q_score:.1f} tier={kw.quality_tier} "
-                    f"(trend={kw.trend_score or 0:.1f} apps={kw.apps_count or 0} dom={kw.dominance_score or 0:.1f})"
+                    f"recompute_scores: '{kw.term}' → vol={vol:.1f} diff={diff:.1f} "
+                    f"opp={opp:.1f} feas={feas:.1f} tier={kw.quality_tier}"
                 )
             except Exception as e:
                 failed += 1
                 logger.error(f"recompute_scores: FAILED for '{getattr(kw, 'term', '?')}': {type(e).__name__}: {e}")
 
+        # ── Per-App Scoring (chance, KEI, installs) ──────────────────────
+        kw_ids = [kw.id for kw in keywords if kw.id]
+        app_kw_updated = 0
+        if kw_ids:
+            try:
+                app_keywords = (
+                    self.db.query(AppKeyword)
+                    .filter(AppKeyword.keyword_id.in_(kw_ids))
+                    .all()
+                )
+                # Build keyword lookup
+                kw_map = {kw.id: kw for kw in keywords if kw.id}
+                for ak in app_keywords:
+                    kw = kw_map.get(ak.keyword_id)
+                    if not kw:
+                        continue
+                    # Load app data for chance computation
+                    app = self.db.query(App).filter(App.id == ak.app_id).first()
+                    if not app:
+                        continue
+                    diff_for_chance = kw.difficulty_v2 if (kw.difficulty_v2 or 0) > 0 else (kw.difficulty or 30.0)
+                    ak.chance_score = compute_chance_score(
+                        app_reviews=app.current_reviews or 0,
+                        app_rating=app.current_rating or 0.0,
+                        app_rank=ak.rank,
+                        keyword_in_title=bool(
+                            kw.term and app.name and kw.term.lower() in app.name.lower()
+                        ),
+                        keyword_in_subtitle=bool(
+                            kw.term and app.subtitle and kw.term.lower() in app.subtitle.lower()
+                        ),
+                        difficulty_score=diff_for_chance,
+                    )
+                    ak.kei = compute_kei(kw.volume_score or 0, ak.chance_score)
+                    ak.estimated_installs = estimate_organic_installs(
+                        volume_score=kw.volume_score or 0,
+                        rank=ak.rank,
+                    )
+                    app_kw_updated += 1
+            except Exception as e:
+                logger.warning(f"recompute_scores: per-app scoring error: {e}")
+
         try:
             self.db.commit()
             logger.info(
-                f"recompute_scores: scored={updated} failed={failed} high_opp(>=40)={high_opp} — committed"
+                f"recompute_scores: scored={updated} failed={failed} "
+                f"high_opp(>=40)={high_opp} app_kw_updated={app_kw_updated} — committed"
             )
             logger.info(
                 f"[Pipeline] Quality tiers: A={tier_counts['A']}, B={tier_counts['B']}, "

@@ -604,6 +604,16 @@ class KeywordListItem(BaseModel):
     competition_score: float = 0.0    # DataForSEO competition index (0-100)
     cpc: float = 0.0                  # cost per click (USD, from DataForSEO)
     last_enriched: Optional[datetime] = None  # last external enrichment
+    # V2 scoring fields
+    volume_score: float = 0.0         # multi-signal volume fusion (0-100)
+    difficulty_v2: float = 0.0        # full top-10 difficulty (0-100)
+    autocomplete_rank: int = 0        # Apple autocomplete position (1=top, 0=absent)
+    incumbent_strength: float = 0.0   # top-10 review power (0-35)
+    title_saturation: float = 0.0     # keyword in titles ratio (0-20)
+    brand_dominance: float = 0.0      # big brand share (0-20)
+    market_concentration: float = 0.0 # HHI concentration (0-15)
+    top_player: Optional[str] = None  # #1 app name
+    brand_count: int = 0              # count of big-brand apps in top 10
 
 
 class KeywordListResponse(BaseModel):
@@ -644,6 +654,16 @@ class KeywordDetailResponse(BaseModel):
     cpc: float = 0.0
     last_enriched: Optional[datetime] = None
     google_trend_points: List[GoogleTrendWeekPoint] = []  # sparkline data
+    # V2 scoring fields
+    volume_score: float = 0.0
+    difficulty_v2: float = 0.0
+    autocomplete_rank: int = 0
+    incumbent_strength: float = 0.0
+    title_saturation: float = 0.0
+    brand_dominance: float = 0.0
+    market_concentration: float = 0.0
+    top_player: Optional[str] = None
+    brand_count: int = 0
 
 
 class KeywordTrendPoint(BaseModel):
@@ -672,6 +692,9 @@ class TrendingKeywordItem(BaseModel):
     dominance_score: float = 0.0
     apps_count: int = 0
     classification: str = "unknown"
+    # V2 scoring
+    volume_score: float = 0.0
+    difficulty_v2: float = 0.0
 
 
 class TrendingKeywordsResponse(BaseModel):
@@ -939,6 +962,12 @@ class DiscoveredKeywordItem(BaseModel):
     trend_direction: str           # 'rising' | 'stable' | 'declining'
     opportunity_score: float
     created_at: Optional[datetime] = None
+    # V2 per-app scoring
+    chance_score: float = 0.0
+    kei: float = 0.0
+    estimated_installs: float = 0.0
+    volume_score: float = 0.0
+    difficulty_v2: float = 0.0
 
 
 class DiscoveredKeywordsResponse(BaseModel):
@@ -965,6 +994,12 @@ class KeywordOpportunityItem(BaseModel):
     keyword_gap: bool
     opportunity_score: float
     source: str
+    # V2 per-app scoring
+    chance_score: float = 0.0
+    kei: float = 0.0
+    estimated_installs: float = 0.0
+    volume_score: float = 0.0
+    difficulty_v2: float = 0.0
 
 
 class KeywordOpportunitiesResponse(BaseModel):

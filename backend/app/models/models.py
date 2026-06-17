@@ -328,6 +328,18 @@ class Keyword(Base):
     # Unified scores (computed from all signals)
     opportunity_score = Column(Float, default=0.0)  # 0-100 market opportunity
     feasibility_score = Column(Float, default=0.0)  # 0-100 indie entry feasibility
+    # V2 scoring (multi-signal fusion)
+    volume_score = Column(Float, default=0.0)              # 0-100 fused volume
+    difficulty_v2 = Column(Float, default=0.0)             # 0-100 full top-10 difficulty
+    autocomplete_rank = Column(Integer, default=0)         # position in Apple autocomplete (0=absent)
+    top5_avg_ratings = Column(Float, default=0.0)          # avg userRatingCount of top 5 apps
+    # Difficulty V2 components (transparent breakdown)
+    incumbent_strength = Column(Float, default=0.0)        # 0-35
+    title_saturation = Column(Float, default=0.0)          # 0-20
+    brand_dominance = Column(Float, default=0.0)           # 0-20
+    market_concentration = Column(Float, default=0.0)      # 0-15 (HHI-based)
+    top_player = Column(String(255))                       # name of #1 ranked app
+    brand_count = Column(Integer, default=0)               # big brands in top 10
     # Housekeeping
     last_enriched = Column(DateTime(timezone=True)) # last time external data was fetched
     # Discovery metadata
@@ -412,6 +424,10 @@ class AppKeyword(Base):
     opportunity_score = Column(Float, default=0.0)
     source = Column(String(50))                  # 'extracted'|'discovered'|'alphabet'|'competitor'
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # V2 per-app scoring
+    chance_score = Column(Float, default=0.0)    # 0-100 "can this app rank?"
+    kei = Column(Float, default=0.0)             # Keyword Efficiency Index
+    estimated_installs = Column(Float, default=0.0)  # estimated daily installs from this keyword
 
     app = relationship("App", back_populates="keywords")
     keyword = relationship("Keyword", back_populates="apps")

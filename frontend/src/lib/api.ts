@@ -178,6 +178,16 @@ export interface KeywordListItem {
   competition_score: number;  // DataForSEO competition index (0-100)
   cpc: number;                // cost per click (USD)
   last_enriched: string | null;
+  // V2 scoring (multi-signal fusion)
+  volume_score: number;         // multi-signal volume fusion (0-100)
+  difficulty_v2: number;        // full top-10 difficulty (0-100)
+  autocomplete_rank: number;    // Apple autocomplete position (1=top, 0=absent)
+  incumbent_strength: number;   // top-10 review power (0-35)
+  title_saturation: number;     // keyword in titles ratio (0-20)
+  brand_dominance: number;      // big brand share (0-20)
+  market_concentration: number; // HHI concentration (0-15)
+  top_player: string | null;    // #1 app name
+  brand_count: number;          // count of big-brand apps in top 10
 }
 
 export interface KeywordListResponse {
@@ -225,6 +235,9 @@ export interface TrendingKeywordItem {
   dominance_score: number;
   apps_count: number;
   classification: 'easy' | 'medium' | 'hard' | 'impossible';
+  // V2 scoring
+  volume_score: number;
+  difficulty_v2: number;
 }
 
 export interface TrendingKeywordsResponse {
@@ -1132,6 +1145,12 @@ export interface DiscoveredKeyword {
   trend_direction: 'rising' | 'stable' | 'declining';
   opportunity_score: number;
   created_at: string | null;
+  // V2 per-app scoring
+  chance_score: number;
+  kei: number;
+  estimated_installs: number;
+  volume_score: number;
+  difficulty_v2: number;
 }
 
 export interface DiscoveredKeywordsResponse {
@@ -1181,6 +1200,12 @@ export interface KeywordOpportunityItem {
   keyword_gap: boolean;
   opportunity_score: number;
   source: string;
+  // V2 per-app scoring
+  chance_score: number;
+  kei: number;
+  estimated_installs: number;
+  volume_score: number;
+  difficulty_v2: number;
 }
 
 export interface KeywordOpportunitiesResponse {

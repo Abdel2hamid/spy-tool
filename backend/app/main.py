@@ -427,6 +427,27 @@ _MIGRATIONS = [
     )""",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_favorite_user_app ON favorites (user_id, app_id)",
     "CREATE INDEX IF NOT EXISTS idx_favorite_workspace ON favorites (workspace_id)",
+
+    # ── Keyword Scoring V2 (multi-signal fusion + per-app chance) ─────────
+    # New columns on keywords table
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS volume_score FLOAT DEFAULT 0.0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS difficulty_v2 FLOAT DEFAULT 0.0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS autocomplete_rank INTEGER DEFAULT 0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS top5_avg_ratings FLOAT DEFAULT 0.0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS incumbent_strength FLOAT DEFAULT 0.0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS title_saturation FLOAT DEFAULT 0.0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS brand_dominance FLOAT DEFAULT 0.0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS market_concentration FLOAT DEFAULT 0.0",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS top_player VARCHAR(255)",
+    "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS brand_count INTEGER DEFAULT 0",
+    "CREATE INDEX IF NOT EXISTS idx_kw_volume_score ON keywords (volume_score)",
+    "CREATE INDEX IF NOT EXISTS idx_kw_difficulty_v2 ON keywords (difficulty_v2)",
+    # New columns on app_keywords table (per-app scoring)
+    "ALTER TABLE app_keywords ADD COLUMN IF NOT EXISTS chance_score FLOAT DEFAULT 0.0",
+    "ALTER TABLE app_keywords ADD COLUMN IF NOT EXISTS kei FLOAT DEFAULT 0.0",
+    "ALTER TABLE app_keywords ADD COLUMN IF NOT EXISTS estimated_installs FLOAT DEFAULT 0.0",
+    "CREATE INDEX IF NOT EXISTS idx_ak_chance ON app_keywords (app_id, chance_score)",
+    "CREATE INDEX IF NOT EXISTS idx_ak_kei ON app_keywords (app_id, kei)",
 ]
 
 

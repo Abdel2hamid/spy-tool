@@ -319,23 +319,56 @@ function KeywordDrawer({
             </div>
           ) : (
             <>
-              {/* Core metrics */}
+              {/* Core metrics (V2 scores) */}
               <div className="grid grid-cols-3 gap-2">
-                <StatCard label="Search Volume" value={fmtVolume(detail.search_volume)} />
-                <StatCard label="Difficulty" value={`${Math.round(detail.difficulty)}/100`} />
+                <StatCard label="Volume Score" value={`${Math.round(detail.volume_score || 0)}`}
+                  sub={detail.autocomplete_rank > 0 ? `AC rank #${detail.autocomplete_rank}` : undefined}
+                  accent={detail.volume_score >= 50 ? 'green' : undefined} />
+                <StatCard label="Difficulty" value={`${Math.round(detail.difficulty_v2 || detail.difficulty || 0)}`}
+                  accent={(detail.difficulty_v2 || detail.difficulty || 0) <= 40 ? 'green' : (detail.difficulty_v2 || detail.difficulty || 0) >= 70 ? undefined : 'amber'} />
                 <StatCard label="Opp. Score" value={String(Math.round(detail.opportunity_score))}
                   accent={detail.opportunity_score >= 60 ? 'green' : detail.opportunity_score >= 40 ? 'amber' : undefined} />
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <StatCard label="Feasibility" value={String(Math.round(detail.feasibility_score))}
                   accent={detail.feasibility_score >= 60 ? 'green' : undefined} />
-                <StatCard
-                  label="Ads Presence"
-                  value={`${Math.round(detail.ads_presence * 100)}%`}
-                  sub={detail.ads_presence > 0.5 ? 'High ad density' : 'Low ad density'}
-                />
                 <StatCard label="Tracked Apps" value={String(detail.apps_count)} />
+                <StatCard label="Brands in Top 10" value={`${detail.brand_count || 0}`}
+                  accent={(detail.brand_count || 0) <= 2 ? 'green' : undefined} />
               </div>
+
+              {/* Difficulty V2 breakdown */}
+              {(detail.difficulty_v2 || 0) > 0 && (
+                <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
+                  <h3 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">Difficulty Breakdown</h3>
+                  <div className="space-y-2">
+                    {[
+                      { label: 'Incumbent Strength', value: detail.incumbent_strength || 0, max: 35, desc: 'Review power of top 10 apps' },
+                      { label: 'Title Saturation', value: detail.title_saturation || 0, max: 20, desc: 'Keyword in competitor titles' },
+                      { label: 'Brand Dominance', value: detail.brand_dominance || 0, max: 20, desc: 'Big brands in top 10' },
+                      { label: 'Market Concentration', value: detail.market_concentration || 0, max: 15, desc: 'HHI concentration index' },
+                    ].map(({ label, value, max, desc }) => (
+                      <div key={label}>
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-gray-600 dark:text-gray-400" title={desc}>{label}</span>
+                          <span className="font-medium text-gray-900 dark:text-white">{Math.round(value)}/{max}</span>
+                        </div>
+                        <div className="mt-0.5 h-1 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+                          <div
+                            className="h-full rounded-full bg-indigo-500"
+                            style={{ width: `${Math.min((value / max) * 100, 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {detail.top_player && (
+                    <p className="mt-2 text-xs text-gray-500">
+                      #1 app: <span className="font-medium text-gray-700 dark:text-gray-300">{detail.top_player}</span>
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Google Trends signals panel */}
               {hasRealTrendData && (
@@ -606,15 +639,19 @@ type SortKey =
   | 'trend_score'
   | 'trend_growth'
   | 'apps_count'
-  | 'dominance_score';
+  | 'dominance_score'
+  | 'volume_score'
+  | 'difficulty_v2';
 
 const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: 'opportunity_score', label: 'Opportunity' },
+  { key: 'volume_score', label: 'Volume Score' },
+  { key: 'difficulty_v2', label: 'Difficulty V2' },
   { key: 'feasibility_score', label: 'Feasibility' },
   { key: 'trend_score', label: 'Trending' },
   { key: 'trend_growth', label: 'Growth' },
-  { key: 'search_volume', label: 'Volume' },
-  { key: 'difficulty', label: 'Difficulty' },
+  { key: 'search_volume', label: 'Volume (Legacy)' },
+  { key: 'difficulty', label: 'Difficulty (Legacy)' },
   { key: 'apps_count', label: 'Competition' },
 ];
 
@@ -854,7 +891,7 @@ export default function KeywordsClient() {
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
                       Keyword
                     </th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
+                    <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
                       Volume
                     </th>
                     <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
@@ -869,8 +906,8 @@ export default function KeywordsClient() {
                     <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
                       Feasibility
                     </th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
-                      Apps
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+                      Top Player
                     </th>
                     <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">
                       Class
@@ -922,12 +959,14 @@ export default function KeywordsClient() {
                             )}
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-right text-gray-600 dark:text-gray-300">
-                          {fmtVolume(kw.search_volume)}
+                        <td className="px-4 py-3">
+                          <div className="flex justify-center">
+                            <ScoreRing score={kw.volume_score || 0} size={36} />
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex justify-center">
-                            <DifficultyDots difficulty={kw.difficulty} />
+                            <ScoreRing score={kw.difficulty_v2 || kw.difficulty || 0} size={36} />
                           </div>
                         </td>
                         <td className="px-4 py-3 text-right">
@@ -946,8 +985,14 @@ export default function KeywordsClient() {
                             <ScoreRing score={kw.feasibility_score} size={36} />
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-right text-gray-600 dark:text-gray-300">
-                          {kw.apps_count}
+                        <td className="px-4 py-3 text-left">
+                          {kw.top_player ? (
+                            <span className="max-w-[120px] truncate text-xs text-gray-500 dark:text-gray-400" title={kw.top_player}>
+                              {kw.top_player}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-300 dark:text-gray-600">—</span>
+                          )}
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex justify-center">
