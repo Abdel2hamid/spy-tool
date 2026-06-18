@@ -3,6 +3,7 @@ export { Sidebar, MobileSidebar } from './Sidebar';
 export { Header } from './Header';
 export { ThemeToggle } from './ThemeToggle';
 export { AppShell } from './AppShell';
+export { AdminShell } from './AdminShell';
 export { Providers } from './Providers';
 export { StatsCard } from './StatsCard';
 export { TrendingAppCard } from './TrendingAppCard';

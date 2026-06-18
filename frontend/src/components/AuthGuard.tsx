@@ -5,22 +5,30 @@
  *
  * While loading: shows a centered spinner.
  * If unauthenticated: redirects to /login.
+ * If superadmin on a regular page: redirects to /admin.
  * If authenticated: renders children.
  */
 
 import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
+    if (isLoading) return;
+    if (!isAuthenticated) {
       router.replace('/login');
+      return;
     }
-  }, [isAuthenticated, isLoading, router]);
+    // Superadmins always go to admin console
+    if (user?.is_superadmin && !pathname.startsWith('/admin')) {
+      router.replace('/admin');
+    }
+  }, [isAuthenticated, isLoading, user, router, pathname]);
 
   if (isLoading) {
     return (
@@ -34,6 +42,8 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   }
 
   if (!isAuthenticated) return null;
+  // Block regular pages for superadmins (they'll be redirected)
+  if (user?.is_superadmin && !pathname.startsWith('/admin')) return null;
 
   return <>{children}</>;
 }

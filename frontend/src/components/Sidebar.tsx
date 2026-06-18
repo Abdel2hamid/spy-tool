@@ -20,7 +20,6 @@ import {
   Star,
   Heart,
   Crown,
-  Shield,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -150,21 +149,6 @@ export function Sidebar() {
               </div>
             </div>
           ))}
-          {user?.is_superadmin && (
-            <div>
-              <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-600">
-                ADMIN
-              </p>
-              <div className="space-y-0.5">
-                <NavLink
-                  href="/admin"
-                  label="Admin Console"
-                  icon={Shield}
-                  isActive={pathname === '/admin' || pathname.startsWith('/admin/')}
-                />
-              </div>
-            </div>
-          )}
         </nav>
 
         {/* Footer user */}
