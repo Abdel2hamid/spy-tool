@@ -26,7 +26,7 @@ from app.database import get_db
 from app.api.deps import get_superadmin
 from app.models.models import (
     App, User, Workspace, Membership, Subscription, WorkspaceUsage,
-    Favorite, MyApp, AdminActivityLog, Announcement, UserActivityLog,
+    Favorite, MyApp, AdminActivityLog, AdminSetting, Announcement, UserActivityLog,
 )
 
 logger = logging.getLogger(__name__)
@@ -1432,3 +1432,182 @@ def promote_to_superadmin(
     db.commit()
     _log_activity(db, admin, "user.promote", "user", user_id, {"email": user.email})
     return {"ok": True, "user_id": user.id, "email": user.email}
+
+
+# ===========================================================================
+# Settings — payment gateways & plan configuration
+# ===========================================================================
+
+# Keys we expose to the admin UI.  Sensitive keys are masked on read.
+_PAYMENT_KEYS = [
+    "stripe_secret_key", "stripe_publishable_key", "stripe_webhook_secret",
+    "stripe_price_starter", "stripe_price_pro", "stripe_price_enterprise",
+    "paypal_client_id", "paypal_client_secret", "paypal_webhook_id",
+    "paypal_mode",  # sandbox | live
+]
+
+_SENSITIVE_KEYS = {"stripe_secret_key", "stripe_webhook_secret", "paypal_client_secret"}
+
+_PLAN_KEYS = [
+    "plans_config",  # JSON blob: { free: {...}, starter: {...}, pro: {...}, enterprise: {...} }
+]
+
+
+def _get_setting(db: Session, key: str) -> str:
+    row = db.query(AdminSetting).filter(AdminSetting.key == key).first()
+    return row.value if row else ""
+
+
+def _set_setting(db: Session, key: str, value: str) -> None:
+    row = db.query(AdminSetting).filter(AdminSetting.key == key).first()
+    if row:
+        row.value = value
+    else:
+        db.add(AdminSetting(key=key, value=value))
+
+
+def _mask(value: str) -> str:
+    """Mask sensitive values: show first 4 + last 4 chars."""
+    if len(value) <= 10:
+        return "••••••••" if value else ""
+    return value[:4] + "••••••••" + value[-4:]
+
+
+# --- Payment gateway settings ---
+
+class PaymentSettingsResponse(BaseModel):
+    settings: dict[str, str]
+
+
+class PaymentSettingsUpdate(BaseModel):
+    settings: dict[str, str]
+
+
+@router.get("/settings/payment", response_model=PaymentSettingsResponse)
+def get_payment_settings(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_superadmin),
+):
+    """Return payment gateway settings (sensitive values masked)."""
+    result: dict[str, str] = {}
+    for key in _PAYMENT_KEYS:
+        val = _get_setting(db, key)
+        result[key] = _mask(val) if key in _SENSITIVE_KEYS else val
+    return {"settings": result}
+
+
+@router.put("/settings/payment")
+def update_payment_settings(
+    body: PaymentSettingsUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_superadmin),
+):
+    """Update payment gateway settings.  Masked values (containing ••) are skipped."""
+    updated = []
+    for key, val in body.settings.items():
+        if key not in _PAYMENT_KEYS:
+            continue
+        # Skip masked values — don't overwrite with the mask
+        if "••" in val:
+            continue
+        _set_setting(db, key, val.strip())
+        updated.append(key)
+    db.commit()
+    _log_activity(db, admin, "settings.payment.update", "settings", None, {"updated_keys": updated})
+    return {"ok": True, "updated": updated}
+
+
+# --- Plan configuration ---
+
+import json as _json
+
+_DEFAULT_PLANS = {
+    "free": {
+        "name": "Free",
+        "price": 0,
+        "period": "forever",
+        "app_imports": 5,
+        "keyword_refreshes": 10,
+        "ai_requests": 5,
+        "exports": 0,
+        "access_premium": False,
+    },
+    "starter": {
+        "name": "Starter",
+        "price": 29,
+        "period": "month",
+        "app_imports": 100,
+        "keyword_refreshes": 200,
+        "ai_requests": 100,
+        "exports": 50,
+        "access_premium": True,
+    },
+    "pro": {
+        "name": "Pro",
+        "price": 79,
+        "period": "month",
+        "app_imports": None,
+        "keyword_refreshes": None,
+        "ai_requests": None,
+        "exports": None,
+        "access_premium": True,
+    },
+    "enterprise": {
+        "name": "Enterprise",
+        "price": 199,
+        "period": "month",
+        "app_imports": None,
+        "keyword_refreshes": None,
+        "ai_requests": None,
+        "exports": None,
+        "access_premium": True,
+    },
+}
+
+
+@router.get("/settings/plans")
+def get_plans_config(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_superadmin),
+):
+    """Return plan configuration.  Falls back to built-in defaults."""
+    raw = _get_setting(db, "plans_config")
+    if raw:
+        try:
+            plans = _json.loads(raw)
+        except _json.JSONDecodeError:
+            plans = _DEFAULT_PLANS
+    else:
+        plans = _DEFAULT_PLANS
+    return {"plans": plans}
+
+
+class PlanUpdate(BaseModel):
+    plans: dict
+
+
+@router.put("/settings/plans")
+def update_plans_config(
+    body: PlanUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_superadmin),
+):
+    """Update plan configuration and sync to plan enforcement."""
+    _set_setting(db, "plans_config", _json.dumps(body.plans))
+    db.commit()
+
+    # Hot-reload plan limits in memory
+    try:
+        from app.config.plans import PLAN_LIMITS
+        for code, cfg in body.plans.items():
+            if code in PLAN_LIMITS:
+                PLAN_LIMITS[code]["app_imports"] = cfg.get("app_imports")
+                PLAN_LIMITS[code]["keyword_refreshes"] = cfg.get("keyword_refreshes")
+                PLAN_LIMITS[code]["ai_requests"] = cfg.get("ai_requests")
+                PLAN_LIMITS[code]["exports"] = cfg.get("exports")
+                PLAN_LIMITS[code]["access_premium"] = cfg.get("access_premium", False)
+    except Exception:
+        pass  # non-fatal; takes effect on next restart
+
+    _log_activity(db, admin, "settings.plans.update", "settings", None, {"plan_codes": list(body.plans.keys())})
+    return {"ok": True}

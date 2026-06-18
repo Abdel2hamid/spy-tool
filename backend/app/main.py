@@ -510,6 +510,14 @@ _MIGRATIONS = [
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMPTZ DEFAULT NOW()
     )""",
+    # Admin settings key-value store (payment gateways, plan config)
+    """CREATE TABLE IF NOT EXISTS admin_settings (
+        id SERIAL PRIMARY KEY,
+        key VARCHAR(100) UNIQUE NOT NULL,
+        value TEXT NOT NULL DEFAULT '',
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_admin_settings_key ON admin_settings (key)",
 ]
 
 

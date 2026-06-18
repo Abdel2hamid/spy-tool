@@ -16,6 +16,7 @@ import {
   X,
   Activity,
   Megaphone,
+  Settings,
 } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
 
@@ -26,6 +27,7 @@ const adminNav = [
   { href: '/admin/announcements', label: 'Announcements', icon: Megaphone },
   { href: '/admin/activity', label: 'Activity Log', icon: Activity },
   { href: '/admin/system', label: 'System Health', icon: Server },
+  { href: '/admin/settings', label: 'Settings', icon: Settings },
 ];
 
 function AdminNavLink({

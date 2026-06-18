@@ -37,6 +37,16 @@ class AdminActivityLog(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class AdminSetting(Base):
+    """Key-value store for admin-configurable settings (payment gateways, plan config, etc.)."""
+    __tablename__ = "admin_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(100), unique=True, nullable=False, index=True)
+    value = Column(Text, nullable=False, default="")
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class Announcement(Base):
     """Admin announcements shown to all users."""
     __tablename__ = "announcements"
