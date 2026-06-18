@@ -526,6 +526,7 @@ export async function getFilteredApps(filters: AppFilters = {}): Promise<AppList
     const res = await fetch(`${API_BASE}/apps?${params.toString()}`, {
       cache: 'no-store',
       signal: controller.signal,
+      headers: _authHeaders(),
     });
     if (!res.ok) throw new Error(`API error: ${res.status}`);
     return res.json();
@@ -555,7 +556,7 @@ export async function getLatestApps(params: LatestAppsParams = {}): Promise<AppL
   if (params.category)   p.set('category',   params.category);
   if (params.sort_by)    p.set('sort_by',    params.sort_by);
   if (params.sort_order) p.set('sort_order', params.sort_order);
-  const res = await fetch(`${API_BASE}/apps/latest?${p.toString()}`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/apps/latest?${p.toString()}`, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
@@ -593,7 +594,7 @@ export async function getFreshRisers(params: { limit?: number; mode?: string } =
   const p = new URLSearchParams();
   p.set('mode', params.mode ?? 'fresh_risers');
   if (params.limit) p.set('limit', String(params.limit));
-  const res = await fetch(`${API_BASE}/fresh-risers?${p.toString()}`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/fresh-risers?${p.toString()}`, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
@@ -892,7 +893,7 @@ export async function getKeywordsEnhanced(params: {
   if (params.limit != null) q.set('limit', String(params.limit));
   if (params.min_volume != null) q.set('min_volume', String(params.min_volume));
   if (params.max_difficulty != null) q.set('max_difficulty', String(params.max_difficulty));
-  const res = await fetch(`${API_BASE}/keywords/enhanced?${q}`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/keywords/enhanced?${q}`, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) return { keywords: [], total: 0, skip: 0, limit: 50 };
   const data = await res.json();
   return {
@@ -904,20 +905,20 @@ export async function getKeywordsEnhanced(params: {
 }
 
 export async function getKeywordDetail(term: string): Promise<KeywordDetail | null> {
-  const res = await fetch(`${API_BASE}/keywords/${encodeURIComponent(term)}/detail`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/keywords/${encodeURIComponent(term)}/detail`, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) return null;
   return res.json();
 }
 
 export async function getKeywordTrend(term: string, days = 30): Promise<KeywordTrendResponse> {
-  const res = await fetch(`${API_BASE}/keywords/${encodeURIComponent(term)}/trend?days=${days}`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/keywords/${encodeURIComponent(term)}/trend?days=${days}`, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) return { term, trend_points: [] };
   const data = await res.json();
   return { term: data?.term ?? term, trend_points: Array.isArray(data?.trend_points) ? data.trend_points : [] };
 }
 
 export async function getTrendingKeywords(limit = 20): Promise<TrendingKeywordsResponse> {
-  const res = await fetch(`${API_BASE}/keywords/trending?limit=${limit}`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/keywords/trending?limit=${limit}`, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) return { keywords: [], total: 0 };
   const data = await res.json();
   return {
@@ -1119,7 +1120,7 @@ export async function getIdeas(params: {
   if (params.keyword) p.set('keyword', params.keyword);
   p.set('skip', String(params.skip ?? 0));
   p.set('limit', String(params.limit ?? 20));
-  const res = await fetch(`${API_BASE}/ideas?${p.toString()}`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/ideas?${p.toString()}`, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
@@ -1163,7 +1164,7 @@ export interface KeywordIntelligence {
 }
 
 export async function getKeywordIntelligence(appId: number): Promise<KeywordIntelligence> {
-  const res = await fetch(`${API_BASE}/apps/${appId}/keyword-intelligence`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/apps/${appId}/keyword-intelligence`, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
@@ -1206,7 +1207,7 @@ export async function getExtractedKeywords(
   refresh = false,
 ): Promise<KeywordExtractionResponse> {
   const url = `${API_BASE}/apps/${appId}/keywords/intelligence${refresh ? '?refresh=true' : ''}`;
-  const res = await fetch(url, { cache: 'no-store' });
+  const res = await fetch(url, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
@@ -1260,6 +1261,7 @@ export async function getDiscoveredKeywords(
 ): Promise<DiscoveredKeywordsResponse> {
   const res = await fetch(`${API_BASE}/apps/${appId}/keywords/discovered?limit=${limit}`, {
     cache: 'no-store',
+    headers: _authHeaders(),
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
@@ -1314,7 +1316,7 @@ export async function getKeywordOpportunitiesForApp(
 ): Promise<KeywordOpportunitiesResponse> {
   const res = await fetch(
     `${API_BASE}/apps/${appId}/keywords/opportunities?limit=${limit}`,
-    { cache: 'no-store' },
+    { cache: 'no-store', headers: _authHeaders() },
   );
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
@@ -1354,13 +1356,13 @@ export interface RevenueEstimate {
 }
 
 export async function getInstallEstimate(appId: number): Promise<InstallEstimate> {
-  const res = await fetch(`${API_BASE}/apps/${appId}/install-estimate`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/apps/${appId}/install-estimate`, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
 
 export async function getRevenueEstimate(appId: number): Promise<RevenueEstimate> {
-  const res = await fetch(`${API_BASE}/apps/${appId}/revenue-estimate`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/apps/${appId}/revenue-estimate`, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
@@ -1389,7 +1391,7 @@ export interface DownloadEstimate {
 }
 
 export async function getDownloadEstimate(appId: number): Promise<DownloadEstimate> {
-  const res = await fetch(`${API_BASE}/apps/${appId}/download-estimate`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/apps/${appId}/download-estimate`, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
@@ -1421,7 +1423,7 @@ export async function getKeywordHistory(
 ): Promise<KeywordHistory> {
   const res = await fetch(
     `${API_BASE}/apps/${appId}/keyword-history?keyword=${encodeURIComponent(keyword)}&country=${country}&days=${days}`,
-    { cache: 'no-store' }
+    { cache: 'no-store', headers: _authHeaders() }
   );
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
@@ -1430,7 +1432,7 @@ export async function getKeywordHistory(
 export async function getAppKeywords(appId: number, country = 'us'): Promise<string[]> {
   const res = await fetch(
     `${API_BASE}/apps/${appId}/keyword-history/keywords?country=${country}`,
-    { cache: 'no-store' }
+    { cache: 'no-store', headers: _authHeaders() }
   );
   if (!res.ok) return [];
   const data = await res.json();
@@ -1461,7 +1463,7 @@ export interface NicheRadarResponse {
 }
 
 export async function getNicheRadar(limit = 20): Promise<NicheRadarResponse> {
-  const res = await fetch(`${API_BASE}/niche-radar?limit=${limit}`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/niche-radar?limit=${limit}`, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
@@ -1485,7 +1487,7 @@ export interface ReviewIntelligence {
 export async function getReviewIntelligence(appId: number, force = false): Promise<ReviewIntelligence> {
   const res = await fetch(
     `${API_BASE}/apps/${appId}/review-intelligence?force=${force}`,
-    { cache: 'no-store' }
+    { cache: 'no-store', headers: _authHeaders() }
   );
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
@@ -1536,7 +1538,7 @@ export interface AppAutopsy {
 export async function getAppAutopsy(appId: number, useLlm = true): Promise<AppAutopsy> {
   const res = await fetch(
     `${API_BASE}/apps/${appId}/autopsy?use_llm=${useLlm}`,
-    { cache: 'no-store' }
+    { cache: 'no-store', headers: _authHeaders() }
   );
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
@@ -1615,7 +1617,7 @@ export async function getBlowingUpApps(filters: BlowingUpFilters = {}): Promise<
 
   const qs = params.toString();
   const url = `${API_BASE}/apps/blowing-up${qs ? `?${qs}` : ''}`;
-  const res = await fetch(url, { cache: 'no-store' });
+  const res = await fetch(url, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
@@ -1756,13 +1758,13 @@ export interface CampaignTrackingListResponse {
 // ===========================================================================
 
 export async function getAppMetrics(appId: number, days = 30): Promise<MetricSnapshotHistory> {
-  const res = await fetch(`${API_BASE}/apps/${appId}/metrics?days=${days}`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/apps/${appId}/metrics?days=${days}`, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) throw new Error(`Failed to fetch metrics: ${res.status}`);
   return res.json();
 }
 
 export async function getAppAdIntelligence(appId: number): Promise<AppAdIntelligence> {
-  const res = await fetch(`${API_BASE}/apps/${appId}/ads`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/apps/${appId}/ads`, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) throw new Error(`Failed to fetch ad intelligence: ${res.status}`);
   return res.json();
 }
@@ -1784,13 +1786,13 @@ export async function getAdIntelligenceList(params: {
   if (params.active_only !== undefined) p.set('active_only', String(params.active_only));
   if (params.skip !== undefined) p.set('skip', String(params.skip));
   if (params.limit !== undefined) p.set('limit', String(params.limit));
-  const res = await fetch(`${API_BASE}/ads?${p}`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/ads?${p}`, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) throw new Error(`Failed to fetch ad intelligence list: ${res.status}`);
   return res.json();
 }
 
 export async function getAppGrowthEvents(appId: number, activeOnly = false): Promise<AppGrowthEvents> {
-  const res = await fetch(`${API_BASE}/apps/${appId}/growth-events?active_only=${activeOnly}`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/apps/${appId}/growth-events?active_only=${activeOnly}`, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) throw new Error(`Failed to fetch growth events: ${res.status}`);
   return res.json();
 }
@@ -1808,7 +1810,7 @@ export async function getCampaignTrackingList(params: {
   if (params.min_confidence !== undefined) p.set('min_confidence', String(params.min_confidence));
   if (params.skip !== undefined) p.set('skip', String(params.skip));
   if (params.limit !== undefined) p.set('limit', String(params.limit));
-  const res = await fetch(`${API_BASE}/campaigns?${p}`, { cache: 'no-store' });
+  const res = await fetch(`${API_BASE}/campaigns?${p}`, { cache: 'no-store', headers: _authHeaders() });
   if (!res.ok) throw new Error(`Failed to fetch campaigns: ${res.status}`);
   return res.json();
 }

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components';
-import { AppListItem, Category, AppFilters, getFilteredApps, searchAppsImport, lookupApp, AppImportSearchItem } from '@/lib/api';
+import { AppListItem, Category, AppFilters, getFilteredApps, getCategories, searchAppsImport, lookupApp, AppImportSearchItem } from '@/lib/api';
 import {
   Search, AppWindow, Star, SlidersHorizontal, X,
   RotateCcw, ChevronUp, ChevronDown, Loader2, Plus, Globe,
@@ -303,8 +303,7 @@ export default function AppsClient() {
 
   // Load categories once
   useEffect(() => {
-    fetch(`${API_BASE}/categories`, { cache: 'no-store' })
-      .then(r => r.ok ? r.json() : [])
+    getCategories()
       .then(setCategories)
       .catch(() => {});
   }, []);
