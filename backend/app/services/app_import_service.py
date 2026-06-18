@@ -359,6 +359,32 @@ def _get_or_create_app(db: Session, item: Dict, update_existing: bool = True) ->
             existing.url = item.get("trackViewUrl", "")
             if release_date:
                 existing.release_date = release_date
+            # Update metadata fields that may have been missing
+            subtitle = item.get("subtitle") or ""
+            if subtitle:
+                existing.subtitle = subtitle
+            description = item.get("description") or ""
+            if description:
+                existing.description = description
+            screenshots = item.get("screenshotUrls") or item.get("ipadScreenshotUrls") or []
+            if screenshots:
+                existing.screenshots = screenshots
+            langs = item.get("languageCodesISO2A") or []
+            if langs:
+                existing.supported_languages = langs
+            last_updated_str = item.get("currentVersionReleaseDate")
+            if last_updated_str:
+                try:
+                    existing.last_updated = datetime.fromisoformat(last_updated_str.replace("Z", "+00:00"))
+                except Exception:
+                    pass
+            content_rating = item.get("contentRating", "")
+            if content_rating:
+                existing.content_rating = content_rating
+            min_os = item.get("minimumOsVersion", "")
+            if min_os:
+                existing.minimum_ios_version = min_os
+            db.commit()
         return existing, False
 
     # iTunes returns genres as a list of strings e.g. ["Productivity", "Business"].
@@ -368,6 +394,15 @@ def _get_or_create_app(db: Session, item: Dict, update_existing: bool = True) ->
     if isinstance(genres, list) and len(genres) > 1 and isinstance(genres[-1], str):
         secondary_category = genres[-1]
 
+    screenshots = item.get("screenshotUrls") or item.get("ipadScreenshotUrls") or []
+    last_updated = None
+    last_updated_str = item.get("currentVersionReleaseDate")
+    if last_updated_str:
+        try:
+            last_updated = datetime.fromisoformat(last_updated_str.replace("Z", "+00:00"))
+        except Exception:
+            pass
+
     new_app = App(
         app_id=track_id,
         name=name,
@@ -376,6 +411,7 @@ def _get_or_create_app(db: Session, item: Dict, update_existing: bool = True) ->
         developer=developer,
         developer_id=str(item.get("artistId", "") or ""),
         icon_url=icon_url,
+        screenshots=screenshots,
         primary_category=primary_category,
         secondary_category=secondary_category,
         price=price,
@@ -385,6 +421,7 @@ def _get_or_create_app(db: Session, item: Dict, update_existing: bool = True) ->
         minimum_ios_version=item.get("minimumOsVersion", ""),
         supported_languages=supported_languages,
         release_date=release_date,
+        last_updated=last_updated,
         content_rating=item.get("contentRating", ""),
         current_rating=item.get("averageUserRating", 0),
         current_reviews=item.get("userRatingCount", 0),

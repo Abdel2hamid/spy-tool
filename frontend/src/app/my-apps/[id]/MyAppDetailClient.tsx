@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components';
 import {
@@ -10,6 +10,9 @@ import {
   getFeatureGaps,
   getMyApps,
   removeMyApp,
+  lookupApp,
+  triggerKeywordExtraction,
+  triggerPhase1Discovery,
   ASOScoreResponse,
   KeywordOpportunityItem,
   ReviewIntelligence,
@@ -30,6 +33,8 @@ import {
   ExternalLink,
   Trash2,
   Crown,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -65,13 +70,23 @@ function BreakdownBar({ label, score }: { label: string; score: number }) {
   );
 }
 
-function SectionCard({ title, icon: Icon, children }: { title: string; icon: typeof Star; children: React.ReactNode }) {
+function SectionCard({ title, icon: Icon, status, children }: {
+  title: string;
+  icon: typeof Star;
+  status?: 'loading' | 'ready';
+  children: React.ReactNode;
+}) {
   return (
     <div className="rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
       <div className="border-b border-gray-100 px-5 py-3 dark:border-gray-800">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
           <Icon className="h-4 w-4 text-indigo-500" />
           {title}
+          {status === 'loading' && (
+            <span className="ml-auto flex items-center gap-1.5 text-xs font-normal text-indigo-500">
+              <Loader2 className="h-3 w-3 animate-spin" /> Analyzing...
+            </span>
+          )}
         </h2>
       </div>
       <div className="p-5">{children}</div>
@@ -96,63 +111,156 @@ const gradeColor: Record<string, string> = {
 };
 const gradeText: Record<string, string> = { A: 'Excellent', B: 'Good', C: 'Needs work', D: 'Poor', F: 'Critical' };
 
-/* ── Data shape ────────────────────────────────────────────── */
-
-interface AllData {
-  app: MyAppItem | null;
-  aso: ASOScoreResponse | null;
-  keywords: KeywordOpportunityItem[];
-  reviews: ReviewIntelligence | null;
-  featureGaps: FeatureGapItem[];
-  loading: boolean;
-  notFound: boolean;
-}
-
 /* ── Main Component ────────────────────────────────────────── */
 
 export default function MyAppDetailClient({ appId }: { appId: number }) {
-  const [data, setData] = useState<AllData>({
-    app: null, aso: null, keywords: [], reviews: null, featureGaps: [], loading: true, notFound: false,
-  });
+  const [app, setApp] = useState<MyAppItem | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
   const [removing, setRemoving] = useState(false);
 
+  // Section data + loading states
+  const [aso, setAso] = useState<ASOScoreResponse | null>(null);
+  const [asoLoading, setAsoLoading] = useState(true);
+  const [keywords, setKeywords] = useState<KeywordOpportunityItem[]>([]);
+  const [kwLoading, setKwLoading] = useState(true);
+  const [kwDiscovering, setKwDiscovering] = useState(false);
+  const [reviews, setReviews] = useState<ReviewIntelligence | null>(null);
+  const [revLoading, setRevLoading] = useState(true);
+  const [featureGaps, setFeatureGaps] = useState<FeatureGapItem[]>([]);
+
+  // Load app info
   useEffect(() => {
     let cancelled = false;
-
-    async function load() {
-      // First get the app from my-apps list
+    async function loadApp() {
       const myApps = await getMyApps().catch(() => ({ apps: [], total: 0 }));
-      const app = myApps.apps.find((a) => a.app_id === appId) || null;
-
-      if (!app) {
-        if (!cancelled) setData((d) => ({ ...d, loading: false, notFound: true }));
+      const found = myApps.apps.find((a) => a.app_id === appId) || null;
+      if (cancelled) return;
+      if (!found) {
+        setNotFound(true);
+        setLoading(false);
         return;
       }
+      setApp(found);
+      setLoading(false);
 
-      if (!cancelled) setData((d) => ({ ...d, app }));
+      // Step 1: Refresh metadata from iTunes (fills subtitle/description/screenshots)
+      // This runs in background — no need to block on it
+      lookupApp(found.store_app_id).catch(() => {});
+    }
+    loadApp();
+    return () => { cancelled = true; };
+  }, [appId]);
 
-      // Load all insight data in parallel
-      const [aso, kw, rev, fg] = await Promise.allSettled([
-        getASOScore(appId),
-        getKeywordOpportunitiesForApp(appId, 20),
-        getReviewIntelligence(appId),
-        getFeatureGaps(appId),
-      ]);
+  // Load ASO score (after metadata refresh settles)
+  useEffect(() => {
+    if (!app) return;
+    let cancelled = false;
+    // Small delay to let metadata refresh complete
+    const timer = setTimeout(async () => {
+      try {
+        const data = await getASOScore(appId);
+        if (!cancelled) setAso(data);
+      } catch { /* ignore */ }
+      if (!cancelled) setAsoLoading(false);
+    }, 1500);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [app, appId]);
 
-      if (cancelled) return;
-      setData({
-        app,
-        aso: aso.status === 'fulfilled' ? aso.value : null,
-        keywords: kw.status === 'fulfilled' ? (kw.value.opportunities || []) : [],
-        reviews: rev.status === 'fulfilled' ? rev.value : null,
-        featureGaps: fg.status === 'fulfilled' ? (fg.value.feature_gaps || []) : [],
-        loading: false,
-        notFound: false,
-      });
+  // Load keywords — auto-trigger discovery if empty
+  useEffect(() => {
+    if (!app) return;
+    let cancelled = false;
+
+    async function loadKeywords() {
+      try {
+        const data = await getKeywordOpportunitiesForApp(appId, 20);
+        if (cancelled) return;
+
+        if (data.opportunities && data.opportunities.length > 0) {
+          setKeywords(data.opportunities);
+          setKwLoading(false);
+          return;
+        }
+
+        // No keywords yet — auto-trigger discovery pipeline
+        if (!data.discovering) {
+          setKwDiscovering(true);
+          // Extract keywords first, then run phase-1 discovery
+          await triggerKeywordExtraction(appId).catch(() => {});
+          // Wait briefly for extraction to finish
+          await new Promise((r) => setTimeout(r, 3000));
+          await triggerPhase1Discovery(appId).catch(() => {});
+        } else {
+          setKwDiscovering(true);
+        }
+
+        // Poll for results
+        const pollUntil = Date.now() + 90_000; // 90s max
+        while (!cancelled && Date.now() < pollUntil) {
+          await new Promise((r) => setTimeout(r, 5000));
+          const poll = await getKeywordOpportunitiesForApp(appId, 20).catch(() => null);
+          if (cancelled) return;
+          if (poll && poll.opportunities && poll.opportunities.length > 0) {
+            setKeywords(poll.opportunities);
+            break;
+          }
+          if (poll && !poll.discovering) break; // finished but no results
+        }
+      } catch { /* ignore */ }
+      if (!cancelled) { setKwLoading(false); setKwDiscovering(false); }
     }
 
-    load();
+    loadKeywords();
     return () => { cancelled = true; };
+  }, [app, appId]);
+
+  // Load review intelligence — auto-trigger if empty
+  useEffect(() => {
+    if (!app) return;
+    let cancelled = false;
+
+    async function loadReviews() {
+      try {
+        // Try cached first
+        let data = await getReviewIntelligence(appId, false);
+        if (cancelled) return;
+
+        if (data && data.reviews_analyzed > 0) {
+          setReviews(data);
+          setRevLoading(false);
+          return;
+        }
+
+        // No cached data — force analysis
+        data = await getReviewIntelligence(appId, true);
+        if (!cancelled) setReviews(data);
+      } catch { /* ignore */ }
+      if (!cancelled) setRevLoading(false);
+    }
+
+    loadReviews();
+    return () => { cancelled = true; };
+  }, [app, appId]);
+
+  // Load feature gaps
+  useEffect(() => {
+    if (!app) return;
+    let cancelled = false;
+    getFeatureGaps(appId)
+      .then((data) => { if (!cancelled) setFeatureGaps(data.feature_gaps || []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [app, appId]);
+
+  // Refresh ASO after keywords load (score depends on keyword coverage)
+  const refreshAso = useCallback(async () => {
+    setAsoLoading(true);
+    try {
+      const data = await getASOScore(appId);
+      setAso(data);
+    } catch { /* ignore */ }
+    setAsoLoading(false);
   }, [appId]);
 
   async function handleRemove() {
@@ -165,11 +273,9 @@ export default function MyAppDetailClient({ appId }: { appId: number }) {
     }
   }
 
-  if (data.loading) {
-    return <AppShell><Spinner /></AppShell>;
-  }
+  if (loading) return <AppShell><Spinner /></AppShell>;
 
-  if (data.notFound || !data.app) {
+  if (notFound || !app) {
     return (
       <AppShell>
         <div className="flex flex-col items-center justify-center gap-3 py-20 text-center">
@@ -183,9 +289,8 @@ export default function MyAppDetailClient({ appId }: { appId: number }) {
     );
   }
 
-  const { app, aso, keywords, reviews, featureGaps } = data;
-  const grade = app.aso_grade || aso?.grade || 'F';
-  const score = Math.round(app.aso_score ?? aso?.overall_score ?? 0);
+  const grade = aso?.grade || app.aso_grade || 'F';
+  const score = Math.round(aso?.overall_score ?? app.aso_score ?? 0);
 
   // Filter keywords
   const kwGaps = keywords.filter((k) => k.keyword_gap || (k.opportunity_score >= 40 && !k.app_rank));
@@ -201,7 +306,6 @@ export default function MyAppDetailClient({ appId }: { appId: number }) {
           </Link>
 
           <div className="flex items-start gap-4">
-            {/* Icon */}
             {app.icon_url ? (
               <img src={app.icon_url} alt="" className="h-16 w-16 rounded-2xl object-cover shadow-sm ring-1 ring-black/5 dark:ring-white/10" />
             ) : (
@@ -210,7 +314,6 @@ export default function MyAppDetailClient({ appId }: { appId: number }) {
               </div>
             )}
 
-            {/* Info */}
             <div className="min-w-0 flex-1">
               <h1 className="text-xl font-bold text-gray-900 dark:text-white">{app.name}</h1>
               <p className="text-sm text-gray-500 dark:text-gray-400">
@@ -236,7 +339,6 @@ export default function MyAppDetailClient({ appId }: { appId: number }) {
               </div>
             </div>
 
-            {/* Actions */}
             <div className="flex items-center gap-2">
               <Link
                 href={`/apps/${app.app_id}`}
@@ -256,19 +358,29 @@ export default function MyAppDetailClient({ appId }: { appId: number }) {
         </div>
 
         {/* ═══ ASO Health ═══ */}
-        <SectionCard title="ASO Health" icon={Target}>
-          {aso ? (
+        <SectionCard title="ASO Health" icon={Target} status={asoLoading ? 'loading' : 'ready'}>
+          {asoLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-indigo-500" />
+              <span className="ml-2 text-sm text-gray-500">Computing ASO score...</span>
+            </div>
+          ) : aso ? (
             <div className="space-y-4">
-              {/* Grade banner */}
               <div className={cn('flex items-center gap-4 rounded-lg bg-gradient-to-r p-4 text-white', gradeColor[grade] || gradeColor.F)}>
                 <ASOScoreRing score={score} size={64} />
                 <div>
                   <p className="text-lg font-bold">ASO Score: {score}/100</p>
                   <p className="text-sm opacity-80">Grade {grade} — {gradeText[grade] || 'Unknown'}</p>
                 </div>
+                <button
+                  onClick={refreshAso}
+                  className="ml-auto rounded-lg bg-white/20 p-2 text-white/80 transition hover:bg-white/30 hover:text-white"
+                  title="Refresh ASO score"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </button>
               </div>
 
-              {/* Breakdown */}
               {aso.breakdown && Object.keys(aso.breakdown).length > 0 && (
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {Object.entries(aso.breakdown).map(([key, item]) => (
@@ -277,7 +389,6 @@ export default function MyAppDetailClient({ appId }: { appId: number }) {
                 </div>
               )}
 
-              {/* Tips */}
               {aso.tips && aso.tips.length > 0 && (
                 <div>
                   <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-gray-700 dark:text-gray-300">
@@ -308,8 +419,15 @@ export default function MyAppDetailClient({ appId }: { appId: number }) {
         </SectionCard>
 
         {/* ═══ Keyword Opportunities ═══ */}
-        <SectionCard title="Keyword Opportunities" icon={Search}>
-          {kwBest.length > 0 ? (
+        <SectionCard title="Keyword Opportunities" icon={Search} status={kwLoading ? 'loading' : 'ready'}>
+          {kwLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-indigo-500" />
+              <span className="ml-2 text-sm text-gray-500">
+                {kwDiscovering ? 'Discovering keywords... this may take a minute' : 'Loading keywords...'}
+              </span>
+            </div>
+          ) : kwBest.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -357,22 +475,25 @@ export default function MyAppDetailClient({ appId }: { appId: number }) {
               )}
             </div>
           ) : (
-            <p className="text-sm text-gray-400">No keyword data yet. Visit the app&apos;s Keywords tab to start discovering keywords.</p>
+            <p className="text-sm text-gray-400">No keywords discovered yet. Discovery will run automatically next time.</p>
           )}
         </SectionCard>
 
         {/* ═══ Review Insights ═══ */}
-        <SectionCard title="Review Insights" icon={MessageSquare}>
-          {reviews && reviews.reviews_analyzed > 0 ? (
+        <SectionCard title="Review Insights" icon={MessageSquare} status={revLoading ? 'loading' : 'ready'}>
+          {revLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-indigo-500" />
+              <span className="ml-2 text-sm text-gray-500">Analyzing reviews with AI...</span>
+            </div>
+          ) : reviews && reviews.reviews_analyzed > 0 ? (
             <div className="space-y-4">
-              {/* Sentiment */}
               <div className="rounded-lg bg-gray-50 p-4 dark:bg-gray-800/50">
                 <p className="text-sm text-gray-700 dark:text-gray-300">{reviews.sentiment_summary}</p>
                 <p className="mt-2 text-xs text-gray-400">{reviews.reviews_analyzed} reviews analyzed</p>
               </div>
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                {/* Feature requests */}
                 {reviews.feature_requests.length > 0 && (
                   <div>
                     <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-gray-700 dark:text-gray-300">
@@ -390,7 +511,6 @@ export default function MyAppDetailClient({ appId }: { appId: number }) {
                   </div>
                 )}
 
-                {/* Pain points */}
                 {reviews.pain_points.length > 0 && (
                   <div>
                     <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-gray-700 dark:text-gray-300">
@@ -409,7 +529,6 @@ export default function MyAppDetailClient({ appId }: { appId: number }) {
                 )}
               </div>
 
-              {/* Pricing complaints */}
               {reviews.pricing_complaints.length > 0 && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/40 dark:bg-amber-950/20">
                   <p className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-amber-700 dark:text-amber-400">
@@ -425,7 +544,7 @@ export default function MyAppDetailClient({ appId }: { appId: number }) {
               )}
             </div>
           ) : (
-            <p className="text-sm text-gray-400">No review intelligence available yet. The app needs reviews to analyze.</p>
+            <p className="text-sm text-gray-400">No review data available for this app.</p>
           )}
         </SectionCard>
 
