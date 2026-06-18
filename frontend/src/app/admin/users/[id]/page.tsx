@@ -493,6 +493,8 @@ function SubscriptionSection({
                     {[7, 14, 30].map((d) => (
                       <button key={d} onClick={() => handleExtend(d)} className="block w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800">+{d} days</button>
                     ))}
+                    <div className="border-t border-gray-100 dark:border-gray-800 my-1" />
+                    <button onClick={() => { if (confirm('Grant lifetime access? This will remove trial expiration and set the account to active enterprise.')) handleExtend(36500); }} className="block w-full px-3 py-1.5 text-left text-xs font-medium text-green-700 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-950">Lifetime</button>
                   </div>
                 )}
               </div>

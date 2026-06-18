@@ -1061,22 +1061,31 @@ def list_trials(
 @router.post("/trials/{workspace_id}/extend")
 def extend_trial(
     workspace_id: int,
-    days: int = Query(default=14, ge=1, le=365),
+    days: int = Query(default=14, ge=1, le=36500),
     db: Session = Depends(get_db),
     admin: User = Depends(get_superadmin),
 ):
-    """Extend a workspace's trial by N days from now."""
+    """Extend a workspace's trial by N days from now, or grant lifetime access."""
     sub = db.query(Subscription).filter(Subscription.workspace_id == workspace_id).first()
     if not sub:
         raise HTTPException(status_code=404, detail="Subscription not found")
 
-    new_end = datetime.now(timezone.utc) + timedelta(days=days)
-    sub.trial_ends_at = new_end
-    sub.status = "trialing"
-    sub.plan_code = "trial"
-    db.commit()
-    _log_activity(db, admin, "trial.extend", "workspace", workspace_id, {"days": days})
-    return {"ok": True, "trial_ends_at": new_end.isoformat(), "days": days}
+    if days >= 36500:
+        # Lifetime: remove trial end, set active permanently
+        sub.trial_ends_at = None
+        sub.status = "active"
+        sub.plan_code = sub.plan_code if sub.plan_code not in ("trial", None) else "enterprise"
+        db.commit()
+        _log_activity(db, admin, "trial.extend", "workspace", workspace_id, {"days": "lifetime"})
+        return {"ok": True, "trial_ends_at": None, "days": "lifetime"}
+    else:
+        new_end = datetime.now(timezone.utc) + timedelta(days=days)
+        sub.trial_ends_at = new_end
+        sub.status = "trialing"
+        sub.plan_code = "trial"
+        db.commit()
+        _log_activity(db, admin, "trial.extend", "workspace", workspace_id, {"days": days})
+        return {"ok": True, "trial_ends_at": new_end.isoformat(), "days": days}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
