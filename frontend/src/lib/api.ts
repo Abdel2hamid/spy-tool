@@ -2319,6 +2319,18 @@ export interface AdminActivityItem {
   created_at: string | null;
 }
 
+export interface UserActivityItem {
+  id: number;
+  action: string;
+  detail: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string | null;
+}
+
+export async function adminGetUserActivity(userId: number, skip = 0, limit = 50): Promise<{ user_id: number; email: string; full_name: string | null; activity: UserActivityItem[]; total: number }> {
+  return _adminFetch(`/admin-console/users/${userId}/activity?skip=${skip}&limit=${limit}`);
+}
+
 export async function adminGetActivity(skip = 0, limit = 50): Promise<{ activity: AdminActivityItem[]; total: number }> {
   return _adminFetch(`/admin-console/activity?skip=${skip}&limit=${limit}`);
 }

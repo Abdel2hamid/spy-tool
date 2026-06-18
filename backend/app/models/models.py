@@ -50,6 +50,18 @@ class Announcement(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class UserActivityLog(Base):
+    """Tracks what regular users do on the platform."""
+    __tablename__ = "user_activity_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    action = Column(String(100), nullable=False)
+    detail = Column(String(500))
+    metadata_ = Column("metadata", JSON)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class Workspace(Base):
     __tablename__ = "workspaces"
 

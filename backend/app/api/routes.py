@@ -99,6 +99,7 @@ from app.api.deps import _bearer, get_current_user, get_auth_context, AuthContex
 from app.utils.rate_limiter import rate_limit
 from app.services.plan_enforcement import PlanEnforcer
 from app.config import settings
+from app.services.user_activity import log_user_action
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -824,6 +825,15 @@ def lookup_app(
                     args=(store_id,),
                     daemon=True,
                 ).start()
+
+    # Log the app lookup
+    if credentials:
+        from app.services.auth_service import decode_access_token
+        payload = decode_access_token(credentials.credentials) if credentials.credentials else None
+        if payload:
+            uid = int(payload.get("sub", 0))
+            if uid:
+                log_user_action(db, uid, "app.lookup", result.get("name", track_id), {"track_id": track_id})
 
     return result
 
@@ -2828,6 +2838,7 @@ async def trigger_keyword_extraction(app_id: int, db: Session = Depends(get_db),
         raise HTTPException(status_code=404, detail="App not found")
 
     asyncio.create_task(_run_keyword_extraction_async(app_id))
+    log_user_action(db, _user.id, "keywords.extract", app.name, {"app_id": app_id})
     return {"status": "started", "app_id": app.app_id, "app_name": app.name}
 
 
@@ -3881,6 +3892,7 @@ def add_favorite(
     )
     db.add(fav)
     db.commit()
+    log_user_action(db, ctx.user.id, "favorite.add", app_obj.name, {"app_id": int(app_id)})
     return {"id": fav.id, "app_id": fav.app_id}
 
 
@@ -3900,6 +3912,7 @@ def remove_favorite(
         raise HTTPException(status_code=404, detail="Favorite not found")
     db.delete(fav)
     db.commit()
+    log_user_action(db, ctx.user.id, "favorite.remove", detail=str(app_id), metadata={"app_id": app_id})
     return {"ok": True}
 
 
@@ -3993,6 +4006,7 @@ def add_my_app(
     )
     db.add(my)
     db.commit()
+    log_user_action(db, ctx.user.id, "myapp.add", app_obj.name, {"app_id": int(app_id)})
     return {"id": my.id, "app_id": my.app_id}
 
 
@@ -4012,6 +4026,7 @@ def remove_my_app(
         raise HTTPException(status_code=404, detail="My app not found")
     db.delete(my)
     db.commit()
+    log_user_action(db, ctx.user.id, "myapp.remove", detail=str(app_id), metadata={"app_id": app_id})
     return {"ok": True}
 
 

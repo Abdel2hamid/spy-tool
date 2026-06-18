@@ -488,6 +488,18 @@ _MIGRATIONS = [
     )""",
     "CREATE INDEX IF NOT EXISTS idx_admin_activity_created ON admin_activity_log (created_at DESC)",
 
+    # User activity log
+    """CREATE TABLE IF NOT EXISTS user_activity_log (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        action VARCHAR(100) NOT NULL,
+        detail VARCHAR(500),
+        metadata JSONB,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_user_activity_user ON user_activity_log (user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_user_activity_created ON user_activity_log (created_at DESC)",
+
     # Announcements
     """CREATE TABLE IF NOT EXISTS announcements (
         id SERIAL PRIMARY KEY,

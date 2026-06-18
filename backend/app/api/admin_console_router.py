@@ -26,7 +26,7 @@ from app.database import get_db
 from app.api.deps import get_superadmin
 from app.models.models import (
     App, User, Workspace, Membership, Subscription, WorkspaceUsage,
-    Favorite, MyApp, AdminActivityLog, Announcement,
+    Favorite, MyApp, AdminActivityLog, Announcement, UserActivityLog,
 )
 
 logger = logging.getLogger(__name__)
@@ -438,6 +438,53 @@ def bulk_user_action(
         "user_ids": body.user_ids, "affected": affected, "plan_code": body.plan_code,
     })
     return {"ok": True, "affected": affected}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# User Activity History
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/users/{user_id}/activity")
+def get_user_activity(
+    user_id: int,
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(get_superadmin),
+):
+    """Get activity history for a specific user."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    total = db.query(func.count(UserActivityLog.id)).filter(
+        UserActivityLog.user_id == user_id
+    ).scalar() or 0
+
+    rows = (
+        db.query(UserActivityLog)
+        .filter(UserActivityLog.user_id == user_id)
+        .order_by(UserActivityLog.created_at.desc())
+        .offset(skip).limit(limit)
+        .all()
+    )
+
+    return {
+        "user_id": user_id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "activity": [
+            {
+                "id": r.id,
+                "action": r.action,
+                "detail": r.detail,
+                "metadata": r.metadata_,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+        "total": total,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

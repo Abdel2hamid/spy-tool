@@ -204,6 +204,8 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
             detail="Invalid email or password.",
         )
 
+    from app.services.user_activity import log_user_action
+    log_user_action(db, user.id, "auth.login")
     return _build_auth_response(user, workspace, membership, subscription, token)
 
 

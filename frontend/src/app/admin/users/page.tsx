@@ -12,6 +12,8 @@ import {
   adminBulkAction,
   adminExportUsersCSV,
   AdminUserItem,
+  adminGetUserActivity,
+  UserActivityItem,
 } from '@/lib/api';
 import {
   Search,
@@ -30,6 +32,7 @@ import {
   CheckSquare,
   Square,
   Minus,
+  History,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -57,6 +60,7 @@ export default function AdminUsersPage() {
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
+  const [activityUser, setActivityUser] = useState<AdminUserItem | null>(null);
   const [resetTarget, setResetTarget] = useState<AdminUserItem | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkPlanOpen, setBulkPlanOpen] = useState(false);
@@ -432,6 +436,13 @@ export default function AdminUsersPage() {
 
                         {/* Delete */}
                         <button
+                          onClick={() => setActivityUser(u)}
+                          title="View activity"
+                          className="rounded p-1.5 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-950 dark:hover:text-indigo-400 transition"
+                        >
+                          <History className="h-4 w-4" />
+                        </button>
+                        <button
                           onClick={() => handleDelete(u)}
                           title="Delete user"
                           className="rounded p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-400 transition"
@@ -491,6 +502,13 @@ export default function AdminUsersPage() {
             onReset={() => {
               setResetTarget(null);
             }}
+          />
+        )}
+        {/* User Activity Modal */}
+        {activityUser && (
+          <UserActivityModal
+            user={activityUser}
+            onClose={() => setActivityUser(null)}
           />
         )}
       </div>
@@ -748,6 +766,108 @@ function ResetPasswordModal({
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// User Activity Modal
+// ---------------------------------------------------------------------------
+
+const ACTION_LABELS: Record<string, { label: string; color: string }> = {
+  'auth.login': { label: 'Login', color: 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-400' },
+  'app.lookup': { label: 'App Lookup', color: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-400' },
+  'favorite.add': { label: 'Favorited', color: 'bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-400' },
+  'favorite.remove': { label: 'Unfavorited', color: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400' },
+  'myapp.add': { label: 'Added My App', color: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-400' },
+  'myapp.remove': { label: 'Removed My App', color: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400' },
+  'keywords.extract': { label: 'Keywords Extract', color: 'bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-400' },
+};
+
+function UserActivityModal({ user, onClose }: { user: AdminUserItem; onClose: () => void }) {
+  const [activity, setActivity] = useState<UserActivityItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const limit = 30;
+
+  useEffect(() => {
+    setLoading(true);
+    adminGetUserActivity(user.id, page * limit, limit)
+      .then((d) => { setActivity(d.activity); setTotal(d.total); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [user.id, page]);
+
+  const totalPages = Math.ceil(total / limit);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="w-full max-w-2xl max-h-[80vh] rounded-2xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900 flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">User Activity</h3>
+            <p className="text-sm text-gray-500">{user.full_name || user.email} — {total} actions</p>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          {loading ? (
+            <div className="flex justify-center py-12">
+              <RefreshCw className="h-5 w-5 animate-spin text-gray-400" />
+            </div>
+          ) : activity.length === 0 ? (
+            <p className="text-center text-sm text-gray-400 py-12">No activity recorded yet</p>
+          ) : (
+            <div className="space-y-3">
+              {activity.map((a) => {
+                const info = ACTION_LABELS[a.action] || { label: a.action, color: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400' };
+                return (
+                  <div key={a.id} className="flex items-start gap-3 group">
+                    <div className="mt-1 h-2 w-2 rounded-full bg-gray-300 dark:bg-gray-600 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${info.color}`}>
+                          {info.label}
+                        </span>
+                        {a.detail && (
+                          <span className="text-sm text-gray-700 dark:text-gray-300 truncate">{a.detail}</span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-gray-400 mt-0.5">
+                        {a.created_at ? new Date(a.created_at).toLocaleString() : '—'}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-6 py-3 border-t border-gray-200 dark:border-gray-800">
+            <p className="text-xs text-gray-500">Page {page + 1} of {totalPages}</p>
+            <div className="flex gap-1">
+              <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0} className="rounded border p-1.5 text-gray-500 hover:bg-gray-50 disabled:opacity-30 dark:border-gray-700 dark:hover:bg-gray-800">
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+              <button onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="rounded border p-1.5 text-gray-500 hover:bg-gray-50 disabled:opacity-30 dark:border-gray-700 dark:hover:bg-gray-800">
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
