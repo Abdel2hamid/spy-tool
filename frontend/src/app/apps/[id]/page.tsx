@@ -540,7 +540,7 @@ function ASOScoreCard({ appId }: { appId: number }) {
 }
 
 
-function OverviewTab({ app, appId }: { app: AppDetail; appId: number }) {
+function OverviewTab({ app, appId, isMyApp }: { app: AppDetail; appId: number; isMyApp?: boolean }) {
   return (
     <div className="space-y-6">
       {app.description && (
@@ -583,8 +583,8 @@ function OverviewTab({ app, appId }: { app: AppDetail; appId: number }) {
       {/* Market Estimates — full rich card */}
       <MarketEstimatesCard appId={appId} app={app} />
 
-      {/* ASO Score */}
-      <ASOScoreCard appId={appId} />
+      {/* ASO Score — only for user's own apps */}
+      {isMyApp && <ASOScoreCard appId={appId} />}
 
       {app.screenshots && app.screenshots.length > 0 && (
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
@@ -3366,7 +3366,7 @@ export default function AppDetailPage() {
 
         {/* Tab content */}
         <div className="min-h-0">
-          {activeTab === 'overview' && <OverviewTab app={app} appId={appId} />}
+          {activeTab === 'overview' && <OverviewTab app={app} appId={appId} isMyApp={isMyApp} />}
           {activeTab === 'versions' && <VersionsTab versions={versions} />}
           {activeTab === 'reviews' && <ReviewsTab reviews={reviews} appId={appId} />}
           {activeTab === 'rankings' && <RankingsTab appId={appId} />}
