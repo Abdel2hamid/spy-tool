@@ -216,7 +216,7 @@ def admin_dashboard(
     mrr_breakdown: dict[str, dict] = {}
     active_subs = (
         db.query(Subscription.plan_code, func.count(Subscription.id))
-        .filter(Subscription.status == "active")
+        .filter(Subscription.status == "active", Subscription.plan_code != "lifetime")
         .group_by(Subscription.plan_code)
         .all()
     )
@@ -242,10 +242,10 @@ def admin_dashboard(
     active_trials = db.query(func.count(Subscription.id)).filter(
         Subscription.status == "trialing"
     ).scalar() or 0
-    # Converted = subscription status is active and plan is NOT trial
+    # Converted = subscription status is active and plan is a paid plan (not trial/lifetime)
     converted = db.query(func.count(Subscription.id)).filter(
         Subscription.status == "active",
-        Subscription.plan_code != "trial",
+        Subscription.plan_code.notin_(["trial", "lifetime"]),
     ).scalar() or 0
     # Expired = trialing but trial_ends_at < now
     expired_trials = db.query(func.count(Subscription.id)).filter(
