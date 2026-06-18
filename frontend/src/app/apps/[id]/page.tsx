@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useState, useEffect } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components';
-import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, DownloadEstimate, ASOScoreResponse, ASOBreakdownItem, KeywordSuggestionsResponse, KeywordSuggestionItem, getAppDetail, getAppReviews, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, getDownloadEstimate, getASOScore, getKeywordSuggestions, RankHistory, getFavoriteIds, addFavorite, removeFavorite } from '@/lib/api';
+import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, DownloadEstimate, ASOScoreResponse, ASOBreakdownItem, KeywordSuggestionsResponse, KeywordSuggestionItem, getAppDetail, getAppReviews, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, getDownloadEstimate, getASOScore, getKeywordSuggestions, RankHistory, getFavoriteIds, addFavorite, removeFavorite, getMyAppIds, addMyApp, removeMyApp } from '@/lib/api';
 import { fmtNum, fmtRev, fmtRange, fmtRevRange, confidenceLabel, CONFIDENCE_BADGE } from '@/lib/estimate-format';
 import {
   ArrowLeft, Star, Download, Calendar, Globe, MessageSquare,
@@ -52,7 +52,7 @@ function formatRevenue(min: number | null, max: number | null): string {
   return `${fmt(min ?? 0)}–${fmt(max)}`;
 }
 
-function AppHeader({ app, isFavorited, onToggleFavorite, inComparison, comparisonFull, onToggleComparison }: { app: AppDetail; isFavorited: boolean; onToggleFavorite: () => void; inComparison: boolean; comparisonFull: boolean; onToggleComparison: () => void }) {
+function AppHeader({ app, isFavorited, onToggleFavorite, isMyApp, onToggleMyApp, inComparison, comparisonFull, onToggleComparison }: { app: AppDetail; isFavorited: boolean; onToggleFavorite: () => void; isMyApp: boolean; onToggleMyApp: () => void; inComparison: boolean; comparisonFull: boolean; onToggleComparison: () => void }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
       {/* Gradient accent bar */}
@@ -108,6 +108,19 @@ function AppHeader({ app, isFavorited, onToggleFavorite, inComparison, compariso
                     App Store
                   </a>
                 )}
+                <button
+                  onClick={onToggleMyApp}
+                  title={isMyApp ? 'Remove from My Apps' : 'Mark as My App'}
+                  className={cn(
+                    'pill transition-colors text-xs font-medium gap-1',
+                    isMyApp
+                      ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:hover:bg-emerald-950'
+                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-emerald-600 dark:bg-gray-800 dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-emerald-400',
+                  )}
+                >
+                  {isMyApp ? <Check className="h-3.5 w-3.5" /> : <Star className="h-3.5 w-3.5" />}
+                  {isMyApp ? 'My App' : 'My App'}
+                </button>
                 <button
                   onClick={onToggleFavorite}
                   title={isFavorited ? 'Remove from favorites' : 'Add to favorites'}
@@ -3149,6 +3162,7 @@ export default function AppDetailPage() {
   const [showSyncBanner, setShowSyncBanner] = useState(searchParams.get('imported') === '1');
   const [reviewsLoaded, setReviewsLoaded] = useState(false);
   const [isFavorited, setIsFavorited] = useState(false);
+  const [isMyApp, setIsMyApp] = useState(false);
   const comparisonIds = useComparison();
   const inComparison = comparisonIds.includes(appId);
   const comparisonFull = comparisonIds.length >= 5;
@@ -3178,6 +3192,9 @@ export default function AppDetailPage() {
     getFavoriteIds()
       .then((ids) => setIsFavorited(ids.includes(appId)))
       .catch(() => {});
+    getMyAppIds()
+      .then((ids) => setIsMyApp(ids.includes(appId)))
+      .catch(() => {});
   }, [appId]);
 
   async function toggleFavorite() {
@@ -3188,6 +3205,20 @@ export default function AppDetailPage() {
       } else {
         await addFavorite(appId);
         setIsFavorited(true);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  async function toggleMyApp() {
+    try {
+      if (isMyApp) {
+        await removeMyApp(appId);
+        setIsMyApp(false);
+      } else {
+        await addMyApp(appId);
+        setIsMyApp(true);
       }
     } catch {
       // ignore
@@ -3303,7 +3334,7 @@ export default function AppDetailPage() {
           </div>
         )}
 
-        <AppHeader app={app} isFavorited={isFavorited} onToggleFavorite={toggleFavorite} inComparison={inComparison} comparisonFull={comparisonFull} onToggleComparison={toggleComparison} />
+        <AppHeader app={app} isFavorited={isFavorited} onToggleFavorite={toggleFavorite} isMyApp={isMyApp} onToggleMyApp={toggleMyApp} inComparison={inComparison} comparisonFull={comparisonFull} onToggleComparison={toggleComparison} />
 
         {/* Tab navigation — horizontally scrollable on mobile */}
         <div className="relative">

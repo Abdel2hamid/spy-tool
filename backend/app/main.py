@@ -428,6 +428,18 @@ _MIGRATIONS = [
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_favorite_user_app ON favorites (user_id, app_id)",
     "CREATE INDEX IF NOT EXISTS idx_favorite_workspace ON favorites (workspace_id)",
 
+    # My Apps — user's own apps (ASO optimization targets)
+    """CREATE TABLE IF NOT EXISTS my_apps (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        app_id INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(user_id, app_id)
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_myapp_user_app ON my_apps (user_id, app_id)",
+    "CREATE INDEX IF NOT EXISTS idx_myapp_workspace ON my_apps (workspace_id)",
+
     # ── Keyword Scoring V2 (multi-signal fusion + per-app chance) ─────────
     # New columns on keywords table
     "ALTER TABLE keywords ADD COLUMN IF NOT EXISTS volume_score FLOAT DEFAULT 0.0",

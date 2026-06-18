@@ -85,6 +85,8 @@ from app.models.schemas import (
     WeeklyOpportunitiesResponse,
     FavoriteAppItem,
     FavoriteListResponse,
+    MyAppItem,
+    MyAppListResponse,
     CompetitorCompareResponse,
     CompetitorRankHistoryResponse,
     KeywordGapReportResponse,
@@ -3878,6 +3880,118 @@ def remove_favorite(
     if not fav:
         raise HTTPException(status_code=404, detail="Favorite not found")
     db.delete(fav)
+    db.commit()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# My Apps — user's own apps (ASO optimization targets)
+# ---------------------------------------------------------------------------
+
+@router.get("/my-apps", response_model=MyAppListResponse)
+def list_my_apps(
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """List the user's own apps with ASO scores."""
+    from app.services.aso_score_service import ASOScoreService
+
+    rows = (
+        db.query(models.MyApp, models.App)
+        .join(models.App, models.MyApp.app_id == models.App.id)
+        .filter(models.MyApp.user_id == ctx.user.id)
+        .order_by(models.MyApp.created_at.desc())
+        .all()
+    )
+    svc = ASOScoreService(db)
+    items = []
+    for my, app in rows:
+        try:
+            aso = svc.score(app.id)
+            aso_total = aso.get("total_score", 0)
+            grade = aso.get("grade", "F")
+        except Exception:
+            aso_total = None
+            grade = None
+        items.append(MyAppItem(
+            id=my.id,
+            app_id=app.id,
+            store_app_id=app.app_id,
+            name=app.name,
+            icon_url=app.icon_url,
+            developer=app.developer,
+            primary_category=app.primary_category,
+            current_rating=app.current_rating,
+            current_reviews=app.current_reviews,
+            current_rank=app.current_rank,
+            price=app.price or 0,
+            is_free=app.is_free if app.is_free is not None else True,
+            added_at=my.created_at,
+            aso_score=aso_total,
+            aso_grade=grade,
+        ))
+    return MyAppListResponse(apps=items, total=len(items))
+
+
+@router.get("/my-apps/ids")
+def list_my_app_ids(
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Return bare list of app IDs the user has marked as 'my app'."""
+    rows = (
+        db.query(models.MyApp.app_id)
+        .filter(models.MyApp.user_id == ctx.user.id)
+        .all()
+    )
+    return {"app_ids": [r[0] for r in rows]}
+
+
+@router.post("/my-apps", status_code=201)
+def add_my_app(
+    body: dict,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Mark an app as the user's own app."""
+    app_id = body.get("app_id")
+    if not app_id:
+        raise HTTPException(status_code=422, detail="app_id is required")
+    app_obj = db.query(models.App).filter(models.App.id == int(app_id)).first()
+    if not app_obj:
+        raise HTTPException(status_code=404, detail="App not found")
+    existing = (
+        db.query(models.MyApp)
+        .filter(models.MyApp.user_id == ctx.user.id, models.MyApp.app_id == int(app_id))
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Already marked as my app")
+    my = models.MyApp(
+        user_id=ctx.user.id,
+        workspace_id=ctx.workspace.id,
+        app_id=int(app_id),
+    )
+    db.add(my)
+    db.commit()
+    return {"id": my.id, "app_id": my.app_id}
+
+
+@router.delete("/my-apps/{app_id}")
+def remove_my_app(
+    app_id: int,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Unmark an app as the user's own app."""
+    my = (
+        db.query(models.MyApp)
+        .filter(models.MyApp.user_id == ctx.user.id, models.MyApp.app_id == app_id)
+        .first()
+    )
+    if not my:
+        raise HTTPException(status_code=404, detail="My app not found")
+    db.delete(my)
     db.commit()
     return {"ok": True}
 

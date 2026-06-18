@@ -977,3 +977,19 @@ class Favorite(Base):
         Index("idx_favorite_user_app", "user_id", "app_id", unique=True),
         Index("idx_favorite_workspace", "workspace_id"),
     )
+
+
+class MyApp(Base):
+    """User-scoped 'my app' marker — apps the user owns or manages."""
+    __tablename__ = "my_apps"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    app_id = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_myapp_user_app", "user_id", "app_id", unique=True),
+        Index("idx_myapp_workspace", "workspace_id"),
+    )

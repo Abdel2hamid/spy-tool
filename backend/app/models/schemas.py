@@ -1374,6 +1374,35 @@ class FavoriteListResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# My Apps — user's own apps
+# ---------------------------------------------------------------------------
+
+class MyAppItem(BaseModel):
+    """Flat schema: my-app metadata + key app fields + ASO score."""
+    id: int
+    app_id: int
+    store_app_id: str
+    name: str
+    icon_url: Optional[str] = None
+    developer: Optional[str] = None
+    primary_category: Optional[str] = None
+    current_rating: Optional[float] = None
+    current_reviews: Optional[int] = None
+    current_rank: Optional[int] = None
+    price: float = 0
+    is_free: bool = True
+    added_at: datetime
+    # ASO score fields
+    aso_score: Optional[float] = None
+    aso_grade: Optional[str] = None
+
+
+class MyAppListResponse(BaseModel):
+    apps: List[MyAppItem]
+    total: int
+
+
+# ---------------------------------------------------------------------------
 # Competitor Comparison
 # ---------------------------------------------------------------------------
 

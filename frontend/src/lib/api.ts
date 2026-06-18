@@ -2027,6 +2027,71 @@ export async function removeFavorite(appId: number): Promise<void> {
 
 
 // ---------------------------------------------------------------------------
+// My Apps — user's own apps
+// ---------------------------------------------------------------------------
+
+export interface MyAppItem {
+  id: number;
+  app_id: number;
+  store_app_id: string;
+  name: string;
+  icon_url?: string | null;
+  developer?: string | null;
+  primary_category?: string | null;
+  current_rating?: number | null;
+  current_reviews?: number | null;
+  current_rank?: number | null;
+  price: number;
+  is_free: boolean;
+  added_at: string;
+  aso_score?: number | null;
+  aso_grade?: string | null;
+}
+
+export interface MyAppListResponse {
+  apps: MyAppItem[];
+  total: number;
+}
+
+export async function getMyApps(): Promise<MyAppListResponse> {
+  const res = await fetch(`${API_BASE}/my-apps`, {
+    headers: _authHeaders(),
+    cache: 'no-store',
+  });
+  if (!res.ok) return { apps: [], total: 0 };
+  return res.json();
+}
+
+export async function getMyAppIds(): Promise<number[]> {
+  const res = await fetch(`${API_BASE}/my-apps/ids`, {
+    headers: _authHeaders(),
+    cache: 'no-store',
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.app_ids || [];
+}
+
+export async function addMyApp(appId: number): Promise<{ id: number; app_id: number }> {
+  const res = await fetch(`${API_BASE}/my-apps`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+    body: JSON.stringify({ app_id: appId }),
+  });
+  if (!res.ok) throw new Error(`Failed to add my app (${res.status})`);
+  return res.json();
+}
+
+export async function removeMyApp(appId: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/my-apps/${appId}`, {
+    method: 'DELETE',
+    headers: _authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed to remove my app (${res.status})`);
+}
+
+
+// ---------------------------------------------------------------------------
 // Competitor Comparison
 // ---------------------------------------------------------------------------
 

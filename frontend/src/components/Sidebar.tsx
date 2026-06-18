@@ -19,6 +19,7 @@ import {
   Bell,
   Star,
   Heart,
+  Crown,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -32,6 +33,7 @@ const navSections = [
       { href: '/latest-apps', label: 'New Releases', icon: Zap },
       { href: '/trending', label: 'Trending', icon: TrendingUp },
       { href: '/favorites', label: 'Favorites', icon: Heart },
+      { href: '/my-apps', label: 'My Apps', icon: Crown },
     ],
   },
   {
