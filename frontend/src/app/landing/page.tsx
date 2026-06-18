@@ -955,7 +955,7 @@ function Footer() {
             &copy; {new Date().getFullYear()} AppStore Spy AI. All rights reserved.
           </p>
           <div className="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-500">
-            <span>Made with AI for App Builders</span>
+            <a href="mailto:support@appstorespy.ai" className="hover:text-gray-700 dark:hover:text-gray-300 transition-colors">support@appstorespy.ai</a>
           </div>
         </div>
       </div>
