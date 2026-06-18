@@ -45,6 +45,7 @@ const PLAN_COLORS: Record<string, string> = {
   enterprise: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300',
   starter: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300',
   trial: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
+  lifetime: 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300',
 };
 
 function planBadgeClass(plan: string | null): string {

@@ -1071,10 +1071,10 @@ def extend_trial(
         raise HTTPException(status_code=404, detail="Subscription not found")
 
     if days >= 36500:
-        # Lifetime: remove trial end, set active permanently
+        # Lifetime: remove trial end, set active permanently with "lifetime" plan
         sub.trial_ends_at = None
         sub.status = "active"
-        sub.plan_code = sub.plan_code if sub.plan_code not in ("trial", None) else "enterprise"
+        sub.plan_code = "lifetime"
         db.commit()
         _log_activity(db, admin, "trial.extend", "workspace", workspace_id, {"days": "lifetime"})
         return {"ok": True, "trial_ends_at": None, "days": "lifetime"}

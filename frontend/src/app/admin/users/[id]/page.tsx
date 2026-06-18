@@ -47,6 +47,7 @@ const PLAN_COLORS: Record<string, string> = {
   enterprise: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300',
   starter: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300',
   trial: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
+  lifetime: 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300',
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -480,25 +481,23 @@ function SubscriptionSection({
       action={
         subscription && workspaceId ? (
           <div className="flex items-center gap-1">
-            {subscription.status === 'trialing' && (
-              <div className="relative">
-                <button
-                  onClick={(e) => { e.stopPropagation(); setExtendOpen(!extendOpen); }}
-                  className="text-xs text-amber-600 hover:text-amber-700 dark:text-amber-400 font-medium flex items-center gap-1"
-                >
-                  <CalendarPlus className="h-3 w-3" /> Extend
-                </button>
-                {extendOpen && (
-                  <div className="absolute right-0 top-full z-20 mt-1 w-28 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-900" onClick={(e) => e.stopPropagation()}>
-                    {[7, 14, 30].map((d) => (
-                      <button key={d} onClick={() => handleExtend(d)} className="block w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800">+{d} days</button>
-                    ))}
-                    <div className="border-t border-gray-100 dark:border-gray-800 my-1" />
-                    <button onClick={() => { if (confirm('Grant lifetime access? This will remove trial expiration and set the account to active enterprise.')) handleExtend(36500); }} className="block w-full px-3 py-1.5 text-left text-xs font-medium text-green-700 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-950">Lifetime</button>
-                  </div>
-                )}
-              </div>
-            )}
+            <div className="relative">
+              <button
+                onClick={(e) => { e.stopPropagation(); setExtendOpen(!extendOpen); }}
+                className="text-xs text-amber-600 hover:text-amber-700 dark:text-amber-400 font-medium flex items-center gap-1"
+              >
+                <CalendarPlus className="h-3 w-3" /> Extend
+              </button>
+              {extendOpen && (
+                <div className="absolute right-0 top-full z-20 mt-1 w-28 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-900" onClick={(e) => e.stopPropagation()}>
+                  {[7, 14, 30].map((d) => (
+                    <button key={d} onClick={() => handleExtend(d)} className="block w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800">+{d} days</button>
+                  ))}
+                  <div className="border-t border-gray-100 dark:border-gray-800 my-1" />
+                  <button onClick={() => { if (confirm('Grant lifetime access? This removes trial expiration and sets the account to active lifetime.')) handleExtend(36500); }} className="block w-full px-3 py-1.5 text-left text-xs font-medium text-green-700 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-950">Lifetime</button>
+                </div>
+              )}
+            </div>
             {!editing ? (
               <button onClick={() => setEditing(true)} className="text-xs text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 font-medium flex items-center gap-1">
                 <Pencil className="h-3 w-3" /> Edit
@@ -523,6 +522,7 @@ function SubscriptionSection({
                   <option value="starter">Starter</option>
                   <option value="pro">Pro</option>
                   <option value="enterprise">Enterprise</option>
+                  <option value="lifetime">Lifetime</option>
                 </select>
               </div>
               <div>
