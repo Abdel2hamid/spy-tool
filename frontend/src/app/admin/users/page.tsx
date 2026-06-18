@@ -154,11 +154,12 @@ export default function AdminUsersPage() {
 
   // --- Selection helpers -----------------------------------------------------
 
-  const allSelected = users.length > 0 && users.every((u) => selected.has(u.id));
-  const someSelected = users.some((u) => selected.has(u.id));
+  const selectableUsers = users.filter((u) => !u.is_superadmin);
+  const allSelected = selectableUsers.length > 0 && selectableUsers.every((u) => selected.has(u.id));
+  const someSelected = selectableUsers.some((u) => selected.has(u.id));
 
   function toggleSelectAll() {
-    setSelected(allSelected ? new Set() : new Set(users.map((u) => u.id)));
+    setSelected(allSelected ? new Set() : new Set(selectableUsers.map((u) => u.id)));
   }
 
   function toggleSelect(id: number) {
@@ -379,9 +380,13 @@ export default function AdminUsersPage() {
                     >
                       {/* Checkbox */}
                       <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                        <button onClick={() => toggleSelect(u.id)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
-                          {selected.has(u.id) ? <CheckSquare className="h-4 w-4 text-indigo-600 dark:text-indigo-400" /> : <Square className="h-4 w-4" />}
-                        </button>
+                        {u.is_superadmin ? (
+                          <span className="inline-block h-4 w-4" />
+                        ) : (
+                          <button onClick={() => toggleSelect(u.id)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+                            {selected.has(u.id) ? <CheckSquare className="h-4 w-4 text-indigo-600 dark:text-indigo-400" /> : <Square className="h-4 w-4" />}
+                          </button>
+                        )}
                       </td>
 
                       {/* User */}
@@ -407,13 +412,19 @@ export default function AdminUsersPage() {
 
                       {/* Plan */}
                       <td className="px-4 py-3">
-                        <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium capitalize ${planBadgeClass(u.plan_code)}`}>
-                          {u.plan_code || 'none'}
-                        </span>
-                        {u.plan_status && (
-                          <p className={`text-[10px] font-medium mt-0.5 ${STATUS_COLORS[u.plan_status] || 'text-gray-400'}`}>
-                            {u.plan_status}
-                          </p>
+                        {u.is_superadmin ? (
+                          <span className="inline-block rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-600 dark:bg-red-950 dark:text-red-400">Superadmin</span>
+                        ) : (
+                          <>
+                            <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium capitalize ${planBadgeClass(u.plan_code)}`}>
+                              {u.plan_code || 'none'}
+                            </span>
+                            {u.plan_status && (
+                              <p className={`text-[10px] font-medium mt-0.5 ${STATUS_COLORS[u.plan_status] || 'text-gray-400'}`}>
+                                {u.plan_status}
+                              </p>
+                            )}
+                          </>
                         )}
                       </td>
 
@@ -430,7 +441,9 @@ export default function AdminUsersPage() {
 
                       {/* Trial */}
                       <td className="px-4 py-3">
-                        {u.plan_status === 'trialing' && u.trial_days_left !== null ? (
+                        {u.is_superadmin ? (
+                          <span className="text-xs text-gray-400">{'\u2014'}</span>
+                        ) : u.plan_status === 'trialing' && u.trial_days_left !== null ? (
                           <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
                             u.trial_days_left <= 0 ? 'bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400' :
                             u.trial_days_left <= 3 ? 'bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400' :
@@ -455,18 +468,22 @@ export default function AdminUsersPage() {
                           <button onClick={() => router.push(`/admin/users/${u.id}`)} title="View details" className="rounded p-1.5 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-950 dark:hover:text-indigo-400 transition">
                             <ExternalLink className="h-4 w-4" />
                           </button>
-                          <button onClick={() => toggleActive(u)} title={u.is_active ? 'Deactivate' : 'Activate'} className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-200 transition">
-                            {u.is_active ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
-                          </button>
                           <button onClick={() => setResetTarget(u)} title="Reset password" className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-200 transition">
                             <Key className="h-4 w-4" />
                           </button>
-                          <button onClick={() => handleImpersonate(u)} title="Login as user" className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-200 transition">
-                            <LogIn className="h-4 w-4" />
-                          </button>
-                          <button onClick={() => handleDelete(u)} title="Delete user" className="rounded p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-400 transition">
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          {!u.is_superadmin && (
+                            <>
+                              <button onClick={() => toggleActive(u)} title={u.is_active ? 'Deactivate' : 'Activate'} className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-200 transition">
+                                {u.is_active ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
+                              </button>
+                              <button onClick={() => handleImpersonate(u)} title="Login as user" className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-200 transition">
+                                <LogIn className="h-4 w-4" />
+                              </button>
+                              <button onClick={() => handleDelete(u)} title="Delete user" className="rounded p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-400 transition">
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>

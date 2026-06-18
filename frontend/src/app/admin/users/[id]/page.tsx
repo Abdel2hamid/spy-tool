@@ -245,23 +245,25 @@ export default function AdminUserDetailPage() {
             </div>
 
             {/* Usage This Month */}
-            <Section title="Usage This Month" icon={<BarChart3 className="h-4 w-4 text-blue-500" />}>
-              {usage ? (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {[
-                    { key: 'app_imports', label: 'App Imports', color: 'text-indigo-600 dark:text-indigo-400' },
-                    { key: 'keyword_refreshes', label: 'Keywords', color: 'text-orange-600 dark:text-orange-400' },
-                    { key: 'ai_requests', label: 'AI Requests', color: 'text-pink-600 dark:text-pink-400' },
-                    { key: 'exports', label: 'Exports', color: 'text-green-600 dark:text-green-400' },
-                  ].map((m) => (
-                    <div key={m.key} className="rounded-lg border border-gray-100 p-3 dark:border-gray-800 text-center">
-                      <p className={`text-2xl font-bold ${m.color}`}>{usage[m.key] ?? 0}</p>
-                      <p className="text-[11px] text-gray-500 mt-0.5">{m.label}</p>
-                    </div>
-                  ))}
-                </div>
-              ) : <p className="text-sm text-gray-400">No usage data</p>}
-            </Section>
+            {!user.is_superadmin && (
+              <Section title="Usage This Month" icon={<BarChart3 className="h-4 w-4 text-blue-500" />}>
+                {usage ? (
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    {[
+                      { key: 'app_imports', label: 'App Imports', color: 'text-indigo-600 dark:text-indigo-400' },
+                      { key: 'keyword_refreshes', label: 'Keywords', color: 'text-orange-600 dark:text-orange-400' },
+                      { key: 'ai_requests', label: 'AI Requests', color: 'text-pink-600 dark:text-pink-400' },
+                      { key: 'exports', label: 'Exports', color: 'text-green-600 dark:text-green-400' },
+                    ].map((m) => (
+                      <div key={m.key} className="rounded-lg border border-gray-100 p-3 dark:border-gray-800 text-center">
+                        <p className={`text-2xl font-bold ${m.color}`}>{usage[m.key] ?? 0}</p>
+                        <p className="text-[11px] text-gray-500 mt-0.5">{m.label}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : <p className="text-sm text-gray-400">No usage data</p>}
+              </Section>
+            )}
 
             {/* Favorites */}
             <Section title={`Favorites (${data.favorite_count})`} icon={<Star className="h-4 w-4 text-pink-500" />}>
@@ -398,11 +400,15 @@ function UserActions({
 
   return (
     <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap">
-      <ActionBtn icon={user.is_active ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />} label={user.is_active ? 'Deactivate' : 'Activate'} onClick={toggleActive} disabled={busy} />
-      <ActionBtn icon={<Shield className="h-4 w-4" />} label={user.is_superadmin ? 'Remove Admin' : 'Make Admin'} onClick={toggleAdmin} disabled={busy} className={user.is_superadmin ? 'text-red-500' : ''} />
       <ActionBtn icon={<Key className="h-4 w-4" />} label="Reset Password" onClick={() => setResetOpen(true)} disabled={busy} />
-      <ActionBtn icon={<LogIn className="h-4 w-4" />} label="Login As" onClick={handleImpersonate} disabled={busy} />
-      <ActionBtn icon={<Trash2 className="h-4 w-4" />} label="Delete" onClick={handleDelete} disabled={busy} className="hover:!bg-red-50 hover:!text-red-600 dark:hover:!bg-red-950 dark:hover:!text-red-400" />
+      {!user.is_superadmin && (
+        <>
+          <ActionBtn icon={user.is_active ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />} label={user.is_active ? 'Deactivate' : 'Activate'} onClick={toggleActive} disabled={busy} />
+          <ActionBtn icon={<Shield className="h-4 w-4" />} label="Make Admin" onClick={toggleAdmin} disabled={busy} />
+          <ActionBtn icon={<LogIn className="h-4 w-4" />} label="Login As" onClick={handleImpersonate} disabled={busy} />
+          <ActionBtn icon={<Trash2 className="h-4 w-4" />} label="Delete" onClick={handleDelete} disabled={busy} className="hover:!bg-red-50 hover:!text-red-600 dark:hover:!bg-red-950 dark:hover:!text-red-400" />
+        </>
+      )}
 
       {resetOpen && <ResetPasswordModal userId={user.id} email={user.email} onClose={() => setResetOpen(false)} onDone={() => { setResetOpen(false); }} />}
     </div>
