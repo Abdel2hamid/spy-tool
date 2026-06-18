@@ -10,7 +10,7 @@ import {
   getFeatureGaps,
   getMyApps,
   removeMyApp,
-  lookupApp,
+  refreshMyApp,
   triggerKeywordExtraction,
   triggerPhase1Discovery,
   ASOScoreResponse,
@@ -129,7 +129,7 @@ export default function MyAppDetailClient({ appId }: { appId: number }) {
   const [revLoading, setRevLoading] = useState(true);
   const [featureGaps, setFeatureGaps] = useState<FeatureGapItem[]>([]);
 
-  // Load app info
+  // Load app info + trigger background refresh
   useEffect(() => {
     let cancelled = false;
     async function loadApp() {
@@ -144,27 +144,39 @@ export default function MyAppDetailClient({ appId }: { appId: number }) {
       setApp(found);
       setLoading(false);
 
-      // Step 1: Refresh metadata from iTunes (fills subtitle/description/screenshots)
-      // This runs in background — no need to block on it
-      lookupApp(found.store_app_id).catch(() => {});
+      // Trigger full metadata refresh (scrape subtitle, screenshots, etc.)
+      // This runs in background on the server
+      refreshMyApp(appId).catch(() => {});
     }
     loadApp();
     return () => { cancelled = true; };
   }, [appId]);
 
-  // Load ASO score (after metadata refresh settles)
+  // Load ASO score — first immediately, then again after scrape likely completes
   useEffect(() => {
     if (!app) return;
     let cancelled = false;
-    // Small delay to let metadata refresh complete
-    const timer = setTimeout(async () => {
+
+    async function loadAso() {
+      // First load: immediate (may have stale data)
       try {
         const data = await getASOScore(appId);
         if (!cancelled) setAso(data);
       } catch { /* ignore */ }
       if (!cancelled) setAsoLoading(false);
-    }, 1500);
-    return () => { cancelled = true; clearTimeout(timer); };
+
+      // Second load: after background scrape has had time to finish
+      // This refreshes the score with updated subtitle/screenshots/description
+      await new Promise((r) => setTimeout(r, 8000));
+      if (cancelled) return;
+      try {
+        const fresh = await getASOScore(appId);
+        if (!cancelled) setAso(fresh);
+      } catch { /* ignore */ }
+    }
+
+    loadAso();
+    return () => { cancelled = true; };
   }, [app, appId]);
 
   // Load keywords — auto-trigger discovery if empty

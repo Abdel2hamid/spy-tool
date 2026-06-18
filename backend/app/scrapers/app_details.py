@@ -335,6 +335,106 @@ class AppStoreAppScraper:
 
         return reviews[:limit]
 
+    async def _scrape_page_metadata(self, app_id: str, country: str = "us") -> Dict:
+        """
+        Scrape the App Store HTML page for metadata that the iTunes API
+        doesn't provide: subtitle and screenshot URLs.
+
+        The page embeds JSON data in <script> tags that contain fields like
+        'subtitle' and screenshot image sources.
+        """
+        url = f"{self.APPSTORE_BASE_URL}/{country}/app/id{app_id}"
+        html = await self._make_request(url)
+        if not html:
+            return {}
+
+        result: Dict = {}
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+
+            # ── Extract from embedded JSON in script tags ────────────
+            for script in soup.find_all("script"):
+                src = script.string or ""
+                if len(src) < 200:
+                    continue
+
+                start = src.find("{")
+                if start == -1:
+                    continue
+
+                try:
+                    data = json.loads(src[start:])
+                except Exception:
+                    continue
+
+                # Recursively find fields we need
+                def _find_all(obj, key, depth=0, results=None):
+                    if results is None:
+                        results = []
+                    if depth > 15:
+                        return results
+                    if isinstance(obj, dict):
+                        if key in obj and obj[key]:
+                            results.append(obj[key])
+                        for v in obj.values():
+                            _find_all(v, key, depth + 1, results)
+                    elif isinstance(obj, list):
+                        for item in obj[:50]:
+                            _find_all(item, key, depth + 1, results)
+                    return results
+
+                # Subtitle
+                if not result.get("subtitle"):
+                    subtitles = _find_all(data, "subtitle")
+                    for s in subtitles:
+                        if isinstance(s, str) and 3 < len(s) < 100:
+                            result["subtitle"] = s
+                            break
+
+                # Screenshots: look for screenshot URLs in the JSON
+                if not result.get("screenshots"):
+                    # Try screenshotsByType structure
+                    ss_by_type = _find_all(data, "screenshotsByType")
+                    for ss_map in ss_by_type:
+                        if isinstance(ss_map, dict):
+                            urls = []
+                            for _type_key, ss_list in ss_map.items():
+                                if isinstance(ss_list, list):
+                                    for ss in ss_list:
+                                        if isinstance(ss, dict) and ss.get("url"):
+                                            urls.append(ss["url"])
+                                        elif isinstance(ss, str) and "mzstatic.com" in ss:
+                                            urls.append(ss)
+                            if urls:
+                                result["screenshots"] = urls
+                                break
+
+                if result.get("subtitle") and result.get("screenshots"):
+                    break
+
+            # ── Fallback: extract screenshot URLs from img/source tags ──
+            if not result.get("screenshots"):
+                ss_urls = []
+                for tag in soup.find_all(["img", "source"]):
+                    src_attr = tag.get("srcset") or tag.get("src") or ""
+                    if "mzstatic.com" in src_attr and "screen" in src_attr.lower():
+                        # srcset may have multiple URLs; take the first
+                        url_part = src_attr.split(",")[0].split(" ")[0].strip()
+                        if url_part and url_part not in ss_urls:
+                            ss_urls.append(url_part)
+                if ss_urls:
+                    result["screenshots"] = ss_urls
+
+        except Exception as e:
+            logger.warning(f"Page metadata scrape failed for {app_id}: {e}")
+
+        if result.get("subtitle"):
+            logger.info(f"Scraped subtitle for {app_id}: {result['subtitle']}")
+        if result.get("screenshots"):
+            logger.info(f"Scraped {len(result['screenshots'])} screenshots for {app_id}")
+
+        return result
+
     async def scrape_full_app_data(self, app_id: str, country: str = "us") -> Dict:
         """
         Fetch and return all data for an app:
@@ -357,6 +457,18 @@ class AppStoreAppScraper:
         else:
             logger.warning(f"No details returned for app {app_id}, aborting full scrape")
             return result
+
+        # If iTunes API didn't provide subtitle or screenshots, scrape the page
+        has_subtitle = bool(details.get("subtitle"))
+        has_screenshots = bool(details.get("screenshots"))
+
+        if not has_subtitle or not has_screenshots:
+            await asyncio.sleep(0.5)
+            page_meta = await self._scrape_page_metadata(app_id, country)
+            if page_meta.get("subtitle") and not has_subtitle:
+                details["subtitle"] = page_meta["subtitle"]
+            if page_meta.get("screenshots") and not has_screenshots:
+                details["screenshots"] = page_meta["screenshots"]
 
         await asyncio.sleep(0.5)
 

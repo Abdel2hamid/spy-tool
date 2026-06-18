@@ -797,14 +797,33 @@ def lookup_app(
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
 
-    if result.get("is_new") and result.get("id"):
-        enforcer.increment("app_imports")
-        from app.services.post_import_hydration import PostImportHydrationService
-        threading.Thread(
-            target=PostImportHydrationService().hydrate,
-            args=(result["id"], result.get("app_id", "")),
-            daemon=True,
-        ).start()
+    if result.get("id"):
+        app_db_id = result["id"]
+        store_id = result.get("app_id", track_id)
+
+        if result.get("is_new"):
+            enforcer.increment("app_imports")
+            from app.services.post_import_hydration import PostImportHydrationService
+            threading.Thread(
+                target=PostImportHydrationService().hydrate,
+                args=(app_db_id, store_id),
+                daemon=True,
+            ).start()
+        else:
+            # For existing apps: run scrape if metadata is incomplete
+            app_obj = db.query(models.App).filter(models.App.id == app_db_id).first()
+            needs_scrape = app_obj and (
+                not app_obj.subtitle
+                or not app_obj.screenshots
+                or (isinstance(app_obj.screenshots, list) and len(app_obj.screenshots) == 0)
+            )
+            if needs_scrape:
+                from app.services.post_import_hydration import PostImportHydrationService
+                threading.Thread(
+                    target=PostImportHydrationService()._step_full_scrape,
+                    args=(store_id,),
+                    daemon=True,
+                ).start()
 
     return result
 
@@ -3994,6 +4013,38 @@ def remove_my_app(
     db.delete(my)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/my-apps/{app_id}/refresh")
+def refresh_my_app(
+    app_id: int,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Refresh metadata for a My App (scrape subtitle, screenshots, etc.)."""
+    my = (
+        db.query(models.MyApp)
+        .filter(models.MyApp.user_id == ctx.user.id, models.MyApp.app_id == app_id)
+        .first()
+    )
+    if not my:
+        raise HTTPException(status_code=404, detail="My app not found")
+
+    app_obj = db.query(models.App).filter(models.App.id == app_id).first()
+    if not app_obj:
+        raise HTTPException(status_code=404, detail="App not found")
+
+    store_id = app_obj.app_id  # The iTunes track ID string
+
+    # Run full hydration (scrape + keyword enrichment) in background
+    from app.services.post_import_hydration import PostImportHydrationService
+    threading.Thread(
+        target=PostImportHydrationService().hydrate,
+        args=(app_obj.id, store_id),
+        daemon=True,
+    ).start()
+
+    return {"status": "refreshing", "app_id": app_id, "store_app_id": store_id}
 
 
 # ---------------------------------------------------------------------------

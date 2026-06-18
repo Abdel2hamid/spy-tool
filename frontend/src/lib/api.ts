@@ -2090,6 +2090,15 @@ export async function removeMyApp(appId: number): Promise<void> {
   if (!res.ok) throw new Error(`Failed to remove my app (${res.status})`);
 }
 
+export async function refreshMyApp(appId: number): Promise<{ status: string }> {
+  const res = await fetch(`${API_BASE}/my-apps/${appId}/refresh`, {
+    method: 'POST',
+    headers: _authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed to refresh app (${res.status})`);
+  return res.json();
+}
+
 
 // ---------------------------------------------------------------------------
 // Competitor Comparison
