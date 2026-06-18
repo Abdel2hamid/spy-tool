@@ -464,6 +464,7 @@ WINNABILITY_CONFIG: dict = {
     # of the Day.
     # Tuning: add new major companies as they enter the App Store.
     "big_brand_developers": frozenset({
+        # AI / Tech giants
         "openai", "openai llc", "openai lc",
         "google llc", "google inc", "google",
         "meta platforms", "meta platforms inc", "meta",
@@ -473,42 +474,99 @@ WINNABILITY_CONFIG: dict = {
         "amazon.com services llc", "amazon", "amazon.com",
         "apple", "apple inc", "apple distribution international",
         "adobe", "adobe inc", "adobe systems",
+        # Streaming / Media
         "netflix", "netflix inc",
         "spotify ab", "spotify",
+        "warner bros", "warner bros. entertainment",
+        "disney", "walt disney", "disney+",
+        "paramount", "paramount+",
+        "hbo", "hbo max",
+        "hulu", "hulu llc",
+        "peacock", "peacock tv",
+        "amazon prime video",
+        "twitch interactive",
+        # Productivity / SaaS
         "notion labs", "notion labs inc", "notion",
         "canva pty ltd", "canva",
-        "bytedance", "tiktok ltd", "tiktok pte",
-        "x corp", "twitter", "twitter inc",
-        "snap inc", "snap",
-        "linkedin corporation", "linkedin",
-        "pinterest",
-        "samsung electronics",
-        "huawei device",
         "shopify inc",
         "salesforce inc", "salesforce.com",
         "zoom video communications",
         "slack technologies",
         "dropbox inc",
         "box inc",
-        "airbnb inc",
+        # Social media
+        "bytedance", "tiktok ltd", "tiktok pte",
+        "x corp", "twitter", "twitter inc",
+        "snap inc", "snap",
+        "linkedin corporation", "linkedin",
+        "pinterest",
+        "reddit inc",
+        # Finance / Payments
+        "paypal", "paypal inc", "paypal holdings",
+        "venmo",
+        "stripe", "stripe inc",
+        "square inc", "block inc",
+        "cash app",
+        "robinhood", "robinhood markets",
+        "coinbase", "coinbase inc",
+        "visa", "visa inc",
+        "mastercard",
+        "jpmorgan chase", "chase",
+        "bank of america",
+        "wells fargo",
+        "goldman sachs",
+        "american express",
+        "capital one",
+        "citibank", "citigroup",
+        "revolut", "revolut ltd",
+        "wise", "wise payments",
+        # Ride-sharing / Delivery
         "uber technologies",
         "lyft inc",
         "doordash inc",
         "instacart",
+        "grubhub",
+        # Travel / Hospitality
+        "airbnb inc",
+        "booking.com", "booking holdings",
+        "expedia", "expedia group",
+        "tripadvisor",
+        # Education
         "duolingo",
+        "coursera",
+        "khan academy",
+        # Dating
         "bumble inc",
         "match group",
+        "tinder",
+        # Hardware / Telecom
+        "samsung electronics",
+        "huawei device",
+        "verizon media",
+        "t-mobile",
+        "at&t",
+        # Gaming
         "unity technologies",
         "epic games",
-        "activision publishing",
-        "electronic arts",
+        "activision publishing", "activision blizzard",
+        "electronic arts", "ea swiss sarl", "ea sports",
         "zynga",
         "king",
         "niantic",
         "riot games",
         "supercell",
-        "verizon media",
-        "yahoo",
+        "nintendo", "nintendo co",
+        "roblox", "roblox corporation",
+        "mojang", "mojang studios",
+        "take-two interactive", "rockstar games",
+        "ubisoft",
+        "gameloft",
+        "square enix",
+        "bandai namco",
+        "capcom",
+        "konami",
+        "sega",
+        # Asian tech
         "baidu",
         "alibaba",
         "tencent",
@@ -516,16 +574,23 @@ WINNABILITY_CONFIG: dict = {
         "kakao corporation",
         "line corporation",
         "rakuten",
-        "sony interactive entertainment",
-        "warner bros",
-        "disney",
-        "paramount",
-        "hbo",
-        "hulu",
-        "peacock",
-        "amazon prime video",
-        "twitch interactive",
-        "reddit inc",
+        # Other major brands
+        "yahoo",
+        "sony interactive entertainment", "sony",
+        "nike", "nike inc",
+        "adidas",
+        "starbucks",
+        "walmart", "walmart inc",
+        "target corporation",
+        "mcdonald's", "mcdonalds",
+        "coca-cola", "the coca-cola company",
+        "pepsi", "pepsico",
+        # Political / Government
+        "truth social", "trump media",
+        "tmtg",
+        # Sports organizations
+        "fifa", "nfl enterprises", "nba properties", "mlb",
+        "espn", "espn inc",
     }),
 
     # Minimum character length for a developer token to trigger substring match.
@@ -537,44 +602,73 @@ WINNABILITY_CONFIG: dict = {
     # Checked case-insensitively against the app's name field.
     # Tuning: add/remove entries to keep pace with brand portfolio changes.
     "big_brand_app_keywords": (
+        # AI assistants
         "chatgpt", "dall-e", "dall·e", "openai",
-        "gemini", "google one", "google docs", "google sheets", "google drive",
+        "gemini", "grok", "claude ", "copilot",
+        # Google
+        "google one", "google docs", "google sheets", "google drive",
         "youtube", "gmail", "chrome", "google maps", "google photos",
+        "google translate", "google calendar", "google meet",
+        # Meta
         "instagram", "facebook", "whatsapp", "messenger", "threads",
-        "grok",
+        # Microsoft
         "microsoft copilot", "bing ", "bing chat", "microsoft 365",
         "microsoft teams", "outlook", "onedrive", "xbox",
-        "claude ",
+        # Amazon / Apple
         "alexa ", "amazon prime", "amazon music", "amazon photos",
+        "garageband", "iwork", "pages for", "numbers for", "keynote for",
+        # Adobe
         "adobe photoshop", "adobe acrobat", "adobe illustrator",
         "adobe lightroom", "adobe premiere",
-        "netflix",
-        "notion ",
-        "canva ",
-        "tiktok",
-        "snapchat",
+        # Streaming
+        "netflix", "disney+", "hulu", "hbo max", "peacock",
+        "paramount+", "spotify", "apple music", "apple tv",
+        # Social
+        "tiktok", "snapchat",
         " twitter", "twitter for", "x for iphone",
-        "linkedin",
-        "pinterest",
-        "spotify",
-        "slack ",
-        "zoom ",
-        "dropbox",
-        "duolingo",
-        "shazam",
-        "garageband",
-        "iwork", "pages for", "numbers for", "keynote for",
+        "linkedin", "pinterest", "reddit",
+        # Productivity
+        "notion ", "canva ", "slack ", "zoom ", "dropbox",
+        "trello", "asana",
+        # Finance / Payments
+        "paypal", "venmo", "cash app", "zelle",
+        "robinhood", "coinbase", "crypto.com",
+        "chase mobile", "bank of america", "wells fargo",
+        "american express", "capital one",
+        # Ride-sharing / Delivery
+        "uber ", "uber eats", "lyft", "doordash", "grubhub",
+        # Travel
+        "airbnb", "booking.com", "expedia", "tripadvisor",
+        # Education
+        "duolingo", "coursera", "khan academy",
+        # Dating
+        "tinder", "bumble",
+        # Gaming
+        "fortnite", "roblox", "minecraft", "candy crush",
+        "clash of clans", "clash royale", "pokemon go",
+        "fifa ", "madden ", "nba 2k", "call of duty",
+        # Shopping
+        "walmart", "target ", "amazon shopping",
+        "ebay", "etsy", "shein", "temu",
+        # Other major brands
+        "shazam", "waze",
+        "nike ", "adidas ", "starbucks",
+        # Political
+        "truth social", "trump ",
+        # Sports
+        "espn", "nfl ", "nba ", "mlb ",
+        "fifa world cup",
     ),
 
     # ── Market dominance thresholds ───────────────────────────────────────────
     # An app meeting any condition is considered an unbeatable incumbent.
     # Tuning: raise review_hard to 750k to widen the opportunity pool;
     #         lower to 300k to be more conservative.
-    "dominance_review_hard":   500_000,   # absolute behemoth — never winnable
-    "dominance_review_rated":  100_000,   # entrenched + high rating
-    "dominance_rated_floor":       4.5,   # minimum rating for "entrenched + beloved"
-    "dominance_top_rank":            3,   # chart dominator rank threshold
-    "dominance_top_reviews":   50_000,   # chart dominator review count threshold
+    "dominance_review_hard":   200_000,   # absolute behemoth — never winnable
+    "dominance_review_rated":   50_000,   # entrenched + high rating
+    "dominance_rated_floor":       4.3,   # minimum rating for "entrenched + beloved"
+    "dominance_top_rank":            5,   # chart dominator rank threshold
+    "dominance_top_reviews":   20_000,   # chart dominator review count threshold
 
     # ── Feasibility score — Review scarcity component (max 25 pts) ───────────
     # key = max reviews (exclusive upper bound); value = pts awarded.
