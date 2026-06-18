@@ -70,6 +70,10 @@ class DashboardStats(BaseModel):
     total_reviews: int
     plans: dict
     usage_this_month: dict
+    revenue: dict
+    trial_funnel: dict
+    usage_leaderboard: List[dict]
+    billing_log: List[dict]
 
 class UserItem(BaseModel):
     id: int
@@ -169,6 +173,13 @@ class TrialItem(BaseModel):
 # Dashboard Overview
 # ═══════════════════════════════════════════════════════════════════════════════
 
+PLAN_PRICES: dict[str, float] = {
+    "starter": 29.0,
+    "pro": 79.0,
+    "enterprise": 199.0,
+}
+
+
 @router.get("/dashboard", response_model=DashboardStats)
 def admin_dashboard(
     db: Session = Depends(get_db),
@@ -190,14 +201,68 @@ def admin_dashboard(
     except Exception:
         total_reviews = 0
 
+    # --- Plan distribution ---
     plan_rows = (
+        db.query(Subscription.plan_code, Subscription.status, func.count(Subscription.id))
+        .group_by(Subscription.plan_code, Subscription.status)
+        .all()
+    )
+    plans: dict[str, int] = {}
+    for code, _status, cnt in plan_rows:
+        plans[code] = plans.get(code, 0) + cnt
+
+    # --- Revenue (MRR estimate) ---
+    mrr = 0.0
+    mrr_breakdown: dict[str, dict] = {}
+    active_subs = (
         db.query(Subscription.plan_code, func.count(Subscription.id))
+        .filter(Subscription.status == "active")
         .group_by(Subscription.plan_code)
         .all()
     )
-    plans = {row[0]: row[1] for row in plan_rows}
+    for code, cnt in active_subs:
+        price = PLAN_PRICES.get(code, 0)
+        plan_mrr = price * cnt
+        mrr += plan_mrr
+        mrr_breakdown[code] = {"count": cnt, "price": price, "mrr": plan_mrr}
 
-    month_str = datetime.now(timezone.utc).strftime("%Y-%m")
+    revenue = {
+        "mrr": round(mrr, 2),
+        "arr": round(mrr * 12, 2),
+        "breakdown": mrr_breakdown,
+        "total_paying": sum(r["count"] for r in mrr_breakdown.values()),
+    }
+
+    # --- Trial conversion funnel ---
+    now = datetime.now(timezone.utc)
+    total_trials_ever = db.query(func.count(Subscription.id)).filter(
+        Subscription.plan_code == "trial"
+    ).scalar() or 0
+    # Still trialing
+    active_trials = db.query(func.count(Subscription.id)).filter(
+        Subscription.status == "trialing"
+    ).scalar() or 0
+    # Converted = subscription status is active and plan is NOT trial
+    converted = db.query(func.count(Subscription.id)).filter(
+        Subscription.status == "active",
+        Subscription.plan_code != "trial",
+    ).scalar() or 0
+    # Expired = trialing but trial_ends_at < now
+    expired_trials = db.query(func.count(Subscription.id)).filter(
+        Subscription.status == "trialing",
+        Subscription.trial_ends_at < now,
+    ).scalar() or 0
+
+    trial_funnel = {
+        "total_trials": total_trials_ever,
+        "active_trials": active_trials,
+        "converted": converted,
+        "expired": expired_trials,
+        "conversion_rate": round(converted / max(total_trials_ever, 1) * 100, 1),
+    }
+
+    # --- Usage this month ---
+    month_str = now.strftime("%Y-%m")
     usage_rows = (
         db.query(
             func.sum(WorkspaceUsage.app_imports),
@@ -215,6 +280,75 @@ def admin_dashboard(
         "exports": usage_rows[3] or 0 if usage_rows else 0,
     }
 
+    # --- Usage leaderboard (top 10 heaviest users this month) ---
+    leaderboard_rows = (
+        db.query(
+            User.id,
+            User.email,
+            User.full_name,
+            Subscription.plan_code,
+            WorkspaceUsage.app_imports,
+            WorkspaceUsage.keyword_refreshes,
+            WorkspaceUsage.ai_requests,
+            WorkspaceUsage.exports,
+        )
+        .join(Membership, Membership.user_id == User.id)
+        .join(WorkspaceUsage, WorkspaceUsage.workspace_id == Membership.workspace_id)
+        .outerjoin(Subscription, Subscription.workspace_id == Membership.workspace_id)
+        .filter(WorkspaceUsage.month == month_str)
+        .order_by(
+            (
+                WorkspaceUsage.app_imports
+                + WorkspaceUsage.keyword_refreshes
+                + WorkspaceUsage.ai_requests
+                + WorkspaceUsage.exports
+            ).desc()
+        )
+        .limit(10)
+        .all()
+    )
+    usage_leaderboard = [
+        {
+            "user_id": r[0],
+            "email": r[1],
+            "full_name": r[2],
+            "plan_code": r[3],
+            "app_imports": r[4] or 0,
+            "keyword_refreshes": r[5] or 0,
+            "ai_requests": r[6] or 0,
+            "exports": r[7] or 0,
+            "total": (r[4] or 0) + (r[5] or 0) + (r[6] or 0) + (r[7] or 0),
+        }
+        for r in leaderboard_rows
+    ]
+
+    # --- Recent billing log (plan changes, trial extensions from admin activity) ---
+    billing_actions = (
+        db.query(AdminActivityLog, User)
+        .outerjoin(User, User.id == AdminActivityLog.admin_id)
+        .filter(
+            AdminActivityLog.action.in_([
+                "subscription.update", "trial.extend", "user.bulk_change_plan",
+                "user.create",
+            ])
+        )
+        .order_by(AdminActivityLog.created_at.desc())
+        .limit(15)
+        .all()
+    )
+    billing_log = [
+        {
+            "id": log.id,
+            "admin_email": admin_user.email if admin_user else None,
+            "action": log.action,
+            "target_type": log.target_type,
+            "target_id": log.target_id,
+            "details": log.details,
+            "created_at": log.created_at.isoformat() if log.created_at else None,
+        }
+        for log, admin_user in billing_actions
+    ]
+
     return DashboardStats(
         total_users=total_users,
         active_users=active_users,
@@ -224,6 +358,10 @@ def admin_dashboard(
         total_reviews=total_reviews,
         plans=plans,
         usage_this_month=usage,
+        revenue=revenue,
+        trial_funnel=trial_funnel,
+        usage_leaderboard=usage_leaderboard,
+        billing_log=billing_log,
     )
 
 

@@ -2104,6 +2104,12 @@ export async function refreshMyApp(appId: number): Promise<{ status: string }> {
 // Admin Console
 // ---------------------------------------------------------------------------
 
+export interface AdminRevenueBreakdownItem {
+  count: number;
+  price: number;
+  mrr: number;
+}
+
 export interface AdminDashboardStats {
   total_users: number;
   active_users: number;
@@ -2113,6 +2119,39 @@ export interface AdminDashboardStats {
   total_reviews: number;
   plans: Record<string, number>;
   usage_this_month: Record<string, number>;
+  revenue: {
+    mrr: number;
+    arr: number;
+    breakdown: Record<string, AdminRevenueBreakdownItem>;
+    total_paying: number;
+  };
+  trial_funnel: {
+    total_trials: number;
+    active_trials: number;
+    converted: number;
+    expired: number;
+    conversion_rate: number;
+  };
+  usage_leaderboard: {
+    user_id: number;
+    email: string;
+    full_name: string | null;
+    plan_code: string | null;
+    app_imports: number;
+    keyword_refreshes: number;
+    ai_requests: number;
+    exports: number;
+    total: number;
+  }[];
+  billing_log: {
+    id: number;
+    admin_email: string | null;
+    action: string;
+    target_type: string | null;
+    target_id: number | null;
+    details: Record<string, unknown> | null;
+    created_at: string | null;
+  }[];
 }
 
 export interface AdminUserItem {
