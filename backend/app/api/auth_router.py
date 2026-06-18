@@ -86,6 +86,7 @@ class UserInfo(BaseModel):
     id: int
     email: str
     full_name: Optional[str]
+    is_superadmin: bool = False
     created_at: datetime
 
 
@@ -213,6 +214,7 @@ def get_me(ctx: AuthContext = Depends(get_auth_context)):
             id=ctx.user.id,
             email=ctx.user.email,
             full_name=ctx.user.full_name,
+            is_superadmin=ctx.user.is_superadmin,
             created_at=ctx.user.created_at,
         ),
         workspace=WorkspaceInfo(
@@ -246,6 +248,7 @@ def update_profile(
             id=ctx.user.id,
             email=ctx.user.email,
             full_name=ctx.user.full_name,
+            is_superadmin=ctx.user.is_superadmin,
             created_at=ctx.user.created_at,
         ),
         workspace=WorkspaceInfo(

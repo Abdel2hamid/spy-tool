@@ -114,3 +114,22 @@ def get_auth_context(
         membership=membership,
         subscription=subscription,
     )
+
+
+def get_superadmin(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+    db: Session = Depends(get_db),
+) -> User:
+    """Require a superadmin user. Returns the User or raises 403."""
+    if not credentials:
+        raise _UNAUTHORIZED
+    payload = decode_access_token(credentials.credentials)
+    if not payload:
+        raise _UNAUTHORIZED
+    user_id = int(payload.get("sub", 0))
+    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    if not user:
+        raise _UNAUTHORIZED
+    if not user.is_superadmin:
+        raise HTTPException(status_code=403, detail="Superadmin access required")
+    return user

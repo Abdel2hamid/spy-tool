@@ -35,6 +35,7 @@ export interface UserInfo {
   id: number;
   email: string;
   full_name: string | null;
+  is_superadmin: boolean;
   created_at: string;
 }
 

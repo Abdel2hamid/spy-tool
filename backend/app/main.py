@@ -472,6 +472,9 @@ _MIGRATIONS = [
     """DELETE FROM app_discovered_keywords WHERE keyword ~ ' [a-z]( [a-z])*$'""",
     # Reset enrichment status so pipeline re-scores everything with v2
     "UPDATE keywords SET status = 'raw', volume_score = 0, difficulty_v2 = 0 WHERE volume_score = 0 AND status != 'raw'",
+
+    # Admin console — superadmin flag on users
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_superadmin BOOLEAN NOT NULL DEFAULT FALSE",
 ]
 
 
@@ -544,8 +547,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from app.api.admin_console_router import router as admin_console_router
+
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(router, prefix="/api/v1")
+app.include_router(admin_console_router, prefix="/api/v1")
 
 
 @app.exception_handler(Exception)

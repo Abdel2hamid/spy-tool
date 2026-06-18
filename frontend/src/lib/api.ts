@@ -1813,6 +1813,7 @@ export interface UserInfo {
   id: number;
   email: string;
   full_name: string | null;
+  is_superadmin: boolean;
   created_at: string;
 }
 
@@ -2097,6 +2098,123 @@ export async function refreshMyApp(appId: number): Promise<{ status: string }> {
   });
   if (!res.ok) throw new Error(`Failed to refresh app (${res.status})`);
   return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Admin Console
+// ---------------------------------------------------------------------------
+
+export interface AdminDashboardStats {
+  total_users: number;
+  active_users: number;
+  total_workspaces: number;
+  total_apps: number;
+  total_keywords: number;
+  total_reviews: number;
+  plans: Record<string, number>;
+  usage_this_month: Record<string, number>;
+}
+
+export interface AdminUserItem {
+  id: number;
+  email: string;
+  full_name: string | null;
+  is_active: boolean;
+  is_superadmin: boolean;
+  created_at: string | null;
+  workspace_name: string | null;
+  plan_code: string | null;
+  role: string | null;
+}
+
+export interface AdminWorkspaceItem {
+  id: number;
+  name: string;
+  slug: string;
+  created_at: string | null;
+  owner_email: string | null;
+  member_count: number;
+  plan_code: string | null;
+  plan_status: string | null;
+  usage: Record<string, number>;
+}
+
+export interface AdminJobItem {
+  job_id: string;
+  next_run: string | null;
+  trigger: string | null;
+}
+
+export interface AdminSystemHealth {
+  db_size_mb: number;
+  total_tables: number;
+  app_count: number;
+  keyword_count: number;
+  review_count: number;
+  pending_queue: number;
+  uptime_info: string;
+}
+
+export async function adminGetDashboard(): Promise<AdminDashboardStats> {
+  return fetchApi<AdminDashboardStats>('/admin-console/dashboard');
+}
+
+export async function adminGetUsers(search?: string, skip = 0, limit = 50): Promise<{ users: AdminUserItem[]; total: number }> {
+  const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
+  if (search) params.set('search', search);
+  return fetchApi(`/admin-console/users?${params}`);
+}
+
+export async function adminUpdateUser(userId: number, body: Record<string, unknown>): Promise<{ ok: boolean }> {
+  const res = await fetch(`${API_BASE}/admin-console/users/${userId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Failed (${res.status})`);
+  return res.json();
+}
+
+export async function adminDeleteUser(userId: number): Promise<{ ok: boolean }> {
+  const res = await fetch(`${API_BASE}/admin-console/users/${userId}`, {
+    method: 'DELETE',
+    headers: _authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed (${res.status})`);
+  return res.json();
+}
+
+export async function adminGetWorkspaces(search?: string, skip = 0, limit = 50): Promise<{ workspaces: AdminWorkspaceItem[]; total: number }> {
+  const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
+  if (search) params.set('search', search);
+  return fetchApi(`/admin-console/workspaces?${params}`);
+}
+
+export async function adminUpdateSubscription(workspaceId: number, body: Record<string, unknown>): Promise<{ ok: boolean }> {
+  const res = await fetch(`${API_BASE}/admin-console/subscriptions/${workspaceId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Failed (${res.status})`);
+  return res.json();
+}
+
+export async function adminGetJobs(): Promise<{ jobs: AdminJobItem[]; total: number }> {
+  return fetchApi('/admin-console/jobs');
+}
+
+export async function adminTriggerJob(jobId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`${API_BASE}/admin-console/jobs/${jobId}/trigger`, {
+    method: 'POST',
+    headers: _authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed (${res.status})`);
+  return res.json();
+}
+
+export async function adminGetSystemHealth(): Promise<AdminSystemHealth> {
+  return fetchApi('/admin-console/system');
 }
 
 
