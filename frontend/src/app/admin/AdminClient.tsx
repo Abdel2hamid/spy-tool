@@ -23,6 +23,7 @@ import {
   Clock,
   ArrowUpRight,
   ArrowDownRight,
+  Star,
 } from 'lucide-react';
 
 const PLAN_COLORS: Record<string, { bg: string; text: string; bar: string }> = {
@@ -237,9 +238,9 @@ export default function AdminClient() {
             <TrendingUp className="h-4 w-4 text-amber-500" />
             Trial Conversion Funnel
           </h3>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
             <FunnelStep
-              label="Total Trials"
+              label="Total Users"
               value={stats.trial_funnel.total_trials}
               color="bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300"
               icon={<Users className="h-4 w-4" />}
@@ -261,6 +262,13 @@ export default function AdminClient() {
               subtext={`${stats.trial_funnel.conversion_rate}% conversion`}
             />
             <FunnelStep
+              label="Lifetime"
+              value={stats.trial_funnel.lifetime ?? 0}
+              color="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400"
+              icon={<Star className="h-4 w-4" />}
+              subtext="free grants"
+            />
+            <FunnelStep
               label="Expired"
               value={stats.trial_funnel.expired}
               color="bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-400"
@@ -278,6 +286,11 @@ export default function AdminClient() {
                   className="bg-green-500 transition-all"
                   style={{ width: `${stats.trial_funnel.conversion_rate}%` }}
                   title={`Converted: ${stats.trial_funnel.conversion_rate}%`}
+                />
+                <div
+                  className="bg-emerald-400 transition-all"
+                  style={{ width: `${((stats.trial_funnel.lifetime ?? 0) / stats.trial_funnel.total_trials) * 100}%` }}
+                  title={`Lifetime`}
                 />
                 <div
                   className="bg-amber-400 transition-all"

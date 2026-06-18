@@ -186,8 +186,9 @@ def admin_dashboard(
     _admin: User = Depends(get_superadmin),
 ):
     """High-level stats for the admin dashboard."""
-    total_users = db.query(func.count(User.id)).scalar() or 0
-    active_users = db.query(func.count(User.id)).filter(User.is_active == True).scalar() or 0
+    # Exclude superadmins from user counts — they are not customers
+    total_users = db.query(func.count(User.id)).filter(User.is_superadmin == False).scalar() or 0
+    active_users = db.query(func.count(User.id)).filter(User.is_active == True, User.is_superadmin == False).scalar() or 0
     total_workspaces = db.query(func.count(Workspace.id)).scalar() or 0
     total_apps = db.query(func.count(App.id)).scalar() or 0
 
@@ -201,9 +202,18 @@ def admin_dashboard(
     except Exception:
         total_reviews = 0
 
-    # --- Plan distribution ---
+    # --- Plan distribution (one subscription per workspace, exclude superadmin workspaces) ---
+    admin_workspace_ids = (
+        db.query(Membership.workspace_id)
+        .join(User, User.id == Membership.user_id)
+        .filter(User.is_superadmin == True)
+        .subquery()
+    )
+    base_sub_filter = Subscription.workspace_id.notin_(admin_workspace_ids)
+
     plan_rows = (
         db.query(Subscription.plan_code, Subscription.status, func.count(Subscription.id))
+        .filter(base_sub_filter)
         .group_by(Subscription.plan_code, Subscription.status)
         .all()
     )
@@ -211,12 +221,17 @@ def admin_dashboard(
     for code, _status, cnt in plan_rows:
         plans[code] = plans.get(code, 0) + cnt
 
-    # --- Revenue (MRR estimate) ---
+    # --- Revenue (MRR estimate — only paid plans, exclude lifetime & trial) ---
+    now = datetime.now(timezone.utc)
     mrr = 0.0
     mrr_breakdown: dict[str, dict] = {}
     active_subs = (
         db.query(Subscription.plan_code, func.count(Subscription.id))
-        .filter(Subscription.status == "active", Subscription.plan_code != "lifetime")
+        .filter(
+            base_sub_filter,
+            Subscription.status == "active",
+            Subscription.plan_code.notin_(["trial", "lifetime"]),
+        )
         .group_by(Subscription.plan_code)
         .all()
     )
@@ -233,32 +248,40 @@ def admin_dashboard(
         "total_paying": sum(r["count"] for r in mrr_breakdown.values()),
     }
 
-    # --- Trial conversion funnel ---
-    now = datetime.now(timezone.utc)
-    total_trials_ever = db.query(func.count(Subscription.id)).filter(
-        Subscription.plan_code == "trial"
-    ).scalar() or 0
-    # Still trialing
+    # --- Trial conversion funnel (exclude superadmin workspaces) ---
+    # Active trials = trialing AND trial hasn't expired yet
     active_trials = db.query(func.count(Subscription.id)).filter(
-        Subscription.status == "trialing"
+        base_sub_filter,
+        Subscription.status == "trialing",
+        Subscription.trial_ends_at >= now,
     ).scalar() or 0
-    # Converted = subscription status is active and plan is a paid plan (not trial/lifetime)
+    # Converted = active with a paid plan
     converted = db.query(func.count(Subscription.id)).filter(
+        base_sub_filter,
         Subscription.status == "active",
         Subscription.plan_code.notin_(["trial", "lifetime"]),
     ).scalar() or 0
-    # Expired = trialing but trial_ends_at < now
+    # Lifetime grants
+    lifetime_count = db.query(func.count(Subscription.id)).filter(
+        base_sub_filter,
+        Subscription.plan_code == "lifetime",
+    ).scalar() or 0
+    # Expired = trialing but trial_ends_at has passed
     expired_trials = db.query(func.count(Subscription.id)).filter(
+        base_sub_filter,
         Subscription.status == "trialing",
         Subscription.trial_ends_at < now,
     ).scalar() or 0
+    # Total = all non-admin subscriptions
+    total_subs = active_trials + converted + lifetime_count + expired_trials
 
     trial_funnel = {
-        "total_trials": total_trials_ever,
+        "total_trials": total_subs,
         "active_trials": active_trials,
         "converted": converted,
         "expired": expired_trials,
-        "conversion_rate": round(converted / max(total_trials_ever, 1) * 100, 1),
+        "lifetime": lifetime_count,
+        "conversion_rate": round(converted / max(total_subs, 1) * 100, 1),
     }
 
     # --- Usage this month ---

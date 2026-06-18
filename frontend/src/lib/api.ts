@@ -2130,6 +2130,7 @@ export interface AdminDashboardStats {
     active_trials: number;
     converted: number;
     expired: number;
+    lifetime?: number;
     conversion_rate: number;
   };
   usage_leaderboard: {
