@@ -2666,8 +2666,8 @@ async def scrape_all_apps(db: Session = Depends(get_db)):
         await worker.cleanup()
 
 
-@router.post("/apps/{app_id}/refresh", dependencies=[Depends(_require_admin)])
-async def scrape_single_app(app_id: int, db: Session = Depends(get_db)):
+@router.post("/apps/{app_id}/refresh", dependencies=[Depends(rate_limit(10, 60))])
+async def scrape_single_app(app_id: int, db: Session = Depends(get_db), _user=Depends(get_current_user)):
     from app.workers.tasks import ScraperWorker
 
     app = db.query(models.App).filter(models.App.id == app_id).first()

@@ -466,6 +466,60 @@ async def job_full_metadata():
 
 
 # ---------------------------------------------------------------------------
+# Job: every 2 h — backfill incomplete apps (missing description/screenshots)
+# ---------------------------------------------------------------------------
+
+@_with_timeout("backfill_incomplete")
+async def job_backfill_incomplete():
+    """
+    Find apps missing full metadata (no description) and scrape them.
+    Processes up to 200 apps per run, prioritizing recently created apps.
+    """
+    job_id = "backfill_incomplete"
+    t0 = _log_start(job_id)
+    from app.workers.tasks import ScraperWorker
+    from app.models.models import App
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        # Find apps with no description (never fully enriched)
+        incomplete = (
+            db.query(App.app_id)
+            .filter(App.description.is_(None))
+            .order_by(App.created_at.desc())
+            .limit(200)
+            .all()
+        )
+        app_ids = [row[0] for row in incomplete]
+        db.close()
+
+        if not app_ids:
+            _log_done(job_id, t0, "0 incomplete apps found")
+            return
+
+        logger.info(f"[SCHEDULER]    {job_id}: found {len(app_ids)} incomplete apps to backfill")
+
+        worker = ScraperWorker()
+        await worker.initialize()
+        try:
+            success = 0
+            for app_id in app_ids:
+                try:
+                    ok = await worker.scrape_app_full_details(app_id)
+                    if ok:
+                        success += 1
+                except Exception as e:
+                    logger.warning(f"[SCHEDULER]    {job_id}: failed {app_id}: {e}")
+            _log_done(job_id, t0, f"{success}/{len(app_ids)} apps backfilled")
+        finally:
+            await worker.cleanup()
+    except Exception as exc:
+        db.close()
+        _log_fail(job_id, exc)
+
+
+# ---------------------------------------------------------------------------
 # Job: every 6 h — keyword discovery (100+ keywords → discovery queue)
 # ---------------------------------------------------------------------------
 
@@ -1468,11 +1522,24 @@ def setup_scheduler() -> AsyncIOScheduler:
         job_full_metadata,
         trigger=IntervalTrigger(
             hours=6,
-            start_date=now + timedelta(hours=6),
+            start_date=now + timedelta(minutes=20),
             timezone="UTC",
         ),
         id="full_metadata",
         name="Every 6h: Full App Metadata",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── every 2 h: backfill apps missing descriptions/screenshots ─────────
+    scheduler.add_job(
+        job_backfill_incomplete,
+        trigger=IntervalTrigger(
+            hours=2,
+            start_date=now + timedelta(minutes=5),
+            timezone="UTC",
+        ),
+        id="backfill_incomplete",
+        name="Every 2h: Backfill Incomplete Apps",
         **_JOB_DEFAULTS,
     )
 

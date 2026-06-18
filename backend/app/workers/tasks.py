@@ -82,7 +82,8 @@ class ScraperWorker:
                 developer=app_data.get("developer"),
                 icon_url=app_data.get("icon_url"),
                 current_rating=app_data.get("rating"),
-                current_rank=app_data.get("rank")
+                current_rank=app_data.get("rank"),
+                ingestion_stage="light",
             )
             self.db.add(app)
         else:
