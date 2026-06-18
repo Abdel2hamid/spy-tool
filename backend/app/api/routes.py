@@ -91,7 +91,7 @@ from app.models.schemas import (
     ASOScoreResponse,
     KeywordSuggestionsResponse,
 )
-from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS
+from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS, _BIG_BRAND_APP_KEYWORDS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
 from app.api.deps import _bearer, get_current_user, get_auth_context, AuthContext
 from app.utils.rate_limiter import rate_limit
@@ -941,6 +941,20 @@ def _check_ranking_history(db: Session, app_ids: List[int]) -> bool:
     return has_history
 
 
+def _is_big_brand_app(app) -> bool:
+    """Check if an app belongs to a big brand (developer or name match)."""
+    dev = (app.developer or "").strip().lower()
+    if dev in _BIG_BRAND_DEVELOPERS:
+        return True
+    if any(len(b) > 5 and b in dev for b in _BIG_BRAND_DEVELOPERS):
+        return True
+    name_lower = (app.name or "").lower()
+    for kw in _BIG_BRAND_APP_KEYWORDS:
+        if kw.strip() in name_lower:
+            return True
+    return False
+
+
 def _read_precomputed_trending(
     db: Session,
     limit: int,
@@ -948,16 +962,19 @@ def _read_precomputed_trending(
 ) -> list:
     """
     Read trending items from the precomputed app_trending_scores table.
+    Excludes big-brand apps (Google, Meta, PayPal, etc.) so the list
+    surfaces indie/smaller apps that users can actually compete with.
     Returns a list of dicts matching TrendingAppV2Response fields, or [] if
     the table is empty / no scores exist yet.
     """
+    # Fetch extra rows to compensate for brand filtering
+    fetch_limit = limit * 4
     query = (
         db.query(models.AppTrendingScore, models.App)
         .join(models.App, models.App.id == models.AppTrendingScore.app_id)
         .filter(models.AppTrendingScore.trend_score > 0)
     )
     if category_id is not None:
-        # Filter to apps that have at least one ranking in the requested category
         query = query.filter(
             exists().where(
                 (models.Ranking.app_id == models.AppTrendingScore.app_id)
@@ -967,11 +984,15 @@ def _read_precomputed_trending(
     rows = (
         query
         .order_by(models.AppTrendingScore.trend_score.desc())
-        .limit(limit)
+        .limit(fetch_limit)
         .all()
     )
-    return [
-        {
+
+    results = []
+    for score, app in rows:
+        if _is_big_brand_app(app):
+            continue
+        results.append({
             "id": app.id,
             "app_id": app.app_id,
             "name": app.name,
@@ -992,9 +1013,11 @@ def _read_precomputed_trending(
             "install_confidence": app.install_confidence,
             "estimated_revenue_monthly_min": app.estimated_revenue_monthly_min,
             "estimated_revenue_monthly_max": app.estimated_revenue_monthly_max,
-        }
-        for score, app in rows
-    ]
+        })
+        if len(results) >= limit:
+            break
+
+    return results
 
 
 @router.get("/trending", response_model=TrendingAppsResponse)
