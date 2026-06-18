@@ -3,19 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components';
-import {
-  getMyApps,
-  removeMyApp,
-  getASOScore,
-  getKeywordOpportunitiesForApp,
-  getReviewIntelligence,
-  getFeatureGaps,
-  MyAppItem,
-  ASOScoreResponse,
-  KeywordOpportunityItem,
-  ReviewIntelligence,
-  FeatureGapItem,
-} from '@/lib/api';
+import { getMyApps, removeMyApp, MyAppItem } from '@/lib/api';
 import {
   Star,
   TrendingUp,
@@ -23,20 +11,13 @@ import {
   Search,
   Trash2,
   ArrowRight,
-  Lightbulb,
-  ChevronDown,
-  ChevronUp,
-  Target,
-  ThumbsDown,
-  ThumbsUp,
-  AlertTriangle,
   Zap,
+  ChevronRight,
+  Crown,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-/* ── Shared helpers ──────────────────────────────────────────── */
-
-function ASOScoreRing({ score, size = 48 }: { score: number; size?: number }) {
+function ASOScoreRing({ score, size = 44 }: { score: number; size?: number }) {
   const r = (size - 6) / 2;
   const circ = 2 * Math.PI * r;
   const pct = Math.max(0, Math.min(score, 100));
@@ -46,377 +27,89 @@ function ASOScoreRing({ score, size = 48 }: { score: number; size?: number }) {
     <svg width={size} height={size} className="flex-shrink-0">
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" className="text-gray-200 dark:text-gray-700" strokeWidth={4} />
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={4} strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round" transform={`rotate(-90 ${size / 2} ${size / 2})`} />
-      <text x="50%" y="50%" textAnchor="middle" dy=".35em" className="fill-gray-900 dark:fill-white text-xs font-bold">{score}</text>
+      <text x="50%" y="50%" textAnchor="middle" dy=".35em" className="fill-gray-900 dark:fill-white text-[11px] font-bold">{score}</text>
     </svg>
   );
 }
 
-function BreakdownBar({ label, score }: { label: string; score: number }) {
-  const color = score >= 80 ? 'bg-emerald-500' : score >= 60 ? 'bg-blue-500' : score >= 40 ? 'bg-yellow-500' : 'bg-red-500';
-  return (
-    <div>
-      <div className="flex items-center justify-between text-xs mb-1">
-        <span className="text-gray-600 dark:text-gray-400">{label}</span>
-        <span className="font-medium text-gray-900 dark:text-white">{score}/100</span>
-      </div>
-      <div className="h-1.5 rounded-full bg-gray-100 dark:bg-gray-800">
-        <div className={cn('h-full rounded-full', color)} style={{ width: `${score}%` }} />
-      </div>
-    </div>
-  );
-}
-
-function SectionTitle({ icon: Icon, title }: { icon: typeof Star; title: string }) {
-  return (
-    <p className="mb-2.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-      <Icon className="h-3.5 w-3.5" />
-      {title}
-    </p>
-  );
-}
-
-function Spinner() {
-  return <div className="flex items-center justify-center py-6"><div className="h-5 w-5 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" /></div>;
-}
-
-const gradeColor: Record<string, string> = {
-  A: 'from-emerald-500 to-emerald-600',
-  B: 'from-blue-500 to-blue-600',
-  C: 'from-yellow-500 to-yellow-600',
-  D: 'from-orange-500 to-orange-600',
-  F: 'from-red-500 to-red-600',
-};
-const gradeText: Record<string, string> = { A: 'Excellent', B: 'Good', C: 'Needs work', D: 'Poor', F: 'Critical' };
-
-/* ── Expanded panel content ──────────────────────────────────── */
-
-interface PanelData {
-  aso: ASOScoreResponse | null;
-  keywords: KeywordOpportunityItem[];
-  reviews: ReviewIntelligence | null;
-  featureGaps: FeatureGapItem[];
-  loaded: boolean;
-  loading: boolean;
-}
-
-function ExpandedPanel({ appId, grade, score }: { appId: number; grade: string; score: number }) {
-  const [data, setData] = useState<PanelData>({ aso: null, keywords: [], reviews: null, featureGaps: [], loaded: false, loading: true });
-
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      const [aso, kw, rev, fg] = await Promise.allSettled([
-        getASOScore(appId),
-        getKeywordOpportunitiesForApp(appId, 10),
-        getReviewIntelligence(appId),
-        getFeatureGaps(appId),
-      ]);
-      if (cancelled) return;
-      setData({
-        aso: aso.status === 'fulfilled' ? aso.value : null,
-        keywords: kw.status === 'fulfilled' ? (kw.value.opportunities || []) : [],
-        reviews: rev.status === 'fulfilled' ? rev.value : null,
-        featureGaps: fg.status === 'fulfilled' ? (fg.value.feature_gaps || []) : [],
-        loaded: true,
-        loading: false,
-      });
-    }
-    load();
-    return () => { cancelled = true; };
-  }, [appId]);
-
-  if (data.loading) return <Spinner />;
-
-  const { aso, keywords, reviews, featureGaps } = data;
-
-  // Filter keyword opportunities: gaps + high opp
-  const kwGaps = keywords.filter((k) => k.keyword_gap || (k.opportunity_score >= 40 && !k.app_rank));
-  const kwBest = kwGaps.length > 0 ? kwGaps.slice(0, 5) : keywords.slice(0, 5);
-
-  return (
-    <div className="space-y-5">
-      {/* ── 1. ASO Health ────────────────────────────────────── */}
-      <div>
-        <SectionTitle icon={Target} title="ASO Health" />
-        {aso ? (
-          <div className="space-y-3">
-            <div className={cn('flex items-center gap-3 rounded-lg bg-gradient-to-r p-3 text-white', gradeColor[grade] || gradeColor.F)}>
-              <ASOScoreRing score={score} size={40} />
-              <div>
-                <p className="text-sm font-bold">ASO Score: {score}/100</p>
-                <p className="text-xs opacity-80">Grade {grade} — {gradeText[grade] || 'Unknown'}</p>
-              </div>
-            </div>
-            {aso.breakdown && Object.keys(aso.breakdown).length > 0 && (
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {Object.entries(aso.breakdown).map(([key, item]) => (
-                  <BreakdownBar key={key} label={item.label || key} score={Math.round(item.score)} />
-                ))}
-              </div>
-            )}
-            {aso.tips && aso.tips.length > 0 && (
-              <div>
-                <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-gray-700 dark:text-gray-300">
-                  <Lightbulb className="h-3.5 w-3.5 text-amber-500" />
-                  Top Tips
-                </p>
-                <div className="space-y-1">
-                  {aso.tips.slice(0, 3).map((tip, i) => (
-                    <div key={i} className="flex items-start gap-2 rounded-lg bg-white px-3 py-2 text-xs dark:bg-gray-900">
-                      <span className={cn(
-                        'mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase',
-                        tip.impact === 'high' ? 'bg-red-100 text-red-600 dark:bg-red-950/40 dark:text-red-400'
-                          : tip.impact === 'medium' ? 'bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400'
-                          : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
-                      )}>
-                        {tip.impact}
-                      </span>
-                      <span className="text-gray-700 dark:text-gray-300">{tip.text}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        ) : (
-          <p className="text-xs text-gray-400">ASO data unavailable</p>
-        )}
-      </div>
-
-      {/* ── 2. Keyword Opportunities ─────────────────────────── */}
-      <div>
-        <SectionTitle icon={Search} title="Keyword Opportunities" />
-        {kwBest.length > 0 ? (
-          <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-800">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50 dark:border-gray-800 dark:bg-gray-900">
-                  <th className="px-3 py-2 text-left font-semibold text-gray-500">Keyword</th>
-                  <th className="px-2 py-2 text-right font-semibold text-gray-500">Vol</th>
-                  <th className="px-2 py-2 text-right font-semibold text-gray-500">Diff</th>
-                  <th className="px-2 py-2 text-right font-semibold text-gray-500">Opp</th>
-                  <th className="px-2 py-2 text-right font-semibold text-gray-500">Rank</th>
-                  <th className="px-3 py-2 text-right font-semibold text-gray-500">Type</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50 dark:divide-gray-800/50">
-                {kwBest.map((kw) => {
-                  const diff = Math.round(kw.difficulty_v2 || kw.difficulty || 0);
-                  const opp = Math.round(kw.opportunity_score);
-                  const diffC = diff <= 30 ? 'text-emerald-600 dark:text-emerald-400' : diff <= 60 ? 'text-amber-600 dark:text-amber-400' : 'text-red-500';
-                  const oppC = opp >= 60 ? 'text-emerald-600 dark:text-emerald-400' : opp >= 40 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500';
-                  return (
-                    <tr key={kw.keyword} className="bg-white dark:bg-gray-950">
-                      <td className="max-w-[160px] truncate px-3 py-2 font-medium text-gray-900 dark:text-white">{kw.keyword}</td>
-                      <td className="px-2 py-2 text-right tabular-nums text-gray-500">{Math.round(kw.volume_score || kw.search_volume || 0)}</td>
-                      <td className={cn('px-2 py-2 text-right tabular-nums', diffC)}>{diff}</td>
-                      <td className={cn('px-2 py-2 text-right tabular-nums font-semibold', oppC)}>{opp}</td>
-                      <td className="px-2 py-2 text-right tabular-nums text-gray-500">{kw.app_rank ?? '—'}</td>
-                      <td className="px-3 py-2 text-right">
-                        {kw.keyword_gap ? (
-                          <span className="rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-600 dark:bg-red-950/30 dark:text-red-400">Gap</span>
-                        ) : kw.app_rank ? (
-                          <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400">Ranked</span>
-                        ) : (
-                          <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:bg-amber-950/30 dark:text-amber-400">New</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <p className="text-xs text-gray-400">No keyword data yet — go to the app&apos;s Keywords tab to discover keywords</p>
-        )}
-      </div>
-
-      {/* ── 3. Review Insights ───────────────────────────────── */}
-      <div>
-        <SectionTitle icon={MessageSquare} title="Review Insights" />
-        {reviews && reviews.reviews_analyzed > 0 ? (
-          <div className="space-y-3">
-            {/* Sentiment summary */}
-            <div className="rounded-lg bg-white p-3 text-xs dark:bg-gray-900">
-              <p className="text-gray-700 dark:text-gray-300">{reviews.sentiment_summary}</p>
-              <p className="mt-1.5 text-gray-400">{reviews.reviews_analyzed} reviews analyzed</p>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {/* Feature requests */}
-              {reviews.feature_requests.length > 0 && (
-                <div className="rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
-                  <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-gray-700 dark:text-gray-300">
-                    <ThumbsUp className="h-3 w-3 text-blue-500" />
-                    Feature Requests
-                  </p>
-                  <ul className="space-y-1">
-                    {reviews.feature_requests.slice(0, 4).map((f, i) => (
-                      <li key={i} className="flex items-start gap-1.5 text-xs text-gray-600 dark:text-gray-400">
-                        <span className="mt-1 h-1 w-1 shrink-0 rounded-full bg-blue-400" />
-                        {f}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* Pain points */}
-              {reviews.pain_points.length > 0 && (
-                <div className="rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-900">
-                  <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-gray-700 dark:text-gray-300">
-                    <ThumbsDown className="h-3 w-3 text-red-500" />
-                    Pain Points
-                  </p>
-                  <ul className="space-y-1">
-                    {reviews.pain_points.slice(0, 4).map((p, i) => (
-                      <li key={i} className="flex items-start gap-1.5 text-xs text-gray-600 dark:text-gray-400">
-                        <span className="mt-1 h-1 w-1 shrink-0 rounded-full bg-red-400" />
-                        {p}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-
-            {/* Pricing complaints */}
-            {reviews.pricing_complaints.length > 0 && (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/40 dark:bg-amber-950/20">
-                <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-700 dark:text-amber-400">
-                  <AlertTriangle className="h-3 w-3" />
-                  Pricing Complaints
-                </p>
-                <ul className="space-y-1">
-                  {reviews.pricing_complaints.slice(0, 3).map((c, i) => (
-                    <li key={i} className="text-xs text-amber-700 dark:text-amber-300">{c}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        ) : (
-          <p className="text-xs text-gray-400">No review intelligence yet — app needs reviews to analyze</p>
-        )}
-      </div>
-
-      {/* ── 4. Feature Gaps (from competitor reviews) ─────────── */}
-      <div>
-        <SectionTitle icon={Lightbulb} title="Feature Gap Opportunities" />
-        {featureGaps.length > 0 ? (
-          <div className="flex flex-wrap gap-2">
-            {featureGaps.slice(0, 8).map((fg) => (
-              <div
-                key={fg.feature}
-                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs dark:border-gray-800 dark:bg-gray-900"
-              >
-                <span className="font-medium text-gray-900 dark:text-white">{fg.feature}</span>
-                <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-600 dark:bg-indigo-950/30 dark:text-indigo-400">
-                  {fg.mentions}x
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-xs text-gray-400">No feature gaps detected — needs more review data</p>
-        )}
-      </div>
-
-      {/* ── Footer link ──────────────────────────────────────── */}
-      <Link
-        href={`/apps/${appId}`}
-        className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
-      >
-        View full app details <ArrowRight className="h-3 w-3" />
-      </Link>
-    </div>
-  );
-}
-
-/* ── App Card ────────────────────────────────────────────────── */
-
 function MyAppCard({ app, onRemove }: { app: MyAppItem; onRemove: (id: number) => void }) {
-  const [expanded, setExpanded] = useState(false);
   const grade = app.aso_grade || 'F';
   const score = Math.round(app.aso_score ?? 0);
 
   return (
-    <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
-      {/* Header row */}
-      <div className="flex items-center gap-4 p-4">
-        <Link href={`/apps/${app.app_id}`} className="flex-shrink-0">
-          {app.icon_url ? (
-            <img src={app.icon_url} alt="" className="h-14 w-14 rounded-xl object-cover shadow-sm ring-1 ring-black/5 dark:ring-white/10" />
-          ) : (
-            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-sm">
-              <span className="text-xl font-bold text-white">{(app.name || '?')[0]}</span>
-            </div>
-          )}
+    <div className="flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-4 transition hover:shadow-sm dark:border-gray-800 dark:bg-gray-900">
+      {/* Icon */}
+      <Link href={`/my-apps/${app.app_id}`} className="flex-shrink-0">
+        {app.icon_url ? (
+          <img src={app.icon_url} alt="" className="h-14 w-14 rounded-xl object-cover shadow-sm ring-1 ring-black/5 dark:ring-white/10" />
+        ) : (
+          <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-sm">
+            <span className="text-xl font-bold text-white">{(app.name || '?')[0]}</span>
+          </div>
+        )}
+      </Link>
+
+      {/* Info */}
+      <div className="min-w-0 flex-1">
+        <Link href={`/my-apps/${app.app_id}`} className="group">
+          <h3 className="truncate text-sm font-semibold text-gray-900 group-hover:text-indigo-600 dark:text-white dark:group-hover:text-indigo-400">
+            {app.name}
+          </h3>
         </Link>
-
-        <div className="min-w-0 flex-1">
-          <Link href={`/apps/${app.app_id}`} className="group">
-            <h3 className="truncate text-base font-semibold text-gray-900 group-hover:text-indigo-600 dark:text-white dark:group-hover:text-indigo-400">{app.name}</h3>
-          </Link>
-          <p className="truncate text-xs text-gray-500">{app.developer}</p>
-          <div className="mt-1.5 flex items-center gap-3 text-xs text-gray-400">
-            {app.current_rating != null && (
-              <span className="flex items-center gap-0.5">
-                <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" /> {app.current_rating.toFixed(1)}
-              </span>
-            )}
-            {app.current_reviews != null && app.current_reviews > 0 && (
-              <span className="flex items-center gap-0.5">
-                <MessageSquare className="h-3 w-3" /> {app.current_reviews.toLocaleString()}
-              </span>
-            )}
-            {app.current_rank != null && (
-              <span className="flex items-center gap-0.5">
-                <TrendingUp className="h-3 w-3" /> #{app.current_rank}
-              </span>
-            )}
-            {app.primary_category && <span>{app.primary_category}</span>}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="text-center">
-            <ASOScoreRing score={score} size={48} />
-            <p className={cn('mt-0.5 text-[10px] font-bold', score >= 60 ? 'text-emerald-600' : score >= 40 ? 'text-amber-600' : 'text-red-500')}>
-              Grade {grade}
-            </p>
-          </div>
-          <div className="flex flex-col gap-1">
-            <button
-              onClick={() => setExpanded(!expanded)}
-              className="rounded-lg border border-gray-200 p-1.5 text-gray-400 hover:bg-gray-50 hover:text-gray-600 dark:border-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-300"
-              title={expanded ? 'Collapse' : 'Expand insights'}
-            >
-              {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </button>
-            <button
-              onClick={() => onRemove(app.app_id)}
-              className="rounded-lg border border-gray-200 p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500 dark:border-gray-700 dark:hover:bg-red-950/30 dark:hover:text-red-400"
-              title="Remove from My Apps"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          </div>
+        <p className="truncate text-xs text-gray-500 dark:text-gray-400">
+          {app.developer || 'Unknown developer'}
+          {app.primary_category && ` · ${app.primary_category}`}
+        </p>
+        <div className="mt-1.5 flex flex-wrap items-center gap-3 text-xs text-gray-400">
+          {app.current_rating != null && (
+            <span className="flex items-center gap-0.5">
+              <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" /> {app.current_rating.toFixed(1)}
+            </span>
+          )}
+          {app.current_reviews != null && app.current_reviews > 0 && (
+            <span className="flex items-center gap-0.5">
+              <MessageSquare className="h-3 w-3" /> {app.current_reviews.toLocaleString()}
+            </span>
+          )}
+          {app.current_rank != null && (
+            <span className="flex items-center gap-0.5">
+              <TrendingUp className="h-3 w-3" /> #{app.current_rank}
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Expanded: all 4 insight sections */}
-      {expanded && (
-        <div className="border-t border-gray-100 bg-gray-50/50 p-5 dark:border-gray-800 dark:bg-gray-950/50">
-          <ExpandedPanel appId={app.app_id} grade={grade} score={score} />
-        </div>
-      )}
+      {/* ASO Score */}
+      <div className="flex-shrink-0 text-center">
+        <ASOScoreRing score={score} size={44} />
+        <p className={cn(
+          'mt-0.5 text-[10px] font-bold',
+          score >= 60 ? 'text-emerald-600' : score >= 40 ? 'text-amber-600' : 'text-red-500',
+        )}>
+          {grade}
+        </p>
+      </div>
+
+      {/* Actions */}
+      <div className="flex flex-shrink-0 items-center gap-1.5">
+        <button
+          onClick={(e) => { e.preventDefault(); onRemove(app.app_id); }}
+          title="Remove from My Apps"
+          className="rounded-lg p-2 text-gray-300 transition hover:bg-red-50 hover:text-red-500 dark:text-gray-600 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+        <Link
+          href={`/my-apps/${app.app_id}`}
+          className="rounded-lg p-2 text-gray-400 transition hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-950/30 dark:hover:text-indigo-400"
+          title="View details"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </Link>
+      </div>
     </div>
   );
 }
-
-/* ── Main Page ───────────────────────────────────────────────── */
 
 export default function MyAppsClient() {
   const [apps, setApps] = useState<MyAppItem[]>([]);
@@ -447,20 +140,27 @@ export default function MyAppsClient() {
   return (
     <AppShell>
       <div className="space-y-5">
+        {/* Header */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">My Apps</h1>
+            <h1 className="flex items-center gap-2 text-2xl font-bold text-gray-900 dark:text-white">
+              <Crown className="h-6 w-6 text-indigo-500" />
+              My Apps
+            </h1>
             <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
-              ASO health, keyword gaps, review insights, and optimization tips for your apps
+              {apps.length > 0
+                ? `${apps.length} app${apps.length !== 1 ? 's' : ''} tracked — click any app for full ASO insights`
+                : 'Track your apps for ASO health, keyword gaps, and optimization tips'}
             </p>
           </div>
-          <Link href="/apps" className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700">
+          <Link href="/apps" className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 self-start sm:self-auto">
             <Search className="h-4 w-4" /> Find Apps
           </Link>
         </div>
 
-        {apps.length > 0 && (
-          <div className="relative">
+        {/* Search */}
+        {!loading && apps.length > 3 && (
+          <div className="relative max-w-sm">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <input
               type="text"
@@ -472,20 +172,22 @@ export default function MyAppsClient() {
           </div>
         )}
 
+        {/* Loading */}
         {loading && (
-          <div className="space-y-3">
-            {[...Array(3)].map((_, i) => (
-              <div key={i} className="h-24 animate-pulse rounded-xl bg-gray-200 dark:bg-gray-800" />
+          <div className="space-y-2">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="h-20 animate-pulse rounded-xl bg-gray-100 dark:bg-gray-800" />
             ))}
           </div>
         )}
 
+        {/* Empty state */}
         {!loading && apps.length === 0 && (
           <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-gray-200 bg-gray-50 py-16 text-center dark:border-gray-700 dark:bg-gray-900">
             <Zap className="h-10 w-10 text-gray-300 dark:text-gray-600" />
             <div>
-              <p className="text-base font-semibold text-gray-900 dark:text-white">No apps marked yet</p>
-              <p className="mt-1 text-sm text-gray-500">Go to any app page and click &quot;My App&quot; to start tracking your ASO</p>
+              <p className="text-base font-semibold text-gray-900 dark:text-white">No apps tracked yet</p>
+              <p className="mt-1 text-sm text-gray-500">Go to any app page and click &quot;My App&quot; to start tracking</p>
             </div>
             <Link href="/apps" className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
               Browse Apps <ArrowRight className="h-4 w-4" />
@@ -493,14 +195,16 @@ export default function MyAppsClient() {
           </div>
         )}
 
+        {/* App list */}
         {!loading && filtered.length > 0 && (
-          <div className="space-y-3">
+          <div className="space-y-2">
             {filtered.map((app) => (
               <MyAppCard key={app.id} app={app} onRemove={handleRemove} />
             ))}
           </div>
         )}
 
+        {/* No results */}
         {!loading && apps.length > 0 && filtered.length === 0 && (
           <p className="py-8 text-center text-sm text-gray-400">No apps match &quot;{search}&quot;</p>
         )}
