@@ -620,6 +620,17 @@ _PUBLIC_EXACT = {
 class _AuthGateMiddleware(BaseHTTPMiddleware):
     """Reject unauthenticated requests to /api/v1/ data endpoints."""
 
+    def _cors_headers(self, request) -> dict[str, str]:
+        """Build CORS headers for error responses (middleware is outermost)."""
+        origin = request.headers.get("origin", "")
+        allowed = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+        if origin and origin in allowed:
+            return {
+                "Access-Control-Allow-Origin": origin,
+                "Access-Control-Allow-Credentials": "true",
+            }
+        return {}
+
     async def dispatch(self, request, call_next):
         path = request.url.path
 
@@ -644,7 +655,10 @@ class _AuthGateMiddleware(BaseHTTPMiddleware):
             return StarletteJSON(
                 status_code=401,
                 content={"detail": "Not authenticated"},
-                headers={"WWW-Authenticate": "Bearer"},
+                headers={
+                    "WWW-Authenticate": "Bearer",
+                    **self._cors_headers(request),
+                },
             )
 
         # Token validity is verified downstream by deps.py / route dependencies.

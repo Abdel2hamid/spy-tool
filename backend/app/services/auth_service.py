@@ -85,13 +85,18 @@ def create_access_token(
 def decode_access_token(token: str) -> Optional[dict]:
     """Decode and validate a JWT. Returns payload dict or None on failure."""
     try:
-        return jwt.decode(
+        # Accept tokens with or without iss claim (backward-compat with pre-v2 tokens)
+        payload = jwt.decode(
             token,
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
-            issuer="rankspy",
             options={"require_exp": True, "require_sub": True},
         )
+        # If iss is present, it must be "rankspy"
+        iss = payload.get("iss")
+        if iss and iss != "rankspy":
+            return None
+        return payload
     except JWTError:
         return None
 

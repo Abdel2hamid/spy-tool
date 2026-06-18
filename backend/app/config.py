@@ -80,18 +80,20 @@ if not settings.jwt_secret:
     )
     settings.jwt_secret = _generated
 
-# Admin token: fail-fast in production
+# Admin token: auto-generate in production so admin endpoints stay locked
 if not settings.admin_token:
     if _is_production:
-        raise RuntimeError(
-            "FATAL: ADMIN_TOKEN env var is not set. "
-            "Refusing to start in production without admin endpoint protection. "
-            "Set ADMIN_TOKEN to a strong random string (e.g. openssl rand -base64 48)."
+        _admin_token = secrets.token_urlsafe(48)
+        settings.admin_token = _admin_token
+        _logger.warning(
+            "ADMIN_TOKEN not set! Generated random token — admin endpoints "
+            "are protected but unreachable until you set ADMIN_TOKEN env var."
         )
-    _logger.warning(
-        "ADMIN_TOKEN not set! Admin endpoints are UNPROTECTED (dev mode). "
-        "Set ADMIN_TOKEN env var for production."
-    )
+    else:
+        _logger.warning(
+            "ADMIN_TOKEN not set! Admin endpoints are UNPROTECTED (dev mode). "
+            "Set ADMIN_TOKEN env var for production."
+        )
 
 # Stripe webhook secret: warn in production
 if not settings.stripe_webhook_secret and _is_production:
