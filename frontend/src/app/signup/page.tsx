@@ -141,15 +141,23 @@ function SignupContent() {
       setError('Password must be at least 8 characters.');
       return;
     }
+    if (password.length > 72) {
+      setError('Password must be at most 72 characters.');
+      return;
+    }
+    if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password)) {
+      setError('Password must contain uppercase, lowercase, and a digit.');
+      return;
+    }
 
     setSubmitting(true);
     try {
       const checkoutUrl = await register(email, password, fullName || undefined, selectedPlan || 'free');
 
-      if (checkoutUrl) {
+      if (checkoutUrl && checkoutUrl.startsWith('https://checkout.stripe.com/')) {
         // Redirect to Stripe Checkout for card collection
         window.location.href = checkoutUrl;
-      } else {
+      } else if (!checkoutUrl) {
         // No Stripe configured — go to dashboard
         router.replace('/');
       }

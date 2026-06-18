@@ -105,6 +105,8 @@ def create_billing_portal_session(
 # ---------------------------------------------------------------------------
 
 def construct_event(payload: bytes, sig: str) -> stripe.Event:
+    if not settings.stripe_webhook_secret:
+        raise ValueError("Stripe webhook secret is not configured")
     return stripe.Webhook.construct_event(
         payload, sig, settings.stripe_webhook_secret,
     )

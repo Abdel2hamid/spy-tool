@@ -586,12 +586,74 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Admin-Token", "Stripe-Signature"],
 )
 
 from app.api.admin_console_router import router as admin_console_router
 from app.api.stripe_router import router as stripe_router
+
+
+# ── Global auth middleware ────────────────────────────────────────────────
+# Requires a valid Bearer JWT on all /api/v1/ routes except a small
+# whitelist (auth endpoints, Stripe webhooks, health, categories).
+# This is a safety net — individual endpoints still declare their own
+# auth dependencies, but this catches any that were missed.
+# ────────────────────────────────────────────────────────────────────────
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse as StarletteJSON
+
+
+_PUBLIC_PREFIXES = (
+    "/api/v1/auth/",           # login, register, me
+    "/api/v1/stripe/webhook",  # Stripe webhook (has its own sig verification)
+    "/api/v1/stripe/config",   # public publishable key
+    "/api/v1/admin-console/announcements/active",  # public announcements
+)
+
+_PUBLIC_EXACT = {
+    "/", "/health", "/api/v1/categories",
+}
+
+
+class _AuthGateMiddleware(BaseHTTPMiddleware):
+    """Reject unauthenticated requests to /api/v1/ data endpoints."""
+
+    async def dispatch(self, request, call_next):
+        path = request.url.path
+
+        # Skip non-API routes (Next.js static, etc.)
+        if not path.startswith("/api/v1/"):
+            return await call_next(request)
+
+        # Skip OPTIONS (CORS preflight)
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
+        # Skip explicitly public paths
+        if path in _PUBLIC_EXACT:
+            return await call_next(request)
+        for prefix in _PUBLIC_PREFIXES:
+            if path.startswith(prefix):
+                return await call_next(request)
+
+        # Require Authorization header
+        auth = request.headers.get("authorization", "")
+        if not auth.lower().startswith("bearer "):
+            return StarletteJSON(
+                status_code=401,
+                content={"detail": "Not authenticated"},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Token validity is verified downstream by deps.py / route dependencies.
+        # This middleware only ensures the header exists.
+        return await call_next(request)
+
+
+# Add AFTER CORSMiddleware so CORS headers are applied to 401 responses
+app.add_middleware(_AuthGateMiddleware)
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(router, prefix="/api/v1")

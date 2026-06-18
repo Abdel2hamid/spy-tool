@@ -607,6 +607,7 @@ async function fetchApi<T>(endpoint: string): Promise<T> {
     const res = await fetch(`${API_BASE}${endpoint}`, {
       cache: 'no-store',
       signal: controller.signal,
+      headers: _authHeaders(),
     });
     if (!res.ok) {
       throw new Error(`API error: ${res.status}`);

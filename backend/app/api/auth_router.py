@@ -36,16 +36,41 @@ class UpdateProfileRequest(BaseModel):
     workspace_name: Optional[str] = None
 
 
+_COMMON_PASSWORDS = frozenset([
+    "password", "12345678", "123456789", "1234567890", "qwerty123",
+    "password1", "iloveyou", "sunshine1", "princess1", "football1",
+    "abc12345", "abcdefgh", "admin123", "letmein12", "welcome1",
+    "monkey123", "master12", "dragon12", "login123", "qwertyui",
+])
+
+
+def _validate_password(v: str) -> str:
+    """Enforce strong password: 8-72 chars, mixed character types, not common."""
+    if len(v) < 8:
+        raise ValueError("Password must be at least 8 characters")
+    if len(v) > 72:
+        raise ValueError("Password must be at most 72 characters")  # bcrypt limit
+    has_upper = any(c.isupper() for c in v)
+    has_lower = any(c.islower() for c in v)
+    has_digit = any(c.isdigit() for c in v)
+    if not (has_upper and has_lower and has_digit):
+        raise ValueError(
+            "Password must contain at least one uppercase letter, "
+            "one lowercase letter, and one digit"
+        )
+    if v.lower() in _COMMON_PASSWORDS:
+        raise ValueError("This password is too common. Please choose a stronger one.")
+    return v
+
+
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
 
     @field_validator("new_password")
     @classmethod
-    def password_min_length(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
-        return v
+    def password_strength(cls, v: str) -> str:
+        return _validate_password(v)
 
 
 class RegisterRequest(BaseModel):
@@ -56,10 +81,8 @@ class RegisterRequest(BaseModel):
 
     @field_validator("password")
     @classmethod
-    def password_min_length(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
-        return v
+    def password_strength(cls, v: str) -> str:
+        return _validate_password(v)
 
     @field_validator("plan_code")
     @classmethod
@@ -187,7 +210,7 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     except EmailAlreadyRegistered:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email already exists.",
+            detail="Unable to create account. Please try a different email or sign in.",
         )
 
     from app.models.models import Membership, Subscription
@@ -307,7 +330,11 @@ def update_profile(
     )
 
 
-@router.post("/password", status_code=status.HTTP_200_OK)
+@router.post(
+    "/password",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(rate_limit(5, 60))],
+)
 def change_password(
     body: ChangePasswordRequest,
     ctx: AuthContext = Depends(get_auth_context),

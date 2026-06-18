@@ -21,6 +21,9 @@ export default function PaymentPage() {
     setError('');
     try {
       const { checkout_url } = await createStripeCheckout(token, planCode);
+      if (!checkout_url || !checkout_url.startsWith('https://checkout.stripe.com/')) {
+        throw new Error('Invalid checkout URL received.');
+      }
       window.location.href = checkout_url;
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to start checkout. Please try again.');

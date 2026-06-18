@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     # ── JWT / Auth ────────────────────────────────────────────────────────
     jwt_secret: str = ""
     jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 1440  # 24 hours
+    jwt_expire_minutes: int = 480  # 8 hours
 
     # ── CORS ──────────────────────────────────────────────────────────────
     # Comma-separated allowed origins. Set via CORS_ORIGINS env var.
@@ -59,18 +59,43 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+_logger = logging.getLogger(__name__)
+_is_production = bool(
+    __import__("os").getenv("RAILWAY_ENVIRONMENT")
+    or __import__("os").getenv("PRODUCTION")
+)
+
 # JWT secret: fail-fast in production, ephemeral fallback in dev
 if not settings.jwt_secret:
-    import os
-    if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PRODUCTION"):
+    if _is_production:
         raise RuntimeError(
             "FATAL: JWT_SECRET env var is not set. "
             "Refusing to start in production with an ephemeral secret. "
             "Set JWT_SECRET to a stable random string (e.g. openssl rand -base64 48)."
         )
     _generated = secrets.token_urlsafe(48)
-    logging.getLogger(__name__).warning(
+    _logger.warning(
         "JWT_SECRET not set! Using random ephemeral secret — "
         "tokens will NOT survive restarts. Set JWT_SECRET env var."
     )
     settings.jwt_secret = _generated
+
+# Admin token: fail-fast in production
+if not settings.admin_token:
+    if _is_production:
+        raise RuntimeError(
+            "FATAL: ADMIN_TOKEN env var is not set. "
+            "Refusing to start in production without admin endpoint protection. "
+            "Set ADMIN_TOKEN to a strong random string (e.g. openssl rand -base64 48)."
+        )
+    _logger.warning(
+        "ADMIN_TOKEN not set! Admin endpoints are UNPROTECTED (dev mode). "
+        "Set ADMIN_TOKEN env var for production."
+    )
+
+# Stripe webhook secret: warn in production
+if not settings.stripe_webhook_secret and _is_production:
+    _logger.warning(
+        "STRIPE_WEBHOOK_SECRET not set! Stripe webhooks will reject all events. "
+        "Set STRIPE_WEBHOOK_SECRET env var."
+    )

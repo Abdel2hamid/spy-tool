@@ -59,21 +59,39 @@ def verify_password(plain: str, hashed: str) -> bool:
 # JWT helpers
 # ---------------------------------------------------------------------------
 
-def create_access_token(user_id: int, workspace_id: int) -> str:
-    """Create a JWT encoding user_id + workspace_id."""
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
+def create_access_token(
+    user_id: int,
+    workspace_id: int,
+    *,
+    is_impersonation: bool = False,
+    impersonator_id: int | None = None,
+) -> str:
+    """Create a JWT encoding user_id + workspace_id with standard claims."""
+    now = datetime.now(timezone.utc)
+    ttl = timedelta(hours=1) if is_impersonation else timedelta(minutes=settings.jwt_expire_minutes)
     payload = {
         "sub": str(user_id),
         "workspace_id": workspace_id,
-        "exp": expire,
+        "iat": now,
+        "exp": now + ttl,
+        "jti": secrets.token_urlsafe(16),
+        "iss": "rankspy",
     }
+    if is_impersonation and impersonator_id:
+        payload["imp"] = str(impersonator_id)
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
 def decode_access_token(token: str) -> Optional[dict]:
     """Decode and validate a JWT. Returns payload dict or None on failure."""
     try:
-        return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+        return jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_algorithm],
+            issuer="rankspy",
+            options={"require_exp": True, "require_sub": True},
+        )
     except JWTError:
         return None
 
@@ -187,24 +205,20 @@ def login_user(
     Raises InvalidCredentials on failure.
     """
     email = email.lower().strip()
-    logger.info("login_user: start for %s", email)
+    logger.debug("login_user: attempt for %s", email)
 
-    logger.info("login_user: querying user")
     user = db.query(User).filter(User.email == email, User.is_active == True).first()
-    logger.info("login_user: user query done — found=%s", user is not None)
 
     if not user:
+        # Run bcrypt on a dummy hash to prevent timing-based user enumeration
+        verify_password("dummy", "$2b$12$LJ3m4ys3Lf1OAoNaFzqKa.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
         raise InvalidCredentials("Invalid email or password")
 
-    logger.info("login_user: starting bcrypt verify")
     pw_ok = verify_password(password, user.password_hash)
-    logger.info("login_user: bcrypt verify done — ok=%s", pw_ok)
-
     if not pw_ok:
         raise InvalidCredentials("Invalid email or password")
 
     # Prefer owner workspace; fall back to first membership
-    logger.info("login_user: querying membership")
     membership = (
         db.query(Membership)
         .filter(Membership.user_id == user.id, Membership.role == "owner")
@@ -213,14 +227,12 @@ def login_user(
     )
     if not membership:
         raise InvalidCredentials("No workspace found for this user")
-    logger.info("login_user: membership found workspace_id=%s", membership.workspace_id)
 
     workspace = db.query(Workspace).filter(Workspace.id == membership.workspace_id).first()
     subscription = db.query(Subscription).filter(
         Subscription.workspace_id == workspace.id
     ).first()
 
-    logger.info("login_user: creating token for user_id=%s", user.id)
     token = create_access_token(user.id, workspace.id)
-    logger.info("login_user: done for %s", email)
+    logger.info("login_user: success for user_id=%s", user.id)
     return user, workspace, membership, subscription, token

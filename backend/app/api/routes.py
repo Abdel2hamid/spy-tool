@@ -98,6 +98,7 @@ from app.scoring.feature_gaps import FeatureGapAnalyzer
 from app.api.deps import _bearer, get_current_user, get_auth_context, AuthContext
 from app.utils.rate_limiter import rate_limit
 from app.services.plan_enforcement import PlanEnforcer
+from pydantic import BaseModel as _BaseModel
 from app.config import settings
 from app.services.user_activity import log_user_action
 
@@ -105,11 +106,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+class _AppIdBody(_BaseModel):
+    app_id: int
+
+
 def _require_admin(x_admin_token: Optional[str] = Header(None)):
     """Verify X-Admin-Token header matches ADMIN_TOKEN env var."""
+    import secrets as _secrets
     if not settings.admin_token:
-        return  # no token configured — allow (dev mode)
-    if x_admin_token != settings.admin_token:
+        return  # no token configured — allow (dev mode only, blocked in prod by config.py)
+    if not x_admin_token or not _secrets.compare_digest(x_admin_token, settings.admin_token):
         raise HTTPException(status_code=403, detail="Invalid or missing admin token")
 
 # ---------------------------------------------------------------------------
@@ -121,7 +127,7 @@ _DASHBOARD_CACHE_TTL = 300  # seconds (5 min — reduces repeated COUNT(*) on la
 
 
 @router.get("/dashboard/stats", response_model=DashboardStatsResponse)
-def get_dashboard_stats(db: Session = Depends(get_db)):
+def get_dashboard_stats(db: Session = Depends(get_db), _user=Depends(get_current_user)):
     import time
     now = time.monotonic()
     cached = _DASHBOARD_CACHE.get("stats")
@@ -2654,7 +2660,8 @@ async def scrape_all_apps(db: Session = Depends(get_db)):
         }
     except Exception as e:
         logger.error(f"Scrape all failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Internal error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
     finally:
         await worker.cleanup()
 
@@ -2691,7 +2698,8 @@ async def scrape_single_app(app_id: int, db: Session = Depends(get_db)):
             }
     except Exception as e:
         logger.error(f"Scrape app {app_id} failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Internal error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
     finally:
         await worker.cleanup()
 
@@ -3000,7 +3008,8 @@ async def run_keyword_tracker(
         }
     except Exception as e:
         logger.error(f"Keyword tracker run failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Internal error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/keyword-tracker/search", response_model=KeywordTrackerRunResponse)
@@ -3031,7 +3040,8 @@ async def search_single_keyword(
         }
     except Exception as e:
         logger.error(f"Single keyword search failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Internal error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/keyword-search-snapshots", response_model=KeywordSnapshotListResponse)
@@ -3891,15 +3901,13 @@ def list_favorite_ids(
 
 @router.post("/favorites", status_code=201)
 def add_favorite(
-    body: dict,
+    body: _AppIdBody,
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ):
     """Add an app to the user's favorites."""
-    app_id = body.get("app_id")
-    if not app_id:
-        raise HTTPException(status_code=422, detail="app_id is required")
-    app_obj = db.query(models.App).filter(models.App.id == int(app_id)).first()
+    app_id = body.app_id
+    app_obj = db.query(models.App).filter(models.App.id == app_id).first()
     if not app_obj:
         raise HTTPException(status_code=404, detail="App not found")
     existing = (
@@ -4005,15 +4013,13 @@ def list_my_app_ids(
 
 @router.post("/my-apps", status_code=201)
 def add_my_app(
-    body: dict,
+    body: _AppIdBody,
     db: Session = Depends(get_db),
     ctx: AuthContext = Depends(get_auth_context),
 ):
     """Mark an app as the user's own app."""
-    app_id = body.get("app_id")
-    if not app_id:
-        raise HTTPException(status_code=422, detail="app_id is required")
-    app_obj = db.query(models.App).filter(models.App.id == int(app_id)).first()
+    app_id = body.app_id
+    app_obj = db.query(models.App).filter(models.App.id == app_id).first()
     if not app_obj:
         raise HTTPException(status_code=404, detail="App not found")
     existing = (

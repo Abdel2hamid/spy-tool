@@ -18,7 +18,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
@@ -503,10 +503,16 @@ def create_user(
     return {"ok": True, "user_id": user.id, "email": user.email}
 
 
+class AdminUserUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    is_superadmin: Optional[bool] = None
+    full_name: Optional[str] = None
+
+
 @router.patch("/users/{user_id}")
 def update_user(
     user_id: int,
-    body: dict,
+    body: AdminUserUpdate,
     db: Session = Depends(get_db),
     admin: User = Depends(get_superadmin),
 ):
@@ -516,14 +522,14 @@ def update_user(
         raise HTTPException(status_code=404, detail="User not found")
 
     changes = {}
-    if "is_active" in body:
-        user.is_active = bool(body["is_active"])
+    if body.is_active is not None:
+        user.is_active = body.is_active
         changes["is_active"] = user.is_active
-    if "is_superadmin" in body:
-        user.is_superadmin = bool(body["is_superadmin"])
+    if body.is_superadmin is not None:
+        user.is_superadmin = body.is_superadmin
         changes["is_superadmin"] = user.is_superadmin
-    if "full_name" in body:
-        user.full_name = body["full_name"]
+    if body.full_name is not None:
+        user.full_name = body.full_name
         changes["full_name"] = user.full_name
 
     db.commit()
@@ -750,7 +756,11 @@ def impersonate_user(
     if not mem:
         raise HTTPException(status_code=400, detail="User has no workspace")
 
-    token = create_access_token(user.id, mem.workspace_id)
+    token = create_access_token(
+        user.id, mem.workspace_id,
+        is_impersonation=True,
+        impersonator_id=admin.id,
+    )
     _log_activity(db, admin, "user.impersonate", "user", user_id, {"email": user.email})
     return {"ok": True, "token": token, "email": user.email}
 
@@ -1008,10 +1018,30 @@ def list_workspaces(
 # Subscription / Trial Management
 # ═══════════════════════════════════════════════════════════════════════════════
 
+class AdminSubscriptionUpdate(BaseModel):
+    plan_code: Optional[str] = None
+    status: Optional[str] = None
+    trial_ends_at: Optional[str] = None
+
+    @field_validator("plan_code")
+    @classmethod
+    def valid_plan_code(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ("free", "starter", "pro", "enterprise", "trial"):
+            raise ValueError("Invalid plan code")
+        return v
+
+    @field_validator("status")
+    @classmethod
+    def valid_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ("trialing", "active", "past_due", "canceled", "pending_payment"):
+            raise ValueError("Invalid status")
+        return v
+
+
 @router.patch("/subscriptions/{workspace_id}")
 def update_subscription(
     workspace_id: int,
-    body: dict,
+    body: AdminSubscriptionUpdate,
     db: Session = Depends(get_db),
     admin: User = Depends(get_superadmin),
 ):
@@ -1021,15 +1051,15 @@ def update_subscription(
         raise HTTPException(status_code=404, detail="Subscription not found")
 
     changes = {}
-    if "plan_code" in body:
-        sub.plan_code = body["plan_code"]
-        changes["plan_code"] = body["plan_code"]
-    if "status" in body:
-        sub.status = body["status"]
-        changes["status"] = body["status"]
-    if "trial_ends_at" in body:
-        sub.trial_ends_at = datetime.fromisoformat(body["trial_ends_at"]) if body["trial_ends_at"] else None
-        changes["trial_ends_at"] = body["trial_ends_at"]
+    if body.plan_code is not None:
+        sub.plan_code = body.plan_code
+        changes["plan_code"] = body.plan_code
+    if body.status is not None:
+        sub.status = body.status
+        changes["status"] = body.status
+    if body.trial_ends_at is not None:
+        sub.trial_ends_at = datetime.fromisoformat(body.trial_ends_at) if body.trial_ends_at else None
+        changes["trial_ends_at"] = body.trial_ends_at
 
     db.commit()
     _log_activity(db, admin, "subscription.update", "workspace", workspace_id, changes)
@@ -1156,7 +1186,9 @@ def trigger_job(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import logging as _lg
+        _lg.getLogger(__name__).exception("Job trigger error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/job-metrics")
