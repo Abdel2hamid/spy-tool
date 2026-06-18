@@ -293,8 +293,8 @@ const TESTIMONIALS = [
 
 const FAQS = [
   {
-    q: 'How does the 14-day free trial work?',
-    a: 'Sign up with just your email and password — no credit card required. You get full access to all Pro features for 14 days. If you love it, pick a plan. If not, you can continue on the free tier.',
+    q: 'How does the 7-day free trial work?',
+    a: 'Sign up with just your email and password — no credit card required. You get full access to all Pro features for 7 days. If you love it, pick a plan. If not, you can continue on the free tier.',
   },
   {
     q: 'What makes RankSpy different from Sensor Tower or data.ai?',
@@ -484,7 +484,7 @@ function HeroSection() {
           </div>
 
           <p className="mt-5 text-sm text-gray-500 dark:text-gray-500">
-            14-day free trial &middot; No credit card required &middot; Cancel anytime
+            7-day free trial &middot; No credit card required &middot; Cancel anytime
           </p>
         </div>
 
@@ -725,7 +725,7 @@ function PricingSection() {
 
         <AnimateIn className="text-center mt-8">
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            All plans include a 14-day free trial. No credit card required.
+            All plans include a 7-day free trial. No credit card required.
           </p>
         </AnimateIn>
       </div>
@@ -864,7 +864,7 @@ function CTASection() {
                 </Link>
               </div>
               <p className="mt-5 text-sm text-indigo-200">
-                No credit card required &middot; 14-day free trial &middot; Cancel anytime
+                No credit card required &middot; 7-day free trial &middot; Cancel anytime
               </p>
             </div>
           </div>

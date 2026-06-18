@@ -29,6 +29,7 @@ from app.config.plans import (
     _ACTION_LABELS,
     _UPGRADE_MESSAGES,
     PLAN_LIMITS,
+    can_access_premium,
     get_effective_plan,
     get_limit,
 )
@@ -117,6 +118,25 @@ class PlanEnforcer:
     # Public API
     # ------------------------------------------------------------------
 
+    def check_premium(self) -> None:
+        """
+        Raise HTTP 403 if the workspace plan does not include premium features.
+        Free users cannot access premium endpoints.
+        """
+        if not can_access_premium(self.plan_code):
+            upgrade_msg = _UPGRADE_MESSAGES.get(
+                self.plan_code, "Upgrade to unlock premium features."
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "PREMIUM_REQUIRED",
+                    "message": "This feature requires a paid plan.",
+                    "plan": self.plan_code,
+                    "upgrade_message": upgrade_msg,
+                },
+            )
+
     def check(self, action: str) -> None:
         """
         Raise HTTP 402 if the workspace has reached its plan limit for action.
@@ -197,6 +217,17 @@ class _NoOpEnforcer:
     unlimited access.  Previously this was a no-op (unlimited), which was
     more permissive than even the Pro plan.
     """
+
+    def check_premium(self) -> None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "PREMIUM_REQUIRED",
+                "message": "This feature requires a paid plan. Please sign up or log in.",
+                "plan": "free",
+                "upgrade_message": "Start your free trial or upgrade to Pro for higher limits.",
+            },
+        )
 
     def check(self, action: str) -> None:
         limit = get_limit("free", action)

@@ -3,7 +3,7 @@ Central plan definitions for RankSpy.
 
 Plans:
   free       - unauthenticated / downgraded users
-  trial      - 14-day trial (generous limits)
+  trial      - 7-day trial (generous limits)
   starter    - entry paid tier
   pro        - full power
   enterprise - unlimited
@@ -89,13 +89,20 @@ PLAN_DISPLAY_NAMES: dict[str, str] = {
 def get_effective_plan(subscription) -> str:
     """
     Resolve the plan code whose limits apply to this workspace.
-    - trialing  → 'trial'  (uses trial limits regardless of plan_code)
-    - active    → subscription.plan_code  (or 'free' if unknown code)
-    - else      → 'free'   (expired / cancelled / missing)
+    - trialing + not expired → 'trial'
+    - trialing + expired     → 'free'  (auto-downgrade)
+    - active                 → subscription.plan_code  (or 'free' if unknown code)
+    - else                   → 'free'   (expired / cancelled / missing)
     """
     if subscription is None:
         return "free"
     if subscription.status == "trialing":
+        # Check if trial has actually expired
+        from datetime import datetime, timezone
+        if subscription.trial_ends_at and subscription.trial_ends_at.replace(
+            tzinfo=timezone.utc
+        ) < datetime.now(timezone.utc):
+            return "free"
         return "trial"
     if subscription.status == "active":
         code = subscription.plan_code or "free"

@@ -49,7 +49,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">4. Subscription Plans &amp; Billing</h2>
-            <p className="mb-3"><strong className="text-gray-900 dark:text-white">Free Trial:</strong> New accounts receive a 14-day free trial with access to premium features. No credit card is required to start the trial.</p>
+            <p className="mb-3"><strong className="text-gray-900 dark:text-white">Free Trial:</strong> New accounts receive a 7-day free trial with access to premium features. No credit card is required to start the trial.</p>
             <p className="mb-3"><strong className="text-gray-900 dark:text-white">Paid Plans:</strong> After the trial, you may subscribe to a paid plan (Starter, Pro, or Enterprise). Paid subscriptions are billed monthly or annually, as selected at the time of purchase.</p>
             <p className="mb-3"><strong className="text-gray-900 dark:text-white">Automatic Renewal:</strong> Subscriptions automatically renew at the end of each billing period unless cancelled before the renewal date.</p>
             <p><strong className="text-gray-900 dark:text-white">Price Changes:</strong> We reserve the right to change pricing with 30 days&apos; notice. Price changes will take effect at your next billing cycle.</p>

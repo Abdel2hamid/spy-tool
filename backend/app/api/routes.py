@@ -3192,8 +3192,10 @@ def get_app_keyword_list(
 def get_niche_radar(
     limit: int = Query(20, ge=1, le=50),
     db: Session = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ):
     """Return top emerging App Store micro-niches detected from signals."""
+    PlanEnforcer.from_token(credentials, db).check_premium()
     from app.services.niche_radar import NicheRadarEngine
     from datetime import datetime, timezone
     try:
@@ -3218,11 +3220,16 @@ def get_review_intelligence(
     app_id: int,
     force: bool = Query(False, description="Force re-analysis even if cached"),
     db: Session = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ):
     """
     Return LLM-powered review analysis for an app.
     Uses cached result if available; pass force=true to re-run.
     """
+    enforcer = PlanEnforcer.from_token(credentials, db)
+    enforcer.check_premium()
+    enforcer.check_and_increment("ai_requests")
+
     app = db.query(models.App).filter(models.App.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="App not found")
@@ -3242,12 +3249,18 @@ def get_app_autopsy(
     app_id: int,
     use_llm: bool = Query(True, description="Generate LLM narrative (requires ANTHROPIC_API_KEY)"),
     db: Session = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ):
     """
     Return a comprehensive 'Why Is This App Winning?' autopsy report.
     Includes install estimates, rank trajectory, update cadence,
     competitor gaps, and an optional AI-generated narrative.
     """
+    enforcer = PlanEnforcer.from_token(credentials, db)
+    enforcer.check_premium()
+    if use_llm:
+        enforcer.check_and_increment("ai_requests")
+
     app = db.query(models.App).filter(models.App.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="App not found")
@@ -3444,8 +3457,11 @@ def compute_app_metrics(app_id: int, db: Session = Depends(get_db), _user=Depend
 def get_app_ad_intelligence(
     app_id: int,
     db: Session = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ):
     """Full ad intelligence for a single app: campaigns + creatives."""
+    PlanEnforcer.from_token(credentials, db).check_premium()
+
     from app.services.ad_intelligence_service import AdIntelligenceService
 
     app = db.query(models.App).filter(models.App.id == app_id).first()
@@ -3473,8 +3489,14 @@ def get_app_ad_intelligence(
 
 
 @router.post("/apps/{app_id}/ads/scan")
-async def scan_app_ads(app_id: int, db: Session = Depends(get_db), _user=Depends(get_current_user)):
+async def scan_app_ads(
+    app_id: int,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+):
     """Trigger on-demand ad intelligence scan for a single app."""
+    PlanEnforcer.from_token(credentials, db).check_premium()
     import os
     from app.services.ad_intelligence_service import AdIntelligenceService
 
@@ -3495,11 +3517,13 @@ def get_ad_intelligence_list(
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=200),
     db: Session = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ):
     """
     Global listing of apps with detected ad activity.
     Filterable by network and active status.
     """
+    PlanEnforcer.from_token(credentials, db).check_premium()
     q = (
         db.query(models.AdCampaign, models.App)
         .join(models.App, models.App.id == models.AdCampaign.app_id)
@@ -4070,8 +4094,10 @@ def refresh_my_app(
 def compare_competitors(
     app_ids: List[int] = Query(...),
     db: Session = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ):
     """Side-by-side comparison of 2–5 apps."""
+    PlanEnforcer.from_token(credentials, db).check_premium()
     # De-duplicate preserving order
     seen = set()
     unique_ids = []
@@ -4105,8 +4131,10 @@ def competitor_rank_history(
     app_ids: List[int] = Query(...),
     days: int = Query(30, ge=7, le=90),
     db: Session = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ):
     """Rank-history overlay for 2–5 apps on a shared date axis."""
+    PlanEnforcer.from_token(credentials, db).check_premium()
     seen = set()
     unique_ids = []
     for aid in app_ids:
@@ -4174,8 +4202,10 @@ def get_keyword_gaps(
     target_id: int = Query(..., description="The target app's internal ID"),
     competitor_ids: List[int] = Query(..., description="Competitor app internal IDs"),
     db: Session = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ):
     """Keyword gap analysis: find keywords competitors rank for that the target app doesn't."""
+    PlanEnforcer.from_token(credentials, db).check_premium()
     # Validate
     all_ids = [target_id] + list(competitor_ids)
     seen = set()

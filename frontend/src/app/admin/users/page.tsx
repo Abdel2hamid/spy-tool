@@ -568,7 +568,7 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
           <div>
             <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">Plan</label>
             <select value={plan} onChange={(e) => setPlan(e.target.value)} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-white">
-              <option value="trial">Trial (14 days)</option>
+              <option value="trial">Trial (7 days)</option>
               <option value="starter">Starter</option>
               <option value="pro">Pro</option>
               <option value="enterprise">Enterprise</option>

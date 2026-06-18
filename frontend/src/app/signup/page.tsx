@@ -10,7 +10,7 @@ const FEATURES = [
   'Discover trending apps before they blow up',
   'AI-powered keyword & niche intelligence',
   'Competitor tracking & growth signals',
-  '14-day free trial, no credit card required',
+  '7-day free trial, no credit card required',
 ];
 
 export default function SignupPage() {
@@ -68,7 +68,7 @@ export default function SignupPage() {
         </div>
         <div>
           <h1 className="text-4xl font-bold leading-tight mb-6">
-            Start your free<br />14-day trial
+            Start your free<br />7-day trial
           </h1>
           <ul className="space-y-3">
             {FEATURES.map(f => (
@@ -93,7 +93,7 @@ export default function SignupPage() {
 
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">Create your account</h2>
           <p className="text-gray-500 dark:text-gray-400 mb-8">
-            Free for 14 days · No credit card required
+            Free for 7 days · No credit card required
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">

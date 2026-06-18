@@ -5,7 +5,7 @@ Registration flow:
   1. Create User (hashed password)
   2. Create Workspace  (slug = email prefix + random suffix)
   3. Create Membership  (role = 'owner')
-  4. Create Subscription (plan = 'trial', 14-day trial)
+  4. Create Subscription (plan = 'trial', 7-day trial)
   → returns (user, workspace, token)
 """
 
@@ -29,7 +29,7 @@ from app.models.models import Membership, Subscription, User, Workspace
 
 logger = logging.getLogger(__name__)
 
-TRIAL_DAYS = 14
+TRIAL_DAYS = 7
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +145,7 @@ def register_user(
     membership = Membership(user_id=user.id, workspace_id=workspace.id, role="owner")
     db.add(membership)
 
-    # 4. Subscription — 14-day trial
+    # 4. Subscription — 7-day trial
     trial_end = datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS)
     subscription = Subscription(
         workspace_id=workspace.id,

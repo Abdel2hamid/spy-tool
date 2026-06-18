@@ -32,7 +32,7 @@ export default function RefundPage() {
 
           <section>
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">2. Free Trial</h2>
-            <p>All new accounts start with a 14-day free trial that includes access to premium features. No payment is required during the trial period, so no refund is applicable. We encourage you to fully explore the platform during your trial before subscribing.</p>
+            <p>All new accounts start with a 7-day free trial that includes access to premium features. No payment is required during the trial period, so no refund is applicable. We encourage you to fully explore the platform during your trial before subscribing.</p>
           </section>
 
           <section>

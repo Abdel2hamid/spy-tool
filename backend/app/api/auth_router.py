@@ -164,7 +164,7 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     Side effects:
     - Creates a personal Workspace
     - Assigns owner role
-    - Starts a 14-day trial subscription
+    - Starts a 7-day trial subscription
     """
     try:
         user, workspace, token = register_user(

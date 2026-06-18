@@ -647,6 +647,13 @@ async function fetchApiAuth<T>(
       }
       throw new Error('Plan limit exceeded.');
     }
+    if (res.status === 403) {
+      const body = await res.json().catch(() => ({}));
+      const detail = body?.detail;
+      if (detail?.code === 'PREMIUM_REQUIRED') {
+        throw new PremiumRequiredError(detail as PremiumRequiredDetail);
+      }
+    }
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       const msg =
@@ -658,6 +665,22 @@ async function fetchApiAuth<T>(
     return res.json();
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+export interface PremiumRequiredDetail {
+  code: 'PREMIUM_REQUIRED';
+  message: string;
+  plan: string;
+  upgrade_message: string;
+}
+
+export class PremiumRequiredError extends Error {
+  readonly detail: PremiumRequiredDetail;
+  constructor(detail: PremiumRequiredDetail) {
+    super(detail.message);
+    this.name = 'PremiumRequiredError';
+    this.detail = detail;
   }
 }
 
