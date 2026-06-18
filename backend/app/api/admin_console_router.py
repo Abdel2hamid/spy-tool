@@ -78,9 +78,15 @@ class UserItem(BaseModel):
     is_active: bool
     is_superadmin: bool
     created_at: Optional[str]
+    workspace_id: Optional[int]
     workspace_name: Optional[str]
+    workspace_slug: Optional[str]
     plan_code: Optional[str]
+    plan_status: Optional[str]
+    trial_ends_at: Optional[str]
+    trial_days_left: Optional[int]
     role: Optional[str]
+    usage: Optional[dict]
 
 class UserListResponse(BaseModel):
     users: List[UserItem]
@@ -228,12 +234,13 @@ def admin_dashboard(
 @router.get("/users", response_model=UserListResponse)
 def list_users(
     search: Optional[str] = None,
+    filter: Optional[str] = None,
     skip: int = 0,
     limit: int = 50,
     db: Session = Depends(get_db),
     _admin: User = Depends(get_superadmin),
 ):
-    """List all users with workspace/plan info."""
+    """List all users with workspace/plan/trial/usage info."""
     q = (
         db.query(User, Workspace, Membership, Subscription)
         .outerjoin(Membership, Membership.user_id == User.id)
@@ -246,11 +253,46 @@ def list_users(
             | User.full_name.ilike(f"%{search}%")
         )
 
+    now = datetime.now(timezone.utc)
+
+    if filter == "trialing":
+        q = q.filter(Subscription.status == "trialing")
+    elif filter == "expired":
+        q = q.filter(
+            Subscription.status == "trialing",
+            Subscription.trial_ends_at < now,
+        )
+    elif filter == "inactive":
+        q = q.filter(User.is_active == False)
+
     total = q.with_entities(func.count(User.id)).scalar() or 0
     rows = q.order_by(User.created_at.desc()).offset(skip).limit(limit).all()
 
+    month_str = now.strftime("%Y-%m")
     users = []
     for user, ws, mem, sub in rows:
+        trial_days_left = None
+        trial_ends_at_str = None
+        if sub and sub.status == "trialing" and sub.trial_ends_at:
+            trial_end = sub.trial_ends_at
+            if trial_end.tzinfo is None:
+                trial_end = trial_end.replace(tzinfo=timezone.utc)
+            trial_days_left = max(0, (trial_end - now).days)
+            trial_ends_at_str = sub.trial_ends_at.isoformat()
+
+        usage_data = None
+        if ws:
+            usage = db.query(WorkspaceUsage).filter(
+                WorkspaceUsage.workspace_id == ws.id,
+                WorkspaceUsage.month == month_str,
+            ).first()
+            usage_data = {
+                "app_imports": usage.app_imports if usage else 0,
+                "keyword_refreshes": usage.keyword_refreshes if usage else 0,
+                "ai_requests": usage.ai_requests if usage else 0,
+                "exports": usage.exports if usage else 0,
+            }
+
         users.append(UserItem(
             id=user.id,
             email=user.email,
@@ -258,9 +300,15 @@ def list_users(
             is_active=user.is_active,
             is_superadmin=user.is_superadmin,
             created_at=user.created_at.isoformat() if user.created_at else None,
+            workspace_id=ws.id if ws else None,
             workspace_name=ws.name if ws else None,
+            workspace_slug=ws.slug if ws else None,
             plan_code=sub.plan_code if sub else None,
+            plan_status=sub.status if sub else None,
+            trial_ends_at=trial_ends_at_str,
+            trial_days_left=trial_days_left,
             role=mem.role if mem else None,
+            usage=usage_data,
         ))
 
     return UserListResponse(users=users, total=total)

@@ -2122,9 +2122,15 @@ export interface AdminUserItem {
   is_active: boolean;
   is_superadmin: boolean;
   created_at: string | null;
+  workspace_id: number | null;
   workspace_name: string | null;
+  workspace_slug: string | null;
   plan_code: string | null;
+  plan_status: string | null;
+  trial_ends_at: string | null;
+  trial_days_left: number | null;
   role: string | null;
+  usage: Record<string, number> | null;
 }
 
 export interface AdminWorkspaceItem {
@@ -2168,9 +2174,10 @@ export async function adminGetDashboard(): Promise<AdminDashboardStats> {
   return _adminFetch<AdminDashboardStats>('/admin-console/dashboard');
 }
 
-export async function adminGetUsers(search?: string, skip = 0, limit = 50): Promise<{ users: AdminUserItem[]; total: number }> {
+export async function adminGetUsers(search?: string, skip = 0, limit = 50, filter?: string): Promise<{ users: AdminUserItem[]; total: number }> {
   const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
   if (search) params.set('search', search);
+  if (filter) params.set('filter', filter);
   return _adminFetch(`/admin-console/users?${params}`);
 }
 
