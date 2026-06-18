@@ -198,6 +198,7 @@ const FEATURES = [
 
 const PLANS = [
   {
+    code: 'free',
     name: 'Free',
     price: '$0',
     period: '/forever',
@@ -214,6 +215,7 @@ const PLANS = [
     color: 'border-gray-200 dark:border-gray-800',
   },
   {
+    code: 'starter',
     name: 'Starter',
     price: '$29',
     period: '/month',
@@ -230,6 +232,7 @@ const PLANS = [
     color: 'border-gray-200 dark:border-gray-800',
   },
   {
+    code: 'pro',
     name: 'Pro',
     price: '$79',
     period: '/month',
@@ -246,6 +249,7 @@ const PLANS = [
     color: 'border-indigo-500 dark:border-indigo-400',
   },
   {
+    code: 'enterprise',
     name: 'Enterprise',
     price: '$199',
     period: '/month',
@@ -709,7 +713,7 @@ function PricingSection() {
                   ))}
                 </ul>
                 <Link
-                  href="/signup"
+                  href={`/signup?plan=${plan.code}`}
                   className={`w-full text-center py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 hover:-translate-y-px ${
                     plan.popular
                       ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm shadow-indigo-500/25 hover:shadow-md hover:shadow-indigo-500/40'

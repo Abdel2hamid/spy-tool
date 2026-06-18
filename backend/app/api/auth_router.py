@@ -52,12 +52,20 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     full_name: Optional[str] = None
+    plan_code: str = "free"
 
     @field_validator("password")
     @classmethod
     def password_min_length(cls, v: str) -> str:
         if len(v) < 8:
             raise ValueError("Password must be at least 8 characters")
+        return v
+
+    @field_validator("plan_code")
+    @classmethod
+    def valid_plan(cls, v: str) -> str:
+        if v not in ("free", "starter", "pro", "enterprise"):
+            raise ValueError("Invalid plan code")
         return v
 
 
@@ -95,6 +103,7 @@ class AuthResponse(BaseModel):
     token_type: str = "bearer"
     user: UserInfo
     workspace: WorkspaceInfo
+    checkout_url: Optional[str] = None
 
 
 class MeResponse(BaseModel):
@@ -164,11 +173,16 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     Side effects:
     - Creates a personal Workspace
     - Assigns owner role
-    - Starts a 7-day trial subscription
+    - Creates Stripe customer + checkout session (if Stripe configured)
+    - Subscription starts as pending_payment until card is collected
     """
     try:
         user, workspace, token = register_user(
-            db, email=body.email, password=body.password, full_name=body.full_name
+            db,
+            email=body.email,
+            password=body.password,
+            full_name=body.full_name,
+            plan_code=body.plan_code,
         )
     except EmailAlreadyRegistered:
         raise HTTPException(
@@ -184,7 +198,36 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
         Subscription.workspace_id == workspace.id
     ).first()
 
-    return _build_auth_response(user, workspace, membership, subscription, token)
+    # Create Stripe customer + checkout session
+    checkout_url = None
+    from app.services.stripe_service import is_configured
+    if is_configured() and subscription:
+        try:
+            from app.services import stripe_service
+            from app.config import settings as _s
+
+            customer = stripe_service.create_customer(
+                email=user.email, name=user.full_name,
+            )
+            subscription.stripe_customer_id = customer.id
+            subscription.status = "pending_payment"
+            db.commit()
+
+            session = stripe_service.create_checkout_session(
+                customer_id=customer.id,
+                plan_code=body.plan_code,
+                success_url=f"{_s.frontend_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
+                cancel_url=f"{_s.frontend_url}/signup",
+            )
+            checkout_url = session.url
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error("Stripe setup failed: %s", exc)
+            # Don't block registration if Stripe fails — user can retry payment
+
+    resp = _build_auth_response(user, workspace, membership, subscription, token)
+    resp.checkout_url = checkout_url
+    return resp
 
 
 @router.post(

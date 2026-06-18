@@ -1845,6 +1845,7 @@ export interface AuthResponse {
   token_type: string;
   user: UserInfo;
   workspace: WorkspaceInfo;
+  checkout_url?: string | null;
 }
 
 export interface MeResponse {
@@ -1856,17 +1857,32 @@ export async function authRegister(
   email: string,
   password: string,
   fullName?: string,
+  planCode: string = 'free',
 ): Promise<AuthResponse> {
   const res = await fetch(`${API_BASE}/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, full_name: fullName ?? null }),
+    body: JSON.stringify({ email, password, full_name: fullName ?? null, plan_code: planCode }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail ?? `Registration failed (${res.status})`);
   }
   return res.json();
+}
+
+export async function createStripeCheckout(token: string, planCode: string): Promise<{ checkout_url: string }> {
+  return fetchApiAuth<{ checkout_url: string }>('/stripe/create-checkout', token, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plan_code: planCode }),
+  });
+}
+
+export async function createBillingPortal(token: string): Promise<{ portal_url: string }> {
+  return fetchApiAuth<{ portal_url: string }>('/stripe/billing-portal', token, {
+    method: 'POST',
+  });
 }
 
 export async function authLogin(email: string, password: string): Promise<AuthResponse> {

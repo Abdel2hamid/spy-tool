@@ -96,6 +96,8 @@ def get_effective_plan(subscription) -> str:
     """
     if subscription is None:
         return "free"
+    if subscription.status == "pending_payment":
+        return "free"
     if subscription.status == "trialing":
         # Check if trial has actually expired
         from datetime import datetime, timezone

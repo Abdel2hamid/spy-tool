@@ -583,10 +583,12 @@ app.add_middleware(
 )
 
 from app.api.admin_console_router import router as admin_console_router
+from app.api.stripe_router import router as stripe_router
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(router, prefix="/api/v1")
 app.include_router(admin_console_router, prefix="/api/v1")
+app.include_router(stripe_router, prefix="/api/v1")
 
 
 @app.exception_handler(Exception)

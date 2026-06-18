@@ -49,8 +49,9 @@ interface AuthContextValue {
   token: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  isPendingPayment: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, fullName?: string) => Promise<void>;
+  register: (email: string, password: string, fullName?: string, planCode?: string) => Promise<string | null>;
   logout: () => void;
 }
 
@@ -100,9 +101,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     _applyAuth(data);
   }, [_applyAuth]);
 
-  const register = useCallback(async (email: string, password: string, fullName?: string) => {
-    const data = await authRegister(email, password, fullName);
+  const register = useCallback(async (email: string, password: string, fullName?: string, planCode?: string): Promise<string | null> => {
+    const data = await authRegister(email, password, fullName, planCode);
     _applyAuth(data);
+    return data.checkout_url ?? null;
   }, [_applyAuth]);
 
   const logout = useCallback(() => {
@@ -120,6 +122,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         token,
         isLoading,
         isAuthenticated: !!user,
+        isPendingPayment: workspace?.subscription?.status === 'pending_payment',
         login,
         register,
         logout,

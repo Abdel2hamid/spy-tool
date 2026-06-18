@@ -111,9 +111,10 @@ def register_user(
     email: str,
     password: str,
     full_name: Optional[str] = None,
+    plan_code: str = "free",
 ) -> tuple[User, Workspace, str]:
     """
-    Create user + workspace + membership(owner) + trial subscription.
+    Create user + workspace + membership(owner) + subscription.
     Returns (user, workspace, access_token).
     Raises EmailAlreadyRegistered if email is taken.
     """
@@ -145,11 +146,11 @@ def register_user(
     membership = Membership(user_id=user.id, workspace_id=workspace.id, role="owner")
     db.add(membership)
 
-    # 4. Subscription — 7-day trial
+    # 4. Subscription — store selected plan, pending payment
     trial_end = datetime.now(timezone.utc) + timedelta(days=TRIAL_DAYS)
     subscription = Subscription(
         workspace_id=workspace.id,
-        plan_code="trial",
+        plan_code=plan_code if plan_code != "free" else "free",
         status="trialing",
         trial_ends_at=trial_end,
     )

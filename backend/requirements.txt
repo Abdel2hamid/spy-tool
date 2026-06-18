@@ -18,3 +18,4 @@ email-validator==2.1.0
 beautifulsoup4==4.12.3
 anthropic>=0.84.0
 pytrends==4.9.2
+stripe>=8.0.0
