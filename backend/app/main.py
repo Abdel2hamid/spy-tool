@@ -475,6 +475,29 @@ _MIGRATIONS = [
 
     # Admin console — superadmin flag on users
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_superadmin BOOLEAN NOT NULL DEFAULT FALSE",
+
+    # Admin activity log
+    """CREATE TABLE IF NOT EXISTS admin_activity_log (
+        id SERIAL PRIMARY KEY,
+        admin_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        action VARCHAR(100) NOT NULL,
+        target_type VARCHAR(50),
+        target_id INTEGER,
+        details JSONB,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_admin_activity_created ON admin_activity_log (created_at DESC)",
+
+    # Announcements
+    """CREATE TABLE IF NOT EXISTS announcements (
+        id SERIAL PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        message TEXT NOT NULL,
+        type VARCHAR(20) NOT NULL DEFAULT 'info',
+        is_active BOOLEAN DEFAULT TRUE,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    )""",
 ]
 
 

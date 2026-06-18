@@ -24,6 +24,32 @@ class User(Base):
     memberships = relationship("Membership", back_populates="user", cascade="all, delete-orphan")
 
 
+class AdminActivityLog(Base):
+    """Tracks admin actions for audit trail."""
+    __tablename__ = "admin_activity_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    admin_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    action = Column(String(100), nullable=False)  # e.g. "user.create", "user.delete", "subscription.update"
+    target_type = Column(String(50))  # e.g. "user", "workspace", "subscription"
+    target_id = Column(Integer)
+    details = Column(JSON)  # arbitrary metadata
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Announcement(Base):
+    """Admin announcements shown to all users."""
+    __tablename__ = "announcements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255), nullable=False)
+    message = Column(Text, nullable=False)
+    type = Column(String(20), nullable=False, default="info")  # info | warning | success
+    is_active = Column(Boolean, default=True)
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class Workspace(Base):
     __tablename__ = "workspaces"
 

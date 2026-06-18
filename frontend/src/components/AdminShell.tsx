@@ -17,6 +17,9 @@ import {
   Menu,
   X,
   ChevronDown,
+  FlaskConical,
+  Activity,
+  Megaphone,
 } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
 
@@ -24,7 +27,10 @@ const adminNav = [
   { href: '/admin', label: 'Dashboard', icon: BarChart3 },
   { href: '/admin/users', label: 'Users', icon: Users },
   { href: '/admin/workspaces', label: 'Workspaces', icon: Building2 },
+  { href: '/admin/trials', label: 'Trials', icon: FlaskConical },
   { href: '/admin/jobs', label: 'Scheduler Jobs', icon: Clock },
+  { href: '/admin/announcements', label: 'Announcements', icon: Megaphone },
+  { href: '/admin/activity', label: 'Activity Log', icon: Activity },
   { href: '/admin/system', label: 'System Health', icon: Server },
 ];
 

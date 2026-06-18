@@ -2239,6 +2239,149 @@ export async function adminGetSystemHealth(): Promise<AdminSystemHealth> {
   return _adminFetch('/admin-console/system');
 }
 
+export async function adminResetPassword(userId: number, newPassword: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`${API_BASE}/admin-console/users/${userId}/reset-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+    body: JSON.stringify({ new_password: newPassword }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function adminImpersonateUser(userId: number): Promise<{ ok: boolean; token: string; email: string }> {
+  const res = await fetch(`${API_BASE}/admin-console/users/${userId}/impersonate`, {
+    method: 'POST',
+    headers: _authHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function adminBulkAction(body: { user_ids: number[]; action: string; plan_code?: string }): Promise<{ ok: boolean; affected: number }> {
+  const res = await fetch(`${API_BASE}/admin-console/users/bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Failed (${res.status})`);
+  return res.json();
+}
+
+export async function adminExportUsersCSV(): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/admin-console/export/users`, { headers: _authHeaders() });
+  if (!res.ok) throw new Error(`Failed (${res.status})`);
+  return res.blob();
+}
+
+export async function adminExportWorkspacesCSV(): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/admin-console/export/workspaces`, { headers: _authHeaders() });
+  if (!res.ok) throw new Error(`Failed (${res.status})`);
+  return res.blob();
+}
+
+export interface AdminTrialItem {
+  workspace_id: number;
+  workspace_name: string;
+  owner_email: string | null;
+  plan_code: string;
+  status: string;
+  trial_ends_at: string | null;
+  days_left: number | null;
+}
+
+export async function adminGetTrials(): Promise<{ trials: AdminTrialItem[]; total: number }> {
+  return _adminFetch('/admin-console/trials');
+}
+
+export async function adminExtendTrial(workspaceId: number, days: number): Promise<{ ok: boolean }> {
+  const res = await fetch(`${API_BASE}/admin-console/trials/${workspaceId}/extend?days=${days}`, {
+    method: 'POST',
+    headers: _authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed (${res.status})`);
+  return res.json();
+}
+
+export interface AdminActivityItem {
+  id: number;
+  admin_email: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: number | null;
+  details: Record<string, unknown> | null;
+  created_at: string | null;
+}
+
+export async function adminGetActivity(skip = 0, limit = 50): Promise<{ activity: AdminActivityItem[]; total: number }> {
+  return _adminFetch(`/admin-console/activity?skip=${skip}&limit=${limit}`);
+}
+
+export async function adminGetJobMetrics(): Promise<{ metrics: Record<string, Record<string, unknown>>; total: number }> {
+  return _adminFetch('/admin-console/job-metrics');
+}
+
+export async function adminRescrapeApp(appId: number): Promise<{ ok: boolean; name: string }> {
+  const res = await fetch(`${API_BASE}/admin-console/apps/${appId}/rescrape`, {
+    method: 'POST',
+    headers: _authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed (${res.status})`);
+  return res.json();
+}
+
+export interface AdminAnnouncement {
+  id: number;
+  title: string;
+  message: string;
+  type: string;
+  is_active: boolean;
+  created_at: string | null;
+}
+
+export async function adminGetAnnouncements(): Promise<{ announcements: AdminAnnouncement[]; total: number }> {
+  return _adminFetch('/admin-console/announcements');
+}
+
+export async function adminCreateAnnouncement(body: { title: string; message: string; type?: string }): Promise<{ ok: boolean; id: number }> {
+  const res = await fetch(`${API_BASE}/admin-console/announcements`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Failed (${res.status})`);
+  return res.json();
+}
+
+export async function adminUpdateAnnouncement(id: number, body: Record<string, unknown>): Promise<{ ok: boolean }> {
+  const res = await fetch(`${API_BASE}/admin-console/announcements/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Failed (${res.status})`);
+  return res.json();
+}
+
+export async function adminDeleteAnnouncement(id: number): Promise<{ ok: boolean }> {
+  const res = await fetch(`${API_BASE}/admin-console/announcements/${id}`, {
+    method: 'DELETE',
+    headers: _authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed (${res.status})`);
+  return res.json();
+}
+
+export async function getActiveAnnouncements(): Promise<{ announcements: { id: number; title: string; message: string; type: string; created_at: string | null }[] }> {
+  return fetchApi('/admin-console/announcements/active');
+}
+
 
 // ---------------------------------------------------------------------------
 // Competitor Comparison
