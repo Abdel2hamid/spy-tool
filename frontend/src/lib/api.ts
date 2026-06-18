@@ -2155,14 +2155,23 @@ export interface AdminSystemHealth {
   uptime_info: string;
 }
 
+async function _adminFetch<T>(endpoint: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${endpoint}`, {
+    cache: 'no-store',
+    headers: _authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
 export async function adminGetDashboard(): Promise<AdminDashboardStats> {
-  return fetchApi<AdminDashboardStats>('/admin-console/dashboard');
+  return _adminFetch<AdminDashboardStats>('/admin-console/dashboard');
 }
 
 export async function adminGetUsers(search?: string, skip = 0, limit = 50): Promise<{ users: AdminUserItem[]; total: number }> {
   const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
   if (search) params.set('search', search);
-  return fetchApi(`/admin-console/users?${params}`);
+  return _adminFetch(`/admin-console/users?${params}`);
 }
 
 export async function adminUpdateUser(userId: number, body: Record<string, unknown>): Promise<{ ok: boolean }> {
@@ -2187,7 +2196,7 @@ export async function adminDeleteUser(userId: number): Promise<{ ok: boolean }> 
 export async function adminGetWorkspaces(search?: string, skip = 0, limit = 50): Promise<{ workspaces: AdminWorkspaceItem[]; total: number }> {
   const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
   if (search) params.set('search', search);
-  return fetchApi(`/admin-console/workspaces?${params}`);
+  return _adminFetch(`/admin-console/workspaces?${params}`);
 }
 
 export async function adminUpdateSubscription(workspaceId: number, body: Record<string, unknown>): Promise<{ ok: boolean }> {
@@ -2201,7 +2210,7 @@ export async function adminUpdateSubscription(workspaceId: number, body: Record<
 }
 
 export async function adminGetJobs(): Promise<{ jobs: AdminJobItem[]; total: number }> {
-  return fetchApi('/admin-console/jobs');
+  return _adminFetch('/admin-console/jobs');
 }
 
 export async function adminTriggerJob(jobId: string): Promise<{ ok: boolean }> {
@@ -2214,7 +2223,7 @@ export async function adminTriggerJob(jobId: string): Promise<{ ok: boolean }> {
 }
 
 export async function adminGetSystemHealth(): Promise<AdminSystemHealth> {
-  return fetchApi('/admin-console/system');
+  return _adminFetch('/admin-console/system');
 }
 
 

@@ -134,6 +134,7 @@ def _build_auth_response(user, workspace, membership, subscription, token: str) 
             id=user.id,
             email=user.email,
             full_name=user.full_name,
+            is_superadmin=user.is_superadmin,
             created_at=user.created_at,
         ),
         workspace=WorkspaceInfo(
