@@ -2213,6 +2213,44 @@ export async function adminGetDashboard(): Promise<AdminDashboardStats> {
   return _adminFetch<AdminDashboardStats>('/admin-console/dashboard');
 }
 
+export interface AdminUserDetail {
+  user: {
+    id: number;
+    email: string;
+    full_name: string | null;
+    is_active: boolean;
+    is_superadmin: boolean;
+    created_at: string | null;
+    last_active: string | null;
+  };
+  workspace: {
+    id: number;
+    name: string;
+    slug: string;
+    role: string | null;
+    created_at: string | null;
+  } | null;
+  subscription: {
+    plan_code: string;
+    status: string;
+    trial_ends_at: string | null;
+    trial_days_left: number | null;
+    current_period_end: string | null;
+  } | null;
+  usage: Record<string, number> | null;
+  favorites: { app_id: number; name: string; icon_url: string | null; developer: string | null; added_at: string | null }[];
+  favorite_count: number;
+  my_apps: { app_id: number; name: string; icon_url: string | null; developer: string | null; added_at: string | null }[];
+  my_app_count: number;
+  activity: UserActivityItem[];
+  activity_count: number;
+  admin_log: { id: number; admin_email: string | null; action: string; details: Record<string, unknown> | null; created_at: string | null }[];
+}
+
+export async function adminGetUserDetail(userId: number): Promise<AdminUserDetail> {
+  return _adminFetch(`/admin-console/users/${userId}/detail`);
+}
+
 export async function adminGetUsers(search?: string, skip = 0, limit = 50, filter?: string): Promise<{ users: AdminUserItem[]; total: number }> {
   const params = new URLSearchParams({ skip: String(skip), limit: String(limit) });
   if (search) params.set('search', search);

@@ -527,6 +527,168 @@ def delete_user(
     return {"ok": True}
 
 
+@router.get("/users/{user_id}/detail")
+def get_user_detail(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(get_superadmin),
+):
+    """Full user profile with workspace, subscription, apps, favorites, usage, activity."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    now = datetime.now(timezone.utc)
+    month_str = now.strftime("%Y-%m")
+
+    # Membership + workspace + subscription
+    mem = db.query(Membership).filter(Membership.user_id == user.id).first()
+    ws = db.query(Workspace).filter(Workspace.id == mem.workspace_id).first() if mem else None
+    sub = db.query(Subscription).filter(Subscription.workspace_id == ws.id).first() if ws else None
+
+    trial_days_left = None
+    if sub and sub.status == "trialing" and sub.trial_ends_at:
+        trial_end = sub.trial_ends_at
+        if trial_end.tzinfo is None:
+            trial_end = trial_end.replace(tzinfo=timezone.utc)
+        trial_days_left = max(0, (trial_end - now).days)
+
+    # Usage this month
+    usage_data = None
+    if ws:
+        usage = db.query(WorkspaceUsage).filter(
+            WorkspaceUsage.workspace_id == ws.id,
+            WorkspaceUsage.month == month_str,
+        ).first()
+        usage_data = {
+            "app_imports": usage.app_imports if usage else 0,
+            "keyword_refreshes": usage.keyword_refreshes if usage else 0,
+            "ai_requests": usage.ai_requests if usage else 0,
+            "exports": usage.exports if usage else 0,
+        }
+
+    # Favorites
+    fav_rows = (
+        db.query(Favorite, App)
+        .join(App, App.id == Favorite.app_id)
+        .filter(Favorite.user_id == user.id)
+        .order_by(Favorite.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    favorites = [
+        {
+            "app_id": app.id,
+            "name": app.name,
+            "icon_url": app.icon_url,
+            "developer": app.developer,
+            "added_at": fav.created_at.isoformat() if fav.created_at else None,
+        }
+        for fav, app in fav_rows
+    ]
+
+    # My Apps
+    myapp_rows = (
+        db.query(MyApp, App)
+        .join(App, App.id == MyApp.app_id)
+        .filter(MyApp.user_id == user.id)
+        .order_by(MyApp.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    my_apps = [
+        {
+            "app_id": app.id,
+            "name": app.name,
+            "icon_url": app.icon_url,
+            "developer": app.developer,
+            "added_at": ma.created_at.isoformat() if ma.created_at else None,
+        }
+        for ma, app in myapp_rows
+    ]
+
+    # Recent activity (last 50)
+    act_rows = (
+        db.query(UserActivityLog)
+        .filter(UserActivityLog.user_id == user.id)
+        .order_by(UserActivityLog.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    activity = [
+        {
+            "id": r.id,
+            "action": r.action,
+            "detail": r.detail,
+            "metadata": r.metadata_,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in act_rows
+    ]
+
+    # Last active (most recent activity)
+    last_active = None
+    if act_rows:
+        last_active = act_rows[0].created_at.isoformat() if act_rows[0].created_at else None
+
+    # Admin actions targeting this user
+    admin_actions = (
+        db.query(AdminActivityLog, User)
+        .outerjoin(User, User.id == AdminActivityLog.admin_id)
+        .filter(
+            AdminActivityLog.target_type == "user",
+            AdminActivityLog.target_id == user_id,
+        )
+        .order_by(AdminActivityLog.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    admin_log = [
+        {
+            "id": log.id,
+            "admin_email": admin_u.email if admin_u else None,
+            "action": log.action,
+            "details": log.details,
+            "created_at": log.created_at.isoformat() if log.created_at else None,
+        }
+        for log, admin_u in admin_actions
+    ]
+
+    return {
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "full_name": user.full_name,
+            "is_active": user.is_active,
+            "is_superadmin": user.is_superadmin,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+            "last_active": last_active,
+        },
+        "workspace": {
+            "id": ws.id,
+            "name": ws.name,
+            "slug": ws.slug,
+            "role": mem.role if mem else None,
+            "created_at": ws.created_at.isoformat() if ws.created_at else None,
+        } if ws else None,
+        "subscription": {
+            "plan_code": sub.plan_code,
+            "status": sub.status,
+            "trial_ends_at": sub.trial_ends_at.isoformat() if sub.trial_ends_at else None,
+            "trial_days_left": trial_days_left,
+            "current_period_end": sub.current_period_end.isoformat() if sub.current_period_end else None,
+        } if sub else None,
+        "usage": usage_data,
+        "favorites": favorites,
+        "favorite_count": len(favorites),
+        "my_apps": my_apps,
+        "my_app_count": len(my_apps),
+        "activity": activity,
+        "activity_count": len(activity),
+        "admin_log": admin_log,
+    }
+
+
 @router.post("/users/{user_id}/reset-password")
 def reset_user_password(
     user_id: int,

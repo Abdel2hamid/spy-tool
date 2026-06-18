@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { AdminShell } from '@/components/AdminShell';
 import {
   adminGetUsers,
@@ -11,11 +12,7 @@ import {
   adminImpersonateUser,
   adminBulkAction,
   adminExportUsersCSV,
-  adminUpdateSubscription,
-  adminExtendTrial,
   AdminUserItem,
-  adminGetUserActivity,
-  UserActivityItem,
 } from '@/lib/api';
 import {
   Search,
@@ -34,15 +31,10 @@ import {
   CheckSquare,
   Square,
   Minus,
-  History,
-  ChevronDown,
-  ChevronUp,
-  CalendarPlus,
   Users,
   Clock,
   AlertTriangle,
-  Filter,
-  Pencil,
+  ExternalLink,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -79,11 +71,9 @@ export default function AdminUsersPage() {
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [filterTab, setFilterTab] = useState<FilterTab>('all');
+  const router = useRouter();
   const [showCreate, setShowCreate] = useState(false);
-  const [activityUser, setActivityUser] = useState<AdminUserItem | null>(null);
   const [resetTarget, setResetTarget] = useState<AdminUserItem | null>(null);
-  const [editSubUser, setEditSubUser] = useState<AdminUserItem | null>(null);
-  const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkPlanOpen, setBulkPlanOpen] = useState(false);
   const [busyAction, setBusyAction] = useState(false);
@@ -114,7 +104,6 @@ export default function AdminUsersPage() {
 
   useEffect(() => {
     setSelected(new Set());
-    setExpandedRow(null);
   }, [users]);
 
   // --- Row-level actions -----------------------------------------------------
@@ -142,19 +131,6 @@ export default function AdminUsersPage() {
       window.open('/impersonate', '_blank');
     } catch {
       alert('Failed to impersonate user');
-    }
-  }
-
-  async function handleExtendTrial(u: AdminUserItem, days: number) {
-    if (!u.workspace_id) return;
-    setBusyAction(true);
-    try {
-      await adminExtendTrial(u.workspace_id, days);
-      load();
-    } catch {
-      alert('Failed to extend trial');
-    } finally {
-      setBusyAction(false);
     }
   }
 
@@ -394,15 +370,15 @@ export default function AdminUsersPage() {
                 <tr><td colSpan={8} className="px-4 py-12 text-center text-gray-400">No users found</td></tr>
               ) : (
                 users.map((u) => (
-                  <>
                     <tr
                       key={u.id}
-                      className={`bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition ${
+                      className={`bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition cursor-pointer ${
                         selected.has(u.id) ? 'bg-indigo-50/50 dark:bg-indigo-950/20' : ''
                       }`}
+                      onClick={() => router.push(`/admin/users/${u.id}`)}
                     >
                       {/* Checkbox */}
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                         <button onClick={() => toggleSelect(u.id)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
                           {selected.has(u.id) ? <CheckSquare className="h-4 w-4 text-indigo-600 dark:text-indigo-400" /> : <Square className="h-4 w-4" />}
                         </button>
@@ -431,16 +407,9 @@ export default function AdminUsersPage() {
 
                       {/* Plan */}
                       <td className="px-4 py-3">
-                        <button
-                          onClick={() => setEditSubUser(u)}
-                          className="group flex items-center gap-1"
-                          title="Edit subscription"
-                        >
-                          <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium capitalize ${planBadgeClass(u.plan_code)}`}>
-                            {u.plan_code || 'none'}
-                          </span>
-                          <Pencil className="h-3 w-3 text-gray-300 opacity-0 group-hover:opacity-100 transition dark:text-gray-600" />
-                        </button>
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium capitalize ${planBadgeClass(u.plan_code)}`}>
+                          {u.plan_code || 'none'}
+                        </span>
                         {u.plan_status && (
                           <p className={`text-[10px] font-medium mt-0.5 ${STATUS_COLORS[u.plan_status] || 'text-gray-400'}`}>
                             {u.plan_status}
@@ -462,20 +431,14 @@ export default function AdminUsersPage() {
                       {/* Trial */}
                       <td className="px-4 py-3">
                         {u.plan_status === 'trialing' && u.trial_days_left !== null ? (
-                          <div className="flex items-center gap-2">
-                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
-                              u.trial_days_left <= 0 ? 'bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400' :
-                              u.trial_days_left <= 3 ? 'bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400' :
-                              u.trial_days_left <= 7 ? 'bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-400' :
-                              'bg-green-50 text-green-600 dark:bg-green-950/50 dark:text-green-400'
-                            }`}>
-                              {u.trial_days_left > 0 ? `${u.trial_days_left}d` : 'Expired'}
-                            </span>
-                            <TrialExtendDropdown
-                              onExtend={(days) => handleExtendTrial(u, days)}
-                              busy={busyAction}
-                            />
-                          </div>
+                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
+                            u.trial_days_left <= 0 ? 'bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400' :
+                            u.trial_days_left <= 3 ? 'bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400' :
+                            u.trial_days_left <= 7 ? 'bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-400' :
+                            'bg-green-50 text-green-600 dark:bg-green-950/50 dark:text-green-400'
+                          }`}>
+                            {u.trial_days_left > 0 ? `${u.trial_days_left}d` : 'Expired'}
+                          </span>
                         ) : (
                           <span className="text-xs text-gray-400">{'\u2014'}</span>
                         )}
@@ -487,21 +450,13 @@ export default function AdminUsersPage() {
                       </td>
 
                       {/* Actions */}
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-1">
-                          {/* Expand row */}
-                          <button
-                            onClick={() => setExpandedRow(expandedRow === u.id ? null : u.id)}
-                            title="Show details"
-                            className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-200 transition"
-                          >
-                            {expandedRow === u.id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                          <button onClick={() => router.push(`/admin/users/${u.id}`)} title="View details" className="rounded p-1.5 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-950 dark:hover:text-indigo-400 transition">
+                            <ExternalLink className="h-4 w-4" />
                           </button>
                           <button onClick={() => toggleActive(u)} title={u.is_active ? 'Deactivate' : 'Activate'} className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-200 transition">
                             {u.is_active ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
-                          </button>
-                          <button onClick={() => toggleSuperadmin(u)} title={u.is_superadmin ? 'Remove admin' : 'Make admin'} className={`rounded p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 transition ${u.is_superadmin ? 'text-red-500' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-200'}`}>
-                            <Shield className="h-4 w-4" />
                           </button>
                           <button onClick={() => setResetTarget(u)} title="Reset password" className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-200 transition">
                             <Key className="h-4 w-4" />
@@ -509,25 +464,12 @@ export default function AdminUsersPage() {
                           <button onClick={() => handleImpersonate(u)} title="Login as user" className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-200 transition">
                             <LogIn className="h-4 w-4" />
                           </button>
-                          <button onClick={() => setActivityUser(u)} title="View activity" className="rounded p-1.5 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-950 dark:hover:text-indigo-400 transition">
-                            <History className="h-4 w-4" />
-                          </button>
                           <button onClick={() => handleDelete(u)} title="Delete user" className="rounded p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-400 transition">
                             <Trash2 className="h-4 w-4" />
                           </button>
                         </div>
                       </td>
                     </tr>
-
-                    {/* Expanded detail row */}
-                    {expandedRow === u.id && (
-                      <tr key={`${u.id}-detail`} className="bg-gray-50/50 dark:bg-gray-800/30">
-                        <td colSpan={8} className="px-6 py-4">
-                          <ExpandedUserDetail user={u} onEditSub={() => setEditSubUser(u)} />
-                        </td>
-                      </tr>
-                    )}
-                  </>
                 ))
               )}
             </tbody>
@@ -552,210 +494,8 @@ export default function AdminUsersPage() {
         {/* Modals */}
         {showCreate && <CreateUserModal onClose={() => setShowCreate(false)} onCreated={() => { setShowCreate(false); load(); }} />}
         {resetTarget && <ResetPasswordModal user={resetTarget} onClose={() => setResetTarget(null)} onReset={() => setResetTarget(null)} />}
-        {activityUser && <UserActivityModal user={activityUser} onClose={() => setActivityUser(null)} />}
-        {editSubUser && editSubUser.workspace_id && (
-          <EditSubscriptionModal
-            user={editSubUser}
-            onClose={() => setEditSubUser(null)}
-            onSaved={() => { setEditSubUser(null); load(); }}
-          />
-        )}
       </div>
     </AdminShell>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Expanded User Detail
-// ---------------------------------------------------------------------------
-
-function ExpandedUserDetail({ user: u, onEditSub }: { user: AdminUserItem; onEditSub: () => void }) {
-  return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-      {/* Workspace Info */}
-      <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
-        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Workspace</h4>
-        <div className="space-y-2 text-sm">
-          <div className="flex justify-between">
-            <span className="text-gray-500">Name</span>
-            <span className="font-medium text-gray-900 dark:text-white">{u.workspace_name || '\u2014'}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-500">Slug</span>
-            <span className="text-gray-600 dark:text-gray-300">{u.workspace_slug || '\u2014'}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-500">Role</span>
-            <span className="text-gray-600 dark:text-gray-300 capitalize">{u.role || '\u2014'}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Subscription Info */}
-      <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
-        <div className="flex items-center justify-between mb-3">
-          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Subscription</h4>
-          <button onClick={onEditSub} className="text-xs text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 font-medium">Edit</button>
-        </div>
-        <div className="space-y-2 text-sm">
-          <div className="flex justify-between">
-            <span className="text-gray-500">Plan</span>
-            <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium capitalize ${planBadgeClass(u.plan_code)}`}>{u.plan_code || 'none'}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-500">Status</span>
-            <span className={`text-xs font-medium ${STATUS_COLORS[u.plan_status || ''] || 'text-gray-400'}`}>{u.plan_status || '\u2014'}</span>
-          </div>
-          {u.trial_ends_at && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Trial ends</span>
-              <span className="text-xs text-gray-600 dark:text-gray-300">{new Date(u.trial_ends_at).toLocaleDateString()}</span>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Usage This Month */}
-      <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
-        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Usage This Month</h4>
-        {u.usage ? (
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <span className="text-gray-500">App Imports</span>
-              <span className="font-medium text-gray-900 dark:text-white">{u.usage.app_imports}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Keyword Refreshes</span>
-              <span className="font-medium text-gray-900 dark:text-white">{u.usage.keyword_refreshes}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">AI Requests</span>
-              <span className="font-medium text-gray-900 dark:text-white">{u.usage.ai_requests}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Exports</span>
-              <span className="font-medium text-gray-900 dark:text-white">{u.usage.exports}</span>
-            </div>
-          </div>
-        ) : (
-          <p className="text-sm text-gray-400">No usage data</p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Trial Extend Dropdown (inline)
-// ---------------------------------------------------------------------------
-
-function TrialExtendDropdown({ onExtend, busy }: { onExtend: (days: number) => void; busy: boolean }) {
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    const close = () => setOpen(false);
-    document.addEventListener('click', close);
-    return () => document.removeEventListener('click', close);
-  }, [open]);
-
-  return (
-    <div className="relative">
-      <button
-        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
-        disabled={busy}
-        className="rounded p-1 text-gray-400 hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-950 dark:hover:text-indigo-400 transition disabled:opacity-50"
-        title="Extend trial"
-      >
-        <CalendarPlus className="h-3.5 w-3.5" />
-      </button>
-      {open && (
-        <div
-          className="absolute right-0 top-full z-20 mt-1 w-28 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-900"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {[7, 14, 30].map((d) => (
-            <button
-              key={d}
-              onClick={() => { onExtend(d); setOpen(false); }}
-              className="block w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800"
-            >
-              +{d} days
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Edit Subscription Modal
-// ---------------------------------------------------------------------------
-
-function EditSubscriptionModal({
-  user,
-  onClose,
-  onSaved,
-}: {
-  user: AdminUserItem;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [plan, setPlan] = useState(user.plan_code || 'trial');
-  const [status, setStatus] = useState(user.plan_status || 'trialing');
-  const [saving, setSaving] = useState(false);
-
-  async function handleSave() {
-    if (!user.workspace_id) return;
-    setSaving(true);
-    try {
-      await adminUpdateSubscription(user.workspace_id, { plan_code: plan, status });
-      onSaved();
-    } catch {
-      alert('Failed to update subscription');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-sm rounded-2xl border border-gray-200 bg-white p-6 shadow-xl dark:border-gray-700 dark:bg-gray-900" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-1">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Edit Subscription</h3>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
-        </div>
-        <p className="text-sm text-gray-500 mb-5">{user.full_name || user.email} &middot; {user.workspace_name}</p>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1.5">Plan</label>
-            <select value={plan} onChange={(e) => setPlan(e.target.value)} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-white">
-              <option value="trial">Trial</option>
-              <option value="starter">Starter</option>
-              <option value="pro">Pro</option>
-              <option value="enterprise">Enterprise</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1.5">Status</label>
-            <select value={status} onChange={(e) => setStatus(e.target.value)} className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-white">
-              <option value="trialing">Trialing</option>
-              <option value="active">Active</option>
-              <option value="canceled">Canceled</option>
-              <option value="expired">Expired</option>
-            </select>
-          </div>
-        </div>
-        <div className="mt-6 flex gap-2 justify-end">
-          <button onClick={onClose} className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800 transition">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 transition">
-            {saving && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
-            Save Changes
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -886,82 +626,4 @@ function ResetPasswordModal({ user, onClose, onReset }: { user: AdminUserItem; o
   );
 }
 
-// ---------------------------------------------------------------------------
-// User Activity Modal
-// ---------------------------------------------------------------------------
 
-const ACTION_LABELS: Record<string, { label: string; color: string }> = {
-  'auth.login': { label: 'Login', color: 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-400' },
-  'app.lookup': { label: 'App Lookup', color: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-400' },
-  'favorite.add': { label: 'Favorited', color: 'bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-400' },
-  'favorite.remove': { label: 'Unfavorited', color: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400' },
-  'myapp.add': { label: 'Added My App', color: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-400' },
-  'myapp.remove': { label: 'Removed My App', color: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400' },
-  'keywords.extract': { label: 'Keywords Extract', color: 'bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-400' },
-};
-
-function UserActivityModal({ user, onClose }: { user: AdminUserItem; onClose: () => void }) {
-  const [activity, setActivity] = useState<UserActivityItem[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const limit = 30;
-
-  useEffect(() => {
-    setLoading(true);
-    adminGetUserActivity(user.id, page * limit, limit)
-      .then((d) => { setActivity(d.activity); setTotal(d.total); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [user.id, page]);
-
-  const totalPages = Math.ceil(total / limit);
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-2xl max-h-[80vh] rounded-2xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900 flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">User Activity</h3>
-            <p className="text-sm text-gray-500">{user.full_name || user.email} — {total} actions</p>
-          </div>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><X className="h-5 w-5" /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto px-6 py-4">
-          {loading ? (
-            <div className="flex justify-center py-12"><RefreshCw className="h-5 w-5 animate-spin text-gray-400" /></div>
-          ) : activity.length === 0 ? (
-            <p className="text-center text-sm text-gray-400 py-12">No activity recorded yet</p>
-          ) : (
-            <div className="space-y-3">
-              {activity.map((a) => {
-                const info = ACTION_LABELS[a.action] || { label: a.action, color: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400' };
-                return (
-                  <div key={a.id} className="flex items-start gap-3 group">
-                    <div className="mt-1 h-2 w-2 rounded-full bg-gray-300 dark:bg-gray-600 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${info.color}`}>{info.label}</span>
-                        {a.detail && <span className="text-sm text-gray-700 dark:text-gray-300 truncate">{a.detail}</span>}
-                      </div>
-                      <p className="text-[11px] text-gray-400 mt-0.5">{a.created_at ? new Date(a.created_at).toLocaleString() : '\u2014'}</p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between px-6 py-3 border-t border-gray-200 dark:border-gray-800">
-            <p className="text-xs text-gray-500">Page {page + 1} of {totalPages}</p>
-            <div className="flex gap-1">
-              <button onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0} className="rounded border p-1.5 text-gray-500 hover:bg-gray-50 disabled:opacity-30 dark:border-gray-700 dark:hover:bg-gray-800"><ChevronLeft className="h-3.5 w-3.5" /></button>
-              <button onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="rounded border p-1.5 text-gray-500 hover:bg-gray-50 disabled:opacity-30 dark:border-gray-700 dark:hover:bg-gray-800"><ChevronRight className="h-3.5 w-3.5" /></button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
