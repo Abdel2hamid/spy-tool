@@ -2174,6 +2174,19 @@ export async function adminGetUsers(search?: string, skip = 0, limit = 50): Prom
   return _adminFetch(`/admin-console/users?${params}`);
 }
 
+export async function adminCreateUser(body: { email: string; password: string; full_name?: string; plan_code?: string }): Promise<{ ok: boolean; user_id: number; email: string }> {
+  const res = await fetch(`${API_BASE}/admin-console/users`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed (${res.status})`);
+  }
+  return res.json();
+}
+
 export async function adminUpdateUser(userId: number, body: Record<string, unknown>): Promise<{ ok: boolean }> {
   const res = await fetch(`${API_BASE}/admin-console/users/${userId}`, {
     method: 'PATCH',

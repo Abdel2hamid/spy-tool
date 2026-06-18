@@ -239,6 +239,43 @@ def delete_user(
     return {"ok": True}
 
 
+class CreateUserRequest(BaseModel):
+    email: str
+    password: str
+    full_name: Optional[str] = None
+    plan_code: Optional[str] = None  # override default trial plan
+
+
+@router.post("/users", status_code=201)
+def create_user(
+    body: CreateUserRequest,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(get_superadmin),
+):
+    """Admin-create a user with workspace + subscription (like register)."""
+    from app.services.auth_service import register_user, EmailAlreadyRegistered
+
+    try:
+        user, workspace, _token = register_user(
+            db, email=body.email, password=body.password, full_name=body.full_name,
+        )
+    except EmailAlreadyRegistered:
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    # Override plan if requested
+    if body.plan_code:
+        sub = db.query(Subscription).filter(
+            Subscription.workspace_id == workspace.id,
+        ).first()
+        if sub:
+            sub.plan_code = body.plan_code
+            if body.plan_code != "trial":
+                sub.status = "active"
+            db.commit()
+
+    return {"ok": True, "user_id": user.id, "email": user.email}
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Workspace Management
 # ═══════════════════════════════════════════════════════════════════════════════
