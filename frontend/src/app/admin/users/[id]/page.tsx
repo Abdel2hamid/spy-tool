@@ -179,27 +179,31 @@ export default function AdminUserDetailPage() {
         </div>
 
         {/* Quick Info Cards */}
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <InfoCard
-            icon={<CreditCard className="h-4 w-4" />}
-            label="Plan"
-            value={
-              <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium capitalize ${planBadge(subscription?.plan_code ?? null)}`}>
-                {subscription?.plan_code || 'none'}
-              </span>
-            }
-            sub={subscription?.status ? <span className={`text-xs font-medium ${STATUS_COLORS[subscription.status] || ''}`}>{subscription.status}</span> : undefined}
-          />
-          <InfoCard
-            icon={<Clock className="h-4 w-4" />}
-            label="Trial"
-            value={
-              subscription?.status === 'trialing' && subscription.trial_days_left !== null
-                ? <span className={`text-lg font-bold ${subscription.trial_days_left <= 3 ? 'text-red-600 dark:text-red-400' : subscription.trial_days_left <= 7 ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}`}>{subscription.trial_days_left}d left</span>
-                : <span className="text-gray-400">{'\u2014'}</span>
-            }
-            sub={subscription?.trial_ends_at ? <span className="text-xs text-gray-400">ends {new Date(subscription.trial_ends_at).toLocaleDateString()}</span> : undefined}
-          />
+        <div className={`grid grid-cols-2 gap-3 ${user.is_superadmin ? 'lg:grid-cols-2' : 'lg:grid-cols-4'}`}>
+          {!user.is_superadmin && (
+            <>
+              <InfoCard
+                icon={<CreditCard className="h-4 w-4" />}
+                label="Plan"
+                value={
+                  <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium capitalize ${planBadge(subscription?.plan_code ?? null)}`}>
+                    {subscription?.plan_code || 'none'}
+                  </span>
+                }
+                sub={subscription?.status ? <span className={`text-xs font-medium ${STATUS_COLORS[subscription.status] || ''}`}>{subscription.status}</span> : undefined}
+              />
+              <InfoCard
+                icon={<Clock className="h-4 w-4" />}
+                label="Trial"
+                value={
+                  subscription?.status === 'trialing' && subscription.trial_days_left !== null
+                    ? <span className={`text-lg font-bold ${subscription.trial_days_left <= 3 ? 'text-red-600 dark:text-red-400' : subscription.trial_days_left <= 7 ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}`}>{subscription.trial_days_left}d left</span>
+                    : <span className="text-gray-400">{'\u2014'}</span>
+                }
+                sub={subscription?.trial_ends_at ? <span className="text-xs text-gray-400">ends {new Date(subscription.trial_ends_at).toLocaleDateString()}</span> : undefined}
+              />
+            </>
+          )}
           <InfoCard
             icon={<Star className="h-4 w-4" />}
             label="Favorites"
@@ -219,7 +223,7 @@ export default function AdminUserDetailPage() {
           {/* Left Column (2 cols) */}
           <div className="lg:col-span-2 space-y-6">
             {/* Workspace + Subscription */}
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className={`grid gap-4 ${user.is_superadmin ? 'sm:grid-cols-1' : 'sm:grid-cols-2'}`}>
               <Section title="Workspace" icon={<Building2 className="h-4 w-4 text-purple-500" />}>
                 {workspace ? (
                   <div className="space-y-2.5">
@@ -231,11 +235,13 @@ export default function AdminUserDetailPage() {
                 ) : <p className="text-sm text-gray-400">No workspace</p>}
               </Section>
 
-              <SubscriptionSection
-                subscription={subscription}
-                workspaceId={workspace?.id ?? null}
-                onRefresh={load}
-              />
+              {!user.is_superadmin && (
+                <SubscriptionSection
+                  subscription={subscription}
+                  workspaceId={workspace?.id ?? null}
+                  onRefresh={load}
+                />
+              )}
             </div>
 
             {/* Usage This Month */}
