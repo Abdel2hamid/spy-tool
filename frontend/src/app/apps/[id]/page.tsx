@@ -541,144 +541,112 @@ function ASOScoreCard({ appId }: { appId: number }) {
 
 
 function OverviewTab({ app, appId, isMyApp }: { app: AppDetail; appId: number; isMyApp?: boolean }) {
+  const [descExpanded, setDescExpanded] = useState(false);
+  const descTruncLen = 300;
+  const descLong = (app.description?.length ?? 0) > descTruncLen;
+
   return (
-    <div className="space-y-6">
-      {app.description && (
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">Description</h3>
-          <p className="text-gray-600 dark:text-gray-300 whitespace-pre-wrap">{app.description}</p>
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-          <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 mb-2">
-            <Star className="h-4 w-4" />
-            <span className="text-sm font-medium">Rating</span>
-          </div>
-          <p className="text-2xl font-bold text-gray-900 dark:text-white">
-            {app.current_rating?.toFixed(2) || '-'}
-          </p>
-        </div>
-        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-          <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 mb-2">
-            <MessageSquare className="h-4 w-4" />
-            <span className="text-sm font-medium">Reviews</span>
-          </div>
-          <p className="text-2xl font-bold text-gray-900 dark:text-white">
-            {app.current_reviews?.toLocaleString() || 0}
-          </p>
-        </div>
-        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-          <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 mb-2">
-            <Download className="h-4 w-4" />
-            <span className="text-sm font-medium">Version</span>
-          </div>
-          <p className="text-2xl font-bold text-gray-900 dark:text-white">
-            {app.current_version || '-'}
-          </p>
-        </div>
-      </div>
-
-      {/* Market Estimates — full rich card */}
-      <MarketEstimatesCard appId={appId} app={app} />
-
-      {/* ASO Score — only for user's own apps */}
-      {isMyApp && <ASOScoreCard appId={appId} />}
-
-      {app.screenshots && app.screenshots.length > 0 && (
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Screenshots</h3>
-          <div className="flex gap-4 overflow-x-auto pb-2">
-            {app.screenshots.map((screenshot, i) => (
-              <img 
-                key={i}
-                src={screenshot}
-                alt={`Screenshot ${i + 1}`}
-                className="h-64 rounded-lg object-cover flex-shrink-0"
-              />
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">App Info</h3>
-          <dl className="space-y-3">
-            {app.developer_id && (
-              <div className="flex justify-between">
-                <dt className="text-gray-500 dark:text-gray-400">Developer ID</dt>
-                <dd className="text-gray-900 dark:text-white font-mono text-sm">{app.developer_id}</dd>
-              </div>
-            )}
-            {app.content_rating && (
-              <div className="flex justify-between">
-                <dt className="text-gray-500 dark:text-gray-400">Content Rating</dt>
-                <dd className="text-gray-900 dark:text-white">{app.content_rating}</dd>
-              </div>
-            )}
-            {app.minimum_ios_version && (
-              <div className="flex justify-between">
-                <dt className="text-gray-500 dark:text-gray-400">Minimum iOS</dt>
-                <dd className="text-gray-900 dark:text-white">{app.minimum_ios_version}</dd>
-              </div>
-            )}
-            {app.release_date && (
-              <div className="flex justify-between">
-                <dt className="text-gray-500 dark:text-gray-400">Release Date</dt>
-                <dd className="text-gray-900 dark:text-white">
-                  {new Date(app.release_date).toLocaleDateString()}
-                </dd>
-              </div>
-            )}
-            {app.last_updated && (
-              <div className="flex justify-between">
-                <dt className="text-gray-500 dark:text-gray-400">Last Updated</dt>
-                <dd className="text-gray-900 dark:text-white">
-                  {new Date(app.last_updated).toLocaleDateString()}
-                </dd>
-              </div>
-            )}
-          </dl>
-        </div>
-
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Languages</h3>
-          {app.supported_languages && app.supported_languages.length > 0 ? (
-            <div className="flex flex-wrap gap-2">
-              {app.supported_languages.map((lang, i) => (
-                <span 
-                  key={i}
-                  className="px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded text-sm text-gray-700 dark:text-gray-300"
+    <div className="space-y-5">
+      {/* ── Two-column: Description + App Info ─────────────── */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
+        {/* Left column — Description + Screenshots */}
+        <div className="space-y-5 lg:col-span-3">
+          {app.description && (
+            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+              <h3 className="mb-2 text-sm font-semibold text-gray-900 dark:text-white">Description</h3>
+              <p className="text-sm leading-relaxed text-gray-600 whitespace-pre-wrap dark:text-gray-300">
+                {descExpanded || !descLong
+                  ? app.description
+                  : app.description.slice(0, descTruncLen) + '…'}
+              </p>
+              {descLong && (
+                <button
+                  onClick={() => setDescExpanded(!descExpanded)}
+                  className="mt-2 text-xs font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
                 >
-                  {lang}
-                </span>
-              ))}
+                  {descExpanded ? 'Show less' : 'Read more'}
+                </button>
+              )}
             </div>
-          ) : (
-            <p className="text-gray-400">No language data available</p>
           )}
 
+          {/* Screenshots */}
+          {app.screenshots && app.screenshots.length > 0 && (
+            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+              <h3 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Screenshots</h3>
+              <div className="flex gap-3 overflow-x-auto pb-2">
+                {app.screenshots.map((screenshot, i) => (
+                  <img
+                    key={i}
+                    src={screenshot}
+                    alt={`Screenshot ${i + 1}`}
+                    className="h-52 rounded-lg object-cover flex-shrink-0"
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Right column — App Info + Languages */}
+        <div className="space-y-5 lg:col-span-2">
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+            <h3 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">App Info</h3>
+            <dl className="space-y-2.5 text-sm">
+              {[
+                { label: 'Version', value: app.current_version },
+                { label: 'Content Rating', value: app.content_rating },
+                { label: 'Minimum iOS', value: app.minimum_ios_version },
+                { label: 'Release Date', value: app.release_date ? new Date(app.release_date).toLocaleDateString() : null },
+                { label: 'Last Updated', value: app.last_updated ? new Date(app.last_updated).toLocaleDateString() : null },
+                { label: 'Developer ID', value: app.developer_id, mono: true },
+              ]
+                .filter((r) => r.value)
+                .map((r) => (
+                  <div key={r.label} className="flex items-center justify-between">
+                    <dt className="text-gray-500 dark:text-gray-400">{r.label}</dt>
+                    <dd className={cn('text-gray-900 dark:text-white', r.mono && 'font-mono text-xs')}>{r.value}</dd>
+                  </div>
+                ))}
+            </dl>
+          </div>
+
+          {/* Languages */}
+          {app.supported_languages && app.supported_languages.length > 0 && (
+            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+              <h3 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Languages</h3>
+              <div className="flex flex-wrap gap-1.5">
+                {app.supported_languages.map((lang, i) => (
+                  <span key={i} className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                    {lang}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* In-App Purchases */}
           {app.in_app_purchases && app.in_app_purchases.length > 0 && (
-            <div className="mt-4">
-              <h4 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">In-App Purchases</h4>
-              <ul className="space-y-1">
+            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+              <h3 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">In-App Purchases</h3>
+              <ul className="space-y-1.5 text-sm text-gray-600 dark:text-gray-300">
                 {app.in_app_purchases.slice(0, 5).map((iap, i) => (
-                  <li key={i} className="text-sm text-gray-600 dark:text-gray-300">
-                    {typeof iap === 'string' ? iap : iap.name}
-                  </li>
+                  <li key={i}>{typeof iap === 'string' ? iap : iap.name}</li>
                 ))}
                 {app.in_app_purchases.length > 5 && (
-                  <li className="text-sm text-gray-400">
-                    +{app.in_app_purchases.length - 5} more
-                  </li>
+                  <li className="text-xs text-gray-400">+{app.in_app_purchases.length - 5} more</li>
                 )}
               </ul>
             </div>
           )}
         </div>
       </div>
+
+      {/* ── Market Estimates ───────────────────────────────── */}
+      <MarketEstimatesCard appId={appId} app={app} />
+
+      {/* ── ASO Score — only for user's own apps ──────────── */}
+      {isMyApp && <ASOScoreCard appId={appId} />}
     </div>
   );
 }
