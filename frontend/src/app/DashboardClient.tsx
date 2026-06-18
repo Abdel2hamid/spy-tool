@@ -3,28 +3,34 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { AppShell, StatsCard } from '@/components';
-import { SimpleChart } from '@/components/Charts';
 import {
   getDashboardStats,
   getTrendingApps,
   getOpportunityOfDay,
   getDashboardKeywordHighlights,
+  getBlowingUpApps,
+  getTrendingKeywords,
+  getIdeas,
   DashboardStats,
   TrendingApp,
   OpportunityOfDayWrapper,
   DashboardKeywordHighlight,
+  BlowingUpApp,
+  TrendingKeywordItem,
+  AppIdea,
 } from '@/lib/api';
 import {
   AppWindow,
   Search,
   TrendingUp,
   Target,
-  BarChart3,
   RefreshCw,
   ArrowRight,
   Zap,
-  Star,
   TrendingDown,
+  Flame,
+  Lightbulb,
+  Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -105,9 +111,7 @@ function TrendingRow({ app, rank }: { app: TrendingApp; rank: number }) {
       href={`/apps/${app.id}`}
       className="group flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/60"
     >
-      <span className="flex h-5 w-5 items-center justify-center text-xs font-bold text-gray-400">
-        {rank}
-      </span>
+      <span className="flex h-5 w-5 items-center justify-center text-xs font-bold text-gray-400">{rank}</span>
       <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800">
         {app.icon_url ? (
           <img src={app.icon_url} alt="" className="h-full w-full object-cover" />
@@ -160,6 +164,110 @@ function KeywordRow({ kw, rank }: { kw: DashboardKeywordHighlight; rank: number 
   );
 }
 
+/* ── Blowing Up Row ──────────────────────────────────────────── */
+function BlowingUpRow({ app, rank }: { app: BlowingUpApp; rank: number }) {
+  const score = app.blowing_up_score ?? 0;
+  return (
+    <Link
+      href={`/apps/${app.id}`}
+      className="group flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/60"
+    >
+      <span className="flex h-5 w-5 items-center justify-center text-xs font-bold text-gray-400">{rank}</span>
+      <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800">
+        {app.icon_url ? (
+          <img src={app.icon_url} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <span className="text-sm font-bold text-gray-400">{(app.name || '?')[0]}</span>
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{app.name}</p>
+        <div className="flex items-center gap-2 text-[10px] text-gray-400">
+          {app.rank_change !== 0 && (
+            <span className={cn(app.rank_change < 0 ? 'text-emerald-500' : 'text-red-400')}>
+              {app.rank_change < 0 ? '+' : ''}{Math.abs(app.rank_change)} ranks
+            </span>
+          )}
+          {app.primary_category && <span>{app.primary_category}</span>}
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        {app.badges && app.badges.length > 0 && (
+          <span className="rounded bg-orange-50 px-1.5 py-0.5 text-[10px] font-medium text-orange-600 dark:bg-orange-950/30 dark:text-orange-400">
+            {app.badges[0]}
+          </span>
+        )}
+        <span className={cn(
+          'min-w-[2rem] text-right text-sm font-bold',
+          score > 70 ? 'text-orange-500' : score > 40 ? 'text-amber-500' : 'text-gray-400',
+        )}>
+          {score.toFixed(0)}
+        </span>
+      </div>
+    </Link>
+  );
+}
+
+/* ── Rising Keyword Row ──────────────────────────────────────── */
+function RisingKeywordRow({ kw, rank }: { kw: TrendingKeywordItem; rank: number }) {
+  const growth = kw.trend_growth ?? 0;
+  const opp = Math.round(kw.opportunity_score ?? 0);
+  const cls = kw.classification;
+  const clsColor = cls === 'easy' ? 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30 dark:text-emerald-400'
+    : cls === 'medium' ? 'text-amber-600 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-400'
+    : 'text-red-600 bg-red-50 dark:bg-red-950/30 dark:text-red-400';
+
+  return (
+    <Link
+      href="/keywords"
+      className="group flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/60"
+    >
+      <span className="flex h-5 w-5 items-center justify-center text-xs font-bold text-gray-400">{rank}</span>
+      <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-900 dark:text-white">{kw.term}</span>
+      <div className="flex items-center gap-2 text-xs">
+        <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium capitalize', clsColor)}>{cls}</span>
+        <span className={cn('font-medium', growth > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400')}>
+          {growth > 0 ? '+' : ''}{growth.toFixed(0)}%
+        </span>
+        <span className="min-w-[1.5rem] text-right font-semibold text-gray-600 dark:text-gray-300">{opp}</span>
+      </div>
+    </Link>
+  );
+}
+
+/* ── App Idea Row ────────────────────────────────────────────── */
+function IdeaRow({ idea, rank }: { idea: AppIdea; rank: number }) {
+  const score = idea.opportunity_score ?? 0;
+  const typeLabel = idea.pattern_type === 'feature_gap' ? 'Feature Gap'
+    : idea.pattern_type === 'weak_market' ? 'Weak Market'
+    : 'Keyword Gap';
+  const typeColor = idea.pattern_type === 'feature_gap' ? 'text-blue-600 bg-blue-50 dark:bg-blue-950/30 dark:text-blue-400'
+    : idea.pattern_type === 'weak_market' ? 'text-purple-600 bg-purple-50 dark:bg-purple-950/30 dark:text-purple-400'
+    : 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30 dark:text-emerald-400';
+
+  return (
+    <Link
+      href="/ideas"
+      className="group flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/60"
+    >
+      <span className="flex h-5 w-5 items-center justify-center text-xs font-bold text-gray-400">{rank}</span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{idea.idea_title}</p>
+        {idea.category && <p className="truncate text-[10px] text-gray-400">{idea.category}</p>}
+      </div>
+      <div className="flex items-center gap-2">
+        <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium', typeColor)}>{typeLabel}</span>
+        <span className={cn(
+          'min-w-[2rem] text-right text-sm font-bold',
+          score >= 70 ? 'text-emerald-600 dark:text-emerald-400' : score >= 40 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400',
+        )}>
+          {score.toFixed(0)}
+        </span>
+      </div>
+    </Link>
+  );
+}
+
 /* ── Section Card Wrapper ────────────────────────────────────── */
 function SectionCard({
   title,
@@ -171,7 +279,7 @@ function SectionCard({
   isEmpty,
 }: {
   title: string;
-  icon: typeof BarChart3;
+  icon: typeof TrendingUp;
   href: string;
   headerRight?: React.ReactNode;
   children: React.ReactNode;
@@ -202,9 +310,9 @@ function SectionCard({
 
 function EmptyBlock({ icon: Icon, text }: { icon: typeof Search; text: string }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
-      <Icon className="h-8 w-8 text-gray-300 dark:text-gray-600" />
-      <p className="text-sm text-gray-400">{text}</p>
+    <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+      <Icon className="h-7 w-7 text-gray-300 dark:text-gray-600" />
+      <p className="text-xs text-gray-400">{text}</p>
     </div>
   );
 }
@@ -215,11 +323,17 @@ export default function DashboardClient() {
   const [trendingApps, setTrendingApps] = useState<TrendingApp[]>([]);
   const [opportunity, setOpportunity] = useState<OpportunityOfDayWrapper | null>(null);
   const [keywords, setKeywords] = useState<DashboardKeywordHighlight[]>([]);
+  const [blowingUp, setBlowingUp] = useState<BlowingUpApp[]>([]);
+  const [risingKw, setRisingKw] = useState<TrendingKeywordItem[]>([]);
+  const [ideas, setIdeas] = useState<AppIdea[]>([]);
 
   const [loadingStats, setLoadingStats] = useState(true);
   const [loadingTrending, setLoadingTrending] = useState(true);
   const [loadingOpp, setLoadingOpp] = useState(true);
   const [loadingKw, setLoadingKw] = useState(true);
+  const [loadingBlowing, setLoadingBlowing] = useState(true);
+  const [loadingRising, setLoadingRising] = useState(true);
+  const [loadingIdeas, setLoadingIdeas] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const fetch_ = (setter: (v: boolean) => void, fn: () => Promise<unknown>) => {
@@ -231,9 +345,12 @@ export default function DashboardClient() {
     if (isRefresh) setRefreshing(true);
     Promise.all([
       fetch_(setLoadingStats, () => getDashboardStats().then(setStats)),
-      fetch_(setLoadingTrending, () => getTrendingApps(8).then(setTrendingApps)),
+      fetch_(setLoadingTrending, () => getTrendingApps(6).then(setTrendingApps)),
       fetch_(setLoadingOpp, () => getOpportunityOfDay().then(setOpportunity)),
       fetch_(setLoadingKw, () => getDashboardKeywordHighlights().then(setKeywords)),
+      fetch_(setLoadingBlowing, () => getBlowingUpApps({ limit: 5 }).then((r) => setBlowingUp(r.items || []))),
+      fetch_(setLoadingRising, () => getTrendingKeywords(5).then((r) => setRisingKw(r.keywords || []))),
+      fetch_(setLoadingIdeas, () => getIdeas({ limit: 4, sort_by: 'opportunity_score', sort_order: 'desc' }).then((r) => setIdeas(r.ideas || []))),
     ]).finally(() => { if (isRefresh) setRefreshing(false); });
   }
 
@@ -279,38 +396,27 @@ export default function DashboardClient() {
         {/* ── Opportunity Banner ──────────────────────────────── */}
         {loadingOpp ? <Skeleton className="h-20" /> : <OpportunityBanner opp={opportunity} />}
 
-        {/* ── Two-Column: Trending + Keywords ─────────────────── */}
+        {/* ── Row 1: Trending Apps + Blowing Up ───────────────── */}
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-          {/* Trending Apps */}
-          {loadingTrending ? (
-            <Skeleton className="h-96" />
-          ) : (
-            <SectionCard
-              title="Trending Apps"
-              icon={TrendingUp}
-              href="/trending"
-              isEmpty={trendingApps.length === 0}
-              emptyState={<EmptyBlock icon={TrendingUp} text="No trending data yet" />}
-              headerRight={
-                <div className="hidden items-center gap-4 text-[10px] font-semibold uppercase text-gray-400 sm:flex">
-                  <span>Rank</span>
-                  <span>Momentum</span>
-                  <span>Score</span>
-                </div>
-              }
-            >
+          {loadingTrending ? <Skeleton className="h-80" /> : (
+            <SectionCard title="Trending Apps" icon={TrendingUp} href="/trending" isEmpty={trendingApps.length === 0} emptyState={<EmptyBlock icon={TrendingUp} text="No trending data yet" />}>
               <div className="divide-y divide-gray-50 dark:divide-gray-800/50">
-                {trendingApps.slice(0, 6).map((app, i) => (
-                  <TrendingRow key={app.id} app={app} rank={i + 1} />
-                ))}
+                {trendingApps.slice(0, 5).map((app, i) => <TrendingRow key={app.id} app={app} rank={i + 1} />)}
               </div>
             </SectionCard>
           )}
+          {loadingBlowing ? <Skeleton className="h-80" /> : (
+            <SectionCard title="Blowing Up" icon={Flame} href="/blowing-up" isEmpty={blowingUp.length === 0} emptyState={<EmptyBlock icon={Flame} text="No momentum data yet" />}>
+              <div className="divide-y divide-gray-50 dark:divide-gray-800/50">
+                {blowingUp.slice(0, 5).map((app, i) => <BlowingUpRow key={app.id} app={app} rank={i + 1} />)}
+              </div>
+            </SectionCard>
+          )}
+        </div>
 
-          {/* Top Keywords */}
-          {loadingKw ? (
-            <Skeleton className="h-96" />
-          ) : (
+        {/* ── Row 2: Top Keywords + Rising Keywords ───────────── */}
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+          {loadingKw ? <Skeleton className="h-72" /> : (
             <SectionCard
               title="Top Keywords"
               icon={Search}
@@ -326,36 +432,26 @@ export default function DashboardClient() {
               }
             >
               <div className="divide-y divide-gray-50 dark:divide-gray-800/50">
-                {keywords.slice(0, 8).map((kw, i) => (
-                  <KeywordRow key={kw.term} kw={kw} rank={i + 1} />
-                ))}
+                {keywords.slice(0, 5).map((kw, i) => <KeywordRow key={kw.term} kw={kw} rank={i + 1} />)}
+              </div>
+            </SectionCard>
+          )}
+          {loadingRising ? <Skeleton className="h-72" /> : (
+            <SectionCard title="Rising Keywords" icon={Sparkles} href="/keywords" isEmpty={risingKw.length === 0} emptyState={<EmptyBlock icon={Sparkles} text="No rising keywords yet" />}>
+              <div className="divide-y divide-gray-50 dark:divide-gray-800/50">
+                {risingKw.slice(0, 5).map((kw, i) => <RisingKeywordRow key={kw.id} kw={kw} rank={i + 1} />)}
               </div>
             </SectionCard>
           )}
         </div>
 
-        {/* ── Opportunity Chart (full width, compact) ─────────── */}
-        {hasKw && (
-          <div className="overflow-hidden rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
-                <BarChart3 className="h-4 w-4 text-indigo-500" />
-                Keyword Opportunity Scores
-              </h3>
+        {/* ── Row 3: App Ideas (full width, compact) ──────────── */}
+        {loadingIdeas ? <Skeleton className="h-52" /> : ideas.length > 0 && (
+          <SectionCard title="App Ideas" icon={Lightbulb} href="/ideas" isEmpty={ideas.length === 0} emptyState={<EmptyBlock icon={Lightbulb} text="No ideas generated yet" />}>
+            <div className="divide-y divide-gray-50 dark:divide-gray-800/50">
+              {ideas.slice(0, 4).map((idea, i) => <IdeaRow key={idea.id} idea={idea} rank={i + 1} />)}
             </div>
-            <SimpleChart
-              data={keywords.map((kw) => ({
-                name: kw.term?.length > 12 ? kw.term.slice(0, 12) + '…' : kw.term || 'N/A',
-                opportunity: kw.opportunity_score || 0,
-                volume: kw.volume_score || kw.search_volume || 0,
-              }))}
-              dataKey="opportunity"
-              xAxisKey="name"
-              type="bar"
-              color="#8b5cf6"
-              height={220}
-            />
-          </div>
+          </SectionCard>
         )}
       </div>
     </AppShell>
