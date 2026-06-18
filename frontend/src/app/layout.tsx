@@ -6,8 +6,8 @@ import { Providers } from '@/components/Providers';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'AppStore Spy AI',
-  description: 'AI-powered App Store intelligence and opportunity detection',
+  title: 'RankSpy',
+  description: 'AI-powered App Store intelligence — discover opportunities, track rankings, and spy on competitors.',
 };
 
 export default function RootLayout({

@@ -541,7 +541,7 @@ async def _initial_scrape_background():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting AppStore Spy AI...")
+    logger.info("Starting RankSpy...")
 
     # Ensure all DB tables exist
     Base.metadata.create_all(bind=engine)
@@ -564,7 +564,7 @@ async def lifespan(app: FastAPI):
     # Graceful shutdown: don't wait for running jobs to finish
     scheduler.shutdown(wait=False)
     logger.info("Scheduler stopped")
-    logger.info("Shutting down AppStore Spy AI...")
+    logger.info("Shutting down RankSpy...")
 
 
 app = FastAPI(

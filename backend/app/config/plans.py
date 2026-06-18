@@ -1,5 +1,5 @@
 """
-Central plan definitions for AppStore Spy.
+Central plan definitions for RankSpy.
 
 Plans:
   free       - unauthenticated / downgraded users

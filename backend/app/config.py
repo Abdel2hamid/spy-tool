@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     postgres_password: str = ""
     postgres_db: str = "appstore_spy"
 
-    app_name: str = "AppStore Spy AI"
+    app_name: str = "RankSpy"
     debug: bool = False
 
     # ── Test-phase app cap ────────────────────────────────────────────────

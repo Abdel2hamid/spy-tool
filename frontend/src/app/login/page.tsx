@@ -51,7 +51,7 @@ export default function LoginPage() {
       <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-indigo-600 to-violet-700 flex-col justify-between p-12 text-white">
         <div className="flex items-center gap-2">
           <Zap className="w-7 h-7" />
-          <span className="text-xl font-bold">AppStore Spy</span>
+          <span className="text-xl font-bold">RankSpy</span>
         </div>
         <div>
           <h1 className="text-4xl font-bold leading-tight mb-4">
@@ -61,7 +61,7 @@ export default function LoginPage() {
             AI-powered intelligence for indie developers and growth teams.
           </p>
         </div>
-        <p className="text-indigo-300 text-sm">© {new Date().getFullYear()} AppStore Spy AI</p>
+        <p className="text-indigo-300 text-sm">© {new Date().getFullYear()} RankSpy</p>
       </div>
 
       {/* Right panel — form */}
@@ -70,7 +70,7 @@ export default function LoginPage() {
           {/* Logo (mobile) */}
           <div className="flex items-center gap-2 mb-8 lg:hidden">
             <Zap className="w-6 h-6 text-indigo-600" />
-            <span className="text-lg font-bold text-gray-900 dark:text-white">AppStore Spy</span>
+            <span className="text-lg font-bold text-gray-900 dark:text-white">RankSpy</span>
           </div>
 
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">Welcome back</h2>

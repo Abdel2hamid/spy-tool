@@ -272,13 +272,13 @@ const STATS = [
 
 const TESTIMONIALS = [
   {
-    quote: "AppStore Spy's AI idea generator found me a niche nobody was targeting. My app hit #3 in its category within 2 weeks.",
+    quote: "RankSpy's AI idea generator found me a niche nobody was targeting. My app hit #3 in its category within 2 weeks.",
     name: 'Sarah K.',
     role: 'Indie Developer',
     avatar: 'S',
   },
   {
-    quote: "We replaced Sensor Tower with AppStore Spy. The keyword intelligence is on par, the AI insights are unique, and we save $4,000/month.",
+    quote: "We replaced Sensor Tower with RankSpy. The keyword intelligence is on par, the AI insights are unique, and we save $4,000/month.",
     name: 'Marcus T.',
     role: 'ASO Lead at Appify',
     avatar: 'M',
@@ -297,7 +297,7 @@ const FAQS = [
     a: 'Sign up with just your email and password — no credit card required. You get full access to all Pro features for 14 days. If you love it, pick a plan. If not, you can continue on the free tier.',
   },
   {
-    q: 'What makes AppStore Spy different from Sensor Tower or data.ai?',
+    q: 'What makes RankSpy different from Sensor Tower or data.ai?',
     a: "We're the first ASO tool with AI-powered intelligence. While others give you raw data, we generate actionable app ideas, detect niches automatically, and analyze reviews with LLM intelligence. Plus, we're 10-50x more affordable.",
   },
   {
@@ -357,7 +357,7 @@ function Navbar() {
             <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 shadow-md shadow-indigo-500/20">
               <Zap className="w-4 h-4 text-white" />
             </div>
-            <span className="text-lg font-bold text-gray-900 dark:text-white">AppStore Spy</span>
+            <span className="text-lg font-bold text-gray-900 dark:text-white">RankSpy</span>
           </div>
 
           <div className="hidden md:flex items-center gap-8">
@@ -599,7 +599,7 @@ function CompareSection() {
         <AnimateIn className="text-center max-w-2xl mx-auto mb-12">
           <span className="text-sm font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">Compare</span>
           <h2 className="mt-3 text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white">
-            Why Teams Switch to AppStore Spy
+            Why Teams Switch to RankSpy
           </h2>
           <p className="mt-4 text-lg text-gray-600 dark:text-gray-400">
             More features, AI-powered intelligence, and 10-50x more affordable.
@@ -613,7 +613,7 @@ function CompareSection() {
                 <th className="px-6 py-4 text-left text-sm font-semibold text-gray-900 dark:text-white">Feature</th>
                 <th className="px-6 py-4 text-center text-sm font-semibold text-indigo-600 dark:text-indigo-400">
                   <div className="flex items-center justify-center gap-1.5">
-                    <Zap className="w-4 h-4" /> AppStore Spy
+                    <Zap className="w-4 h-4" /> RankSpy
                   </div>
                 </th>
                 <th className="px-6 py-4 text-center text-sm font-semibold text-gray-500 dark:text-gray-400">Others</th>
@@ -888,7 +888,7 @@ function Footer() {
               <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 shadow-md shadow-indigo-500/20">
                 <Zap className="w-4 h-4 text-white" />
               </div>
-              <span className="text-lg font-bold text-gray-900 dark:text-white">AppStore Spy</span>
+              <span className="text-lg font-bold text-gray-900 dark:text-white">RankSpy</span>
             </div>
             <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed max-w-sm mb-5">
               AI-powered App Store intelligence platform. Discover opportunities, track competitors, and build winning apps.
@@ -919,10 +919,10 @@ function Footer() {
             {
               title: 'Support',
               links: [
-                { label: 'Contact Us', href: 'mailto:support@appstorespy.ai' },
-                { label: 'Help Center', href: 'mailto:support@appstorespy.ai' },
-                { label: 'Feature Requests', href: 'mailto:support@appstorespy.ai' },
-                { label: 'Bug Reports', href: 'mailto:support@appstorespy.ai' },
+                { label: 'Contact Us', href: 'mailto:support@rankspy.app' },
+                { label: 'Help Center', href: 'mailto:support@rankspy.app' },
+                { label: 'Feature Requests', href: 'mailto:support@rankspy.app' },
+                { label: 'Bug Reports', href: 'mailto:support@rankspy.app' },
               ],
             },
             {
@@ -952,10 +952,10 @@ function Footer() {
 
         <div className="mt-12 pt-8 border-t border-gray-200 dark:border-gray-800 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-sm text-gray-500 dark:text-gray-500">
-            &copy; {new Date().getFullYear()} AppStore Spy AI. All rights reserved.
+            &copy; {new Date().getFullYear()} RankSpy. All rights reserved.
           </p>
           <div className="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-500">
-            <a href="mailto:support@appstorespy.ai" className="hover:text-gray-700 dark:hover:text-gray-300 transition-colors">support@appstorespy.ai</a>
+            <a href="mailto:support@rankspy.app" className="hover:text-gray-700 dark:hover:text-gray-300 transition-colors">support@rankspy.app</a>
           </div>
         </div>
       </div>

@@ -104,7 +104,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           </div>
           <div>
             <span className="block text-sm font-bold text-gray-900 dark:text-white leading-tight">
-              AppStore Spy
+              RankSpy
             </span>
             <span className="block text-[10px] font-medium text-red-500 dark:text-red-400 uppercase tracking-wider leading-tight">
               Admin Console
