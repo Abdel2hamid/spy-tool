@@ -602,8 +602,9 @@ def get_blowing_up_apps(
                 total=0,
             )
 
+        # Fetch extra rows to compensate for brand filtering
         rows, total = svc.get_blowing_up_apps(
-            limit=limit,
+            limit=limit * 4,
             skip=skip,
             sort_by=sort_by,
             sort_order=sort_order,
@@ -623,6 +624,8 @@ def get_blowing_up_apps(
 
         items: list[AppBlowingUpItem] = []
         for score, app in rows:
+            if _is_big_brand_app(app):
+                continue
             items.append(AppBlowingUpItem(
                 id=app.id,
                 app_id=app.app_id,
@@ -650,6 +653,8 @@ def get_blowing_up_apps(
                 why_flagged=score.why_flagged or [],
                 computed_at=score.computed_at,
             ))
+            if len(items) >= limit:
+                break
 
         scores = [item.blowing_up_score for item in items]
         velocities = [item.rank_velocity for item in items if item.rank_velocity > 0]
@@ -660,8 +665,8 @@ def get_blowing_up_apps(
         return BlowingUpResponse(
             status="success",
             items=items,
-            total=total,
-            exploding_count=total,
+            total=len(items),
+            exploding_count=len(items),
             top_score=round(max(scores), 1) if scores else None,
             avg_rank_velocity=round(sum(velocities) / len(velocities), 1) if velocities else None,
         )
@@ -1661,10 +1666,19 @@ def get_trending_keywords(
     Returns keywords with the strongest rising trend signals (Google Trends velocity + score).
     Used by Trending, Opportunities, and Niche Radar pages.
     """
-    # Keywords with real trend data first; fall back to legacy trend field
+    # Only return keywords with actual trend movement so this list
+    # doesn't duplicate the "top keywords by opportunity" widget.
+    from sqlalchemy import or_ as _or
     rows = (
         db.query(models.Keyword)
-        .filter(models.Keyword.opportunity_score > 0)
+        .filter(
+            models.Keyword.opportunity_score > 0,
+            _or(
+                models.Keyword.trend_velocity > 0,
+                models.Keyword.trend_growth > 0,
+                models.Keyword.trend_score > 0,
+            ),
+        )
         .order_by(
             models.Keyword.trend_velocity.desc().nullslast(),
             models.Keyword.trend_growth.desc().nullslast(),

@@ -415,7 +415,7 @@ export default function DashboardClient() {
         </div>
 
         {/* ── Row 2: Top Keywords + Rising Keywords ───────────── */}
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <div className={cn('grid grid-cols-1 gap-5', risingKw.length > 0 && 'lg:grid-cols-2')}>
           {loadingKw ? <Skeleton className="h-72" /> : (
             <SectionCard
               title="Top Keywords"
@@ -432,12 +432,12 @@ export default function DashboardClient() {
               }
             >
               <div className="divide-y divide-gray-50 dark:divide-gray-800/50">
-                {keywords.slice(0, 5).map((kw, i) => <KeywordRow key={kw.term} kw={kw} rank={i + 1} />)}
+                {keywords.slice(0, risingKw.length > 0 ? 5 : 8).map((kw, i) => <KeywordRow key={kw.term} kw={kw} rank={i + 1} />)}
               </div>
             </SectionCard>
           )}
-          {loadingRising ? <Skeleton className="h-72" /> : (
-            <SectionCard title="Rising Keywords" icon={Sparkles} href="/keywords" isEmpty={risingKw.length === 0} emptyState={<EmptyBlock icon={Sparkles} text="No rising keywords yet" />}>
+          {!loadingRising && risingKw.length > 0 && (
+            <SectionCard title="Rising Keywords" icon={Sparkles} href="/keywords" isEmpty={false} emptyState={null}>
               <div className="divide-y divide-gray-50 dark:divide-gray-800/50">
                 {risingKw.slice(0, 5).map((kw, i) => <RisingKeywordRow key={kw.id} kw={kw} rank={i + 1} />)}
               </div>
