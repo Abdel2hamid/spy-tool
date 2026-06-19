@@ -1905,6 +1905,7 @@ export interface UserInfo {
   email: string;
   full_name: string | null;
   is_superadmin: boolean;
+  email_verified: boolean;
   created_at: string;
 }
 
@@ -1914,6 +1915,7 @@ export interface AuthResponse {
   user: UserInfo;
   workspace: WorkspaceInfo;
   checkout_url?: string | null;
+  requires_email_verification?: boolean;
 }
 
 export interface MeResponse {
@@ -1937,6 +1939,34 @@ export async function authRegister(
     throw new Error(err.detail ?? `Registration failed (${res.status})`);
   }
   return res.json();
+}
+
+export async function authVerifyEmail(token: string): Promise<{ ok: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/auth/verify-email?token=${encodeURIComponent(token)}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Verification failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function authResendVerification(email: string): Promise<{ ok: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/auth/resend-verification`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Resend failed (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function authCreateCheckoutAfterVerify(authToken: string): Promise<{ checkout_url: string | null }> {
+  return fetchApiAuth<{ checkout_url: string | null }>('/auth/create-checkout-after-verify', authToken, {
+    method: 'POST',
+  });
 }
 
 export async function createStripeCheckout(token: string, planCode: string): Promise<{ checkout_url: string }> {

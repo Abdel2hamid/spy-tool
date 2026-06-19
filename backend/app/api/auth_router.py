@@ -1,8 +1,11 @@
 """
 Auth endpoints:
-  POST /auth/register   → create user + workspace + trial
-  POST /auth/login      → verify credentials, return token
-  GET  /auth/me         → return current user + workspace info
+  POST /auth/register            → create user + workspace + trial
+  POST /auth/login               → verify credentials, return token
+  GET  /auth/me                  → return current user + workspace info
+  GET  /auth/verify-email        → verify email from link
+  POST /auth/resend-verification → resend verification email
+  POST /auth/create-checkout-after-verify → create Stripe checkout after email verified
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from app.database import get_db
 from app.utils.rate_limiter import rate_limit
 from app.services.auth_service import (
     EmailAlreadyRegistered,
+    EmailNotVerified,
     InvalidCredentials,
     login_user,
     register_user,
@@ -114,11 +118,16 @@ class WorkspaceInfo(BaseModel):
     subscription: Optional[SubscriptionInfo]
 
 
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
+
 class UserInfo(BaseModel):
     id: int
     email: str
     full_name: Optional[str]
     is_superadmin: bool = False
+    email_verified: bool = False
     created_at: datetime
 
 
@@ -128,6 +137,7 @@ class AuthResponse(BaseModel):
     user: UserInfo
     workspace: WorkspaceInfo
     checkout_url: Optional[str] = None
+    requires_email_verification: bool = False
 
 
 class MeResponse(BaseModel):
@@ -181,6 +191,7 @@ def _build_auth_response(user, workspace, membership, subscription, token: str) 
             email=user.email,
             full_name=user.full_name,
             is_superadmin=user.is_superadmin,
+            email_verified=user.email_verified,
             created_at=user.created_at,
         ),
         workspace=WorkspaceInfo(
@@ -207,17 +218,16 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     """
     Create a new user account.
 
-    Side effects:
-    - Creates a personal Workspace
-    - Assigns owner role
-    - Creates Stripe customer + checkout session (if Stripe configured)
-    - Subscription starts as pending_payment until card is collected
+    Flow:
+    1. Create user + workspace + subscription
+    2. If Resend configured → send verification email, return requires_email_verification=True
+    3. If Resend not configured → create Stripe checkout immediately
 
-    If email already exists with pending_payment subscription (Stripe failed
-    on a previous attempt), allow retry by generating a new checkout session.
+    If email already exists but never completed verification/payment, allow retry.
     """
-    from app.models.models import Membership, Subscription, User
-    from app.services.stripe_service import is_configured
+    from app.models.models import Membership, Subscription, User, Workspace
+    from app.services.stripe_service import is_configured as stripe_configured
+    from app.services.email_service import is_configured as email_configured, send_verification_email
     from app.services.auth_service import verify_password, create_access_token
 
     is_retry = False
@@ -230,25 +240,22 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
             plan_code=body.plan_code,
         )
     except EmailAlreadyRegistered:
-        # Check if this is a retry — user exists but never completed payment
+        # Check if this is a retry — user exists but never completed signup
         existing_user = db.query(User).filter(User.email == body.email.lower().strip()).first()
         if not existing_user or not verify_password(body.password, existing_user.password_hash):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Unable to create account. Please try a different email or sign in.",
             )
-        # Find their workspace + subscription
         mem = db.query(Membership).filter(Membership.user_id == existing_user.id).first()
         if not mem:
             raise HTTPException(status.HTTP_409_CONFLICT, "Account exists. Please sign in.")
         sub = db.query(Subscription).filter(Subscription.workspace_id == mem.workspace_id).first()
-        # Only allow retry if subscription is pending_payment (never completed checkout)
         if not sub or sub.status not in ("pending_payment", "trialing"):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Unable to create account. Please try a different email or sign in.",
             )
-        from app.models.models import Workspace
         user = existing_user
         workspace = db.query(Workspace).filter(Workspace.id == mem.workspace_id).first()
         token = create_access_token(user.id, workspace.id)
@@ -261,14 +268,20 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
         Subscription.workspace_id == workspace.id
     ).first()
 
-    # Create Stripe customer + checkout session
+    # Step 1: Email verification (if Resend configured and email not yet verified)
+    if email_configured() and not user.email_verified:
+        send_verification_email(user.email, user.id, user.full_name)
+        resp = _build_auth_response(user, workspace, membership, subscription, token)
+        resp.requires_email_verification = True
+        return resp
+
+    # Step 2: Stripe checkout (if email already verified or Resend not configured)
     checkout_url = None
-    if is_configured() and subscription:
+    if stripe_configured() and subscription:
         try:
             from app.services import stripe_service
             from app.config import settings as _s
 
-            # Reuse existing Stripe customer or create new one
             if not subscription.stripe_customer_id:
                 customer = stripe_service.create_customer(
                     email=user.email, name=user.full_name,
@@ -315,6 +328,11 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
         )
+    except EmailNotVerified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Please verify your email address before signing in. Check your inbox for the verification link.",
+        )
 
     from app.services.user_activity import log_user_action
     log_user_action(db, user.id, "auth.login")
@@ -330,6 +348,7 @@ def get_me(ctx: AuthContext = Depends(get_auth_context)):
             email=ctx.user.email,
             full_name=ctx.user.full_name,
             is_superadmin=ctx.user.is_superadmin,
+            email_verified=ctx.user.email_verified,
             created_at=ctx.user.created_at,
         ),
         workspace=WorkspaceInfo(
@@ -364,6 +383,7 @@ def update_profile(
             email=ctx.user.email,
             full_name=ctx.user.full_name,
             is_superadmin=ctx.user.is_superadmin,
+            email_verified=ctx.user.email_verified,
             created_at=ctx.user.created_at,
         ),
         workspace=WorkspaceInfo(
@@ -396,3 +416,100 @@ def change_password(
     ctx.user.password_hash = hash_password(body.new_password)
     db.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Email verification endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/verify-email")
+def verify_email(token: str, db: Session = Depends(get_db)):
+    """Verify email address from the link sent during registration."""
+    from app.services.email_service import decode_email_verification_token
+    from app.models.models import User
+
+    payload = decode_email_verification_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification link.",
+        )
+
+    user_id = int(payload["sub"])
+    email = payload["email"]
+
+    user = db.query(User).filter(User.id == user_id, User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    if not user.email_verified:
+        user.email_verified = True
+        db.commit()
+
+    return {"ok": True, "message": "Email verified successfully."}
+
+
+@router.post(
+    "/resend-verification",
+    dependencies=[Depends(rate_limit(2, 120))],
+)
+def resend_verification(body: ResendVerificationRequest, db: Session = Depends(get_db)):
+    """Resend the email verification link."""
+    from app.services.email_service import send_verification_email
+    from app.models.models import User
+
+    user = db.query(User).filter(User.email == body.email.lower().strip()).first()
+    if user and not user.email_verified:
+        send_verification_email(user.email, user.id, user.full_name)
+
+    # Always return success to prevent email enumeration
+    return {"ok": True, "message": "If the email is registered, a new verification link has been sent."}
+
+
+@router.post("/create-checkout-after-verify")
+def create_checkout_after_verify(
+    ctx: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_db),
+):
+    """Create a Stripe checkout session after email has been verified."""
+    if not ctx.user.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Please verify your email first.",
+        )
+
+    from app.services.stripe_service import is_configured
+    if not is_configured():
+        return {"checkout_url": None}
+
+    subscription = ctx.subscription
+    if not subscription:
+        raise HTTPException(status_code=400, detail="No subscription found.")
+
+    from app.services import stripe_service
+    from app.config import settings as _s
+
+    if not subscription.stripe_customer_id:
+        customer = stripe_service.create_customer(
+            email=ctx.user.email, name=ctx.user.full_name,
+        )
+        subscription.stripe_customer_id = customer.id
+
+    subscription.status = "pending_payment"
+    db.commit()
+
+    try:
+        session = stripe_service.create_checkout_session(
+            customer_id=subscription.stripe_customer_id,
+            plan_code=subscription.plan_code,
+            success_url=f"{_s.frontend_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{_s.frontend_url}/signup",
+        )
+        return {"checkout_url": session.url}
+    except Exception as exc:
+        import logging as _log
+        _log.getLogger(__name__).error("Stripe checkout failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Payment setup failed: {type(exc).__name__}: {exc}",
+        )

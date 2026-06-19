@@ -201,6 +201,10 @@ class InvalidCredentials(Exception):
     pass
 
 
+class EmailNotVerified(Exception):
+    pass
+
+
 def login_user(
     db: Session, email: str, password: str
 ) -> tuple[User, Workspace, Membership, "Subscription | None", str]:
@@ -222,6 +226,9 @@ def login_user(
     pw_ok = verify_password(password, user.password_hash)
     if not pw_ok:
         raise InvalidCredentials("Invalid email or password")
+
+    if not user.email_verified:
+        raise EmailNotVerified("Please verify your email before signing in.")
 
     # Prefer owner workspace; fall back to first membership
     membership = (

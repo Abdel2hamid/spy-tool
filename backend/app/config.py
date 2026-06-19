@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     stripe_price_enterprise: str = "" # Stripe Price ID for Enterprise ($199/mo)
     frontend_url: str = "http://localhost:3000"
 
+    # ── Email verification (Resend) ────────────────────────────────────
+    resend_api_key: str = ""
+    resend_from_email: str = "RankSpy <noreply@rankspy.app>"
+    email_verification_token_expire_minutes: int = 60  # 1 hour
+
     # ── Admin API protection ──────────────────────────────────────────────
     # Set ADMIN_TOKEN env var. Admin endpoints require X-Admin-Token header.
     admin_token: str = ""
@@ -100,4 +105,10 @@ if not settings.stripe_webhook_secret and _is_production:
     _logger.warning(
         "STRIPE_WEBHOOK_SECRET not set! Stripe webhooks will reject all events. "
         "Set STRIPE_WEBHOOK_SECRET env var."
+    )
+
+if not settings.resend_api_key and _is_production:
+    _logger.warning(
+        "RESEND_API_KEY not set! Email verification will be skipped. "
+        "Set RESEND_API_KEY env var."
     )

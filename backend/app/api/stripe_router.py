@@ -54,23 +54,6 @@ def get_stripe_config():
     return StripeConfigResponse(publishable_key=settings.stripe_publishable_key)
 
 
-@router.get("/debug-config")
-def debug_stripe_config():
-    """Temporary debug endpoint — check if Stripe env vars are loaded."""
-    return {
-        "secret_key_set": bool(settings.stripe_secret_key),
-        "secret_key_prefix": settings.stripe_secret_key[:8] + "..." if settings.stripe_secret_key else "",
-        "publishable_key_set": bool(settings.stripe_publishable_key),
-        "publishable_key_prefix": settings.stripe_publishable_key[:8] + "..." if settings.stripe_publishable_key else "",
-        "webhook_secret_set": bool(settings.stripe_webhook_secret),
-        "price_starter_set": bool(settings.stripe_price_starter),
-        "price_starter": settings.stripe_price_starter[:10] + "..." if settings.stripe_price_starter else "",
-        "price_pro_set": bool(settings.stripe_price_pro),
-        "price_enterprise_set": bool(settings.stripe_price_enterprise),
-        "frontend_url": settings.frontend_url,
-        "is_configured": stripe_service.is_configured(),
-    }
-
 
 @router.post("/create-checkout", response_model=CheckoutResponse)
 def create_checkout(

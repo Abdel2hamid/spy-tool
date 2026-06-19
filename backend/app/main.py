@@ -548,6 +548,10 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_alert_event_workspace ON alert_events (workspace_id)",
     "CREATE INDEX IF NOT EXISTS idx_alert_event_alert ON alert_events (alert_id)",
     "CREATE INDEX IF NOT EXISTS idx_alert_event_read ON alert_events (workspace_id, is_read)",
+    # Email verification
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE",
+    # Mark all existing users as verified (they signed up before this feature)
+    "UPDATE users SET email_verified = TRUE WHERE email_verified = FALSE AND created_at < NOW() - INTERVAL '1 minute'",
 ]
 
 
@@ -639,7 +643,6 @@ _PUBLIC_PREFIXES = (
     "/api/v1/auth/",           # login, register, me
     "/api/v1/stripe/webhook",  # Stripe webhook (has its own sig verification)
     "/api/v1/stripe/config",   # public publishable key
-    "/api/v1/stripe/debug-config",  # temporary debug endpoint
     "/api/v1/admin-console/announcements/active",  # public announcements
 )
 

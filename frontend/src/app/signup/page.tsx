@@ -137,12 +137,16 @@ function SignupContent() {
 
     setSubmitting(true);
     try {
-      const checkoutUrl = await register(email, password, fullName || undefined, selectedPlan || 'starter');
+      const result = await register(email, password, fullName || undefined, selectedPlan || 'starter');
 
-      if (checkoutUrl) {
+      if (result === '__VERIFY_EMAIL__') {
+        router.push('/verify-email');
+        return;
+      }
+      if (result) {
         // Redirect to Stripe Checkout for payment collection
-        window.location.href = checkoutUrl;
-        return; // prevent any further state updates
+        window.location.href = result;
+        return;
       }
       // No Stripe configured — go to dashboard
       router.replace('/');

@@ -37,6 +37,7 @@ export interface UserInfo {
   email: string;
   full_name: string | null;
   is_superadmin: boolean;
+  email_verified: boolean;
   created_at: string;
 }
 
@@ -105,9 +106,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const register = useCallback(async (email: string, password: string, fullName?: string, planCode?: string): Promise<string | null> => {
     const data = await authRegister(email, password, fullName, planCode);
+    if (data.requires_email_verification) {
+      // Save token + email for the verify-email page, but don't set auth state
+      localStorage.setItem(TOKEN_KEY, data.access_token);
+      localStorage.setItem('pending_verification_email', email);
+      return '__VERIFY_EMAIL__';
+    }
     if (data.checkout_url) {
       // Only save token — don't update React state so isAuthenticated stays false
-      // and the signup page doesn't redirect to "/" before Stripe opens
       localStorage.setItem(TOKEN_KEY, data.access_token);
       return data.checkout_url;
     }
