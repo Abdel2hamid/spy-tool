@@ -8,8 +8,8 @@ logger = logging.getLogger(__name__)
 
 engine = create_engine(
     settings.database_url.replace("+asyncpg", ""),
-    pool_size=10,          # persistent connections (was 5 — too low for 32 jobs + API)
-    max_overflow=20,       # burst capacity (total max = 30)
+    pool_size=20,          # persistent connections (was 10 — needs headroom for 32 jobs + API)
+    max_overflow=30,       # burst capacity (total max = 50)
     pool_timeout=30,       # wait up to 30s for a connection
     pool_recycle=1800,     # recycle connections every 30min (Railway closes idle)
     pool_pre_ping=True,    # verify connection is alive before use

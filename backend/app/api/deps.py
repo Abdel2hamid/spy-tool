@@ -24,6 +24,8 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from sqlalchemy import and_
+
 from app.database import get_db
 from app.models.models import Membership, Subscription, User, Workspace
 from app.services.auth_service import decode_access_token
@@ -88,26 +90,22 @@ def get_auth_context(
     user_id = int(payload.get("sub", 0))
     workspace_id = int(payload.get("workspace_id", 0))
 
-    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
-    if not user:
-        raise _UNAUTHORIZED
-
-    workspace = db.query(Workspace).filter(Workspace.id == workspace_id).first()
-    if not workspace:
-        raise _UNAUTHORIZED
-
-    membership = (
-        db.query(Membership)
-        .filter(Membership.user_id == user_id, Membership.workspace_id == workspace_id)
+    # Single JOIN query instead of 4 separate queries
+    row = (
+        db.query(User, Workspace, Membership, Subscription)
+        .join(Membership, and_(
+            Membership.user_id == User.id,
+            Membership.workspace_id == workspace_id,
+        ))
+        .join(Workspace, Workspace.id == workspace_id)
+        .outerjoin(Subscription, Subscription.workspace_id == workspace_id)
+        .filter(User.id == user_id, User.is_active == True)
         .first()
     )
-    if not membership:
+    if not row:
         raise _UNAUTHORIZED
 
-    subscription = (
-        db.query(Subscription).filter(Subscription.workspace_id == workspace_id).first()
-    )
-
+    user, workspace, membership, subscription = row
     return AuthContext(
         user=user,
         workspace=workspace,

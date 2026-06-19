@@ -134,24 +134,32 @@ _DASHBOARD_CACHE_TTL = 300  # seconds (5 min — reduces repeated COUNT(*) on la
 @router.get("/dashboard/stats", response_model=DashboardStatsResponse)
 def get_dashboard_stats(db: Session = Depends(get_db), _user=Depends(get_current_user)):
     import time
+    from sqlalchemy import text as sa_text
     now = time.monotonic()
     cached = _DASHBOARD_CACHE.get("stats")
     if cached and now - cached["ts"] < _DASHBOARD_CACHE_TTL:
         return cached["data"]
 
-    total_apps = db.query(func.count(models.App.id)).scalar() or 0
-    total_keywords = db.query(func.count(models.Keyword.id)).scalar() or 0
+    now_dt = datetime.utcnow()
+    d30 = now_dt - timedelta(days=30)
+    d90 = now_dt - timedelta(days=90)
 
-    # Trending: prefer precomputed scores (populated by trending_compute job).
-    # Falls back to ranking velocity if scores table is empty.
-    trending_count = (
-        db.query(func.count(models.AppTrendingScore.app_id))
-        .filter(models.AppTrendingScore.trend_score > 0)
-        .scalar() or 0
-    )
+    # Single round-trip: PostgreSQL executes sub-selects concurrently
+    row = db.execute(sa_text("""
+        SELECT
+            (SELECT count(*) FROM apps) AS total_apps,
+            (SELECT count(*) FROM keywords) AS total_keywords,
+            (SELECT count(*) FROM app_trending_scores WHERE trend_score > 0) AS trending,
+            (SELECT count(*) FROM opportunities) AS legacy_opps,
+            (SELECT count(*) FROM daily_opportunities) AS daily_opps,
+            (SELECT count(*) FROM weekly_opportunities) AS weekly_opps,
+            (SELECT count(*) FROM apps WHERE release_date >= :d30) AS new_30d,
+            (SELECT count(*) FROM apps WHERE release_date >= :d90) AS new_90d
+    """), {"d30": d30, "d90": d90}).first()
+
+    trending_count = row.trending or 0
     if trending_count == 0:
-        # Fallback: count apps with positive rank velocity in last 7 days
-        cutoff = datetime.utcnow() - timedelta(days=7)
+        cutoff = now_dt - timedelta(days=7)
         trending_count = (
             db.query(func.count(func.distinct(models.Ranking.app_id)))
             .filter(
@@ -161,35 +169,18 @@ def get_dashboard_stats(db: Session = Depends(get_db), _user=Depends(get_current
             .scalar() or 0
         )
 
-    # Count opportunities from multiple sources:
-    # 1. Legacy opportunities table (populated by hourly scoring)
-    # 2. Daily opportunities (populated by opportunity_compute job)
-    # 3. Weekly opportunities (populated by weekly_opportunities_compute job)
-    legacy_opps = db.query(func.count(models.Opportunity.id)).scalar() or 0
-    daily_opps = db.query(func.count(models.DailyOpportunity.id)).scalar() or 0
-    weekly_opps = db.query(func.count(models.WeeklyOpportunity.id)).scalar() or 0
+    legacy_opps = row.legacy_opps or 0
+    daily_opps = row.daily_opps or 0
+    weekly_opps = row.weekly_opps or 0
     opportunities_count = max(legacy_opps, daily_opps + weekly_opps)
 
-    # Freshness metrics — apps released in last 30/90 days
-    now_dt = datetime.utcnow()
-    new_30d = (
-        db.query(func.count(models.App.id))
-        .filter(models.App.release_date >= now_dt - timedelta(days=30))
-        .scalar() or 0
-    )
-    new_90d = (
-        db.query(func.count(models.App.id))
-        .filter(models.App.release_date >= now_dt - timedelta(days=90))
-        .scalar() or 0
-    )
-
     data = {
-        "total_apps_tracked": total_apps,
-        "total_keywords": total_keywords,
+        "total_apps_tracked": row.total_apps or 0,
+        "total_keywords": row.total_keywords or 0,
         "trending_apps_count": trending_count,
         "opportunities_count": opportunities_count,
-        "new_apps_last_30_days": new_30d,
-        "new_apps_last_90_days": new_90d,
+        "new_apps_last_30_days": row.new_30d or 0,
+        "new_apps_last_90_days": row.new_90d or 0,
     }
     _DASHBOARD_CACHE["stats"] = {"ts": now, "data": data}
     return data
@@ -4272,22 +4263,33 @@ def list_alerts(
         .order_by(models.Alert.created_at.desc())
         .all()
     )
-    items = []
-    for a in rows:
-        unread = (
-            db.query(func.count(models.AlertEvent.id))
-            .filter(models.AlertEvent.alert_id == a.id, models.AlertEvent.is_read == False)
-            .scalar() or 0
+    # Batch unread counts in a single GROUP BY instead of N+1 queries
+    alert_ids = [a.id for a in rows]
+    unread_map: dict = {}
+    if alert_ids:
+        counts = (
+            db.query(models.AlertEvent.alert_id, func.count(models.AlertEvent.id))
+            .filter(
+                models.AlertEvent.alert_id.in_(alert_ids),
+                models.AlertEvent.is_read == False,
+            )
+            .group_by(models.AlertEvent.alert_id)
+            .all()
         )
-        items.append({
+        unread_map = dict(counts)
+
+    items = [
+        {
             "id": a.id,
             "alert_type": a.alert_type,
             "name": a.name,
             "config": a.config or {},
             "is_active": a.is_active,
             "created_at": a.created_at,
-            "unread_count": unread,
-        })
+            "unread_count": unread_map.get(a.id, 0),
+        }
+        for a in rows
+    ]
     return {"alerts": items, "total": len(items)}
 
 

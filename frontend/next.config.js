@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  poweredByHeader: false,
+  compress: true,
   async rewrites() {
     // BACKEND_URL is a server-side env var set in Railway (or .env.local for dev).
     // It must NOT include a trailing slash or path — just the origin.
