@@ -1042,3 +1042,52 @@ class MyApp(Base):
         Index("idx_myapp_user_app", "user_id", "app_id", unique=True),
         Index("idx_myapp_workspace", "workspace_id"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Alerts
+# ---------------------------------------------------------------------------
+
+class Alert(Base):
+    """User-defined alert rules (e.g. 'notify when app X trends above 70')."""
+    __tablename__ = "alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    alert_type = Column(String(50), nullable=False)  # app_trending, keyword_rising, new_opportunity, rank_drop
+    name = Column(String(200), nullable=False)
+    config = Column(JSON, nullable=False, default={})
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    events = relationship("AlertEvent", back_populates="alert", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_alert_workspace", "workspace_id"),
+        Index("idx_alert_user", "user_id"),
+        Index("idx_alert_type", "alert_type"),
+    )
+
+
+class AlertEvent(Base):
+    """Triggered alert event / notification."""
+    __tablename__ = "alert_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    alert_id = Column(Integer, ForeignKey("alerts.id", ondelete="CASCADE"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    title = Column(String(300), nullable=False)
+    message = Column(Text, nullable=True)
+    data = Column(JSON, nullable=True)
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    alert = relationship("Alert", back_populates="events")
+
+    __table_args__ = (
+        Index("idx_alert_event_workspace", "workspace_id"),
+        Index("idx_alert_event_alert", "alert_id"),
+        Index("idx_alert_event_read", "workspace_id", "is_read"),
+    )

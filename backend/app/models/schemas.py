@@ -1565,3 +1565,53 @@ class KeywordGapReportResponse(BaseModel):
     competitors: List[KeywordGapAppInfo]
     keywords: List[KeywordGapItem]
     summary: KeywordGapSummary
+
+
+# ---------------------------------------------------------------------------
+# Alerts
+# ---------------------------------------------------------------------------
+
+class AlertCreate(BaseModel):
+    alert_type: str  # app_trending, keyword_rising, new_opportunity, rank_drop
+    name: str
+    config: Dict[str, Any] = {}
+
+class AlertUpdate(BaseModel):
+    name: Optional[str] = None
+    config: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
+
+class AlertItem(BaseModel):
+    id: int
+    alert_type: str
+    name: str
+    config: Dict[str, Any] = {}
+    is_active: bool
+    created_at: Optional[datetime] = None
+    unread_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+class AlertListResponse(BaseModel):
+    alerts: List[AlertItem]
+    total: int
+
+class AlertEventItem(BaseModel):
+    id: int
+    alert_id: int
+    alert_name: Optional[str] = None
+    alert_type: Optional[str] = None
+    title: str
+    message: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
+    is_read: bool
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+class AlertEventListResponse(BaseModel):
+    events: List[AlertEventItem]
+    total: int
+    unread_count: int

@@ -1398,6 +1398,193 @@ async def job_bootstrap_data():
 
 
 # ---------------------------------------------------------------------------
+# Alert evaluation
+# ---------------------------------------------------------------------------
+
+async def job_evaluate_alerts():
+    """Evaluate user-defined alert rules and create events for matches."""
+    job_id = "evaluate_alerts"
+    _log_start(job_id)
+    try:
+        from app.database import SessionLocal
+        from app.models import models
+
+        db = SessionLocal()
+        try:
+            alerts = (
+                db.query(models.Alert)
+                .filter(models.Alert.is_active == True)
+                .all()
+            )
+            if not alerts:
+                _log_done(job_id, 0, "no active alerts")
+                return
+
+            created = 0
+            for alert in alerts:
+                try:
+                    events = _evaluate_single_alert(db, alert)
+                    created += events
+                except Exception as exc:
+                    logger.warning(f"[{job_id}] Alert {alert.id} ({alert.alert_type}) failed: {exc}")
+
+            db.commit()
+            _log_done(job_id, created, f"evaluated {len(alerts)} alerts, created {created} events")
+        finally:
+            db.close()
+    except Exception as exc:
+        _log_fail(job_id, exc)
+
+
+def _evaluate_single_alert(db, alert) -> int:
+    """Evaluate a single alert rule and insert events. Returns count of new events."""
+    from app.models import models
+    from datetime import datetime, timezone as tz
+
+    config = alert.config or {}
+    created = 0
+
+    # Avoid duplicate events: skip if we already created an event for this
+    # alert in the last 6 hours
+    cutoff = datetime.now(tz.utc) - timedelta(hours=6)
+    recent = (
+        db.query(models.AlertEvent.id)
+        .filter(
+            models.AlertEvent.alert_id == alert.id,
+            models.AlertEvent.created_at >= cutoff,
+        )
+        .first()
+    )
+    if recent:
+        return 0
+
+    if alert.alert_type == "app_trending":
+        threshold = float(config.get("threshold", 60))
+        app_name = config.get("app_name", "")
+
+        q = db.query(
+            models.AppTrendingScore.app_id,
+            models.AppTrendingScore.trend_score,
+            models.App.name,
+        ).join(models.App, models.App.id == models.AppTrendingScore.app_id)
+
+        if app_name:
+            q = q.filter(models.App.name.ilike(f"%{app_name}%"))
+
+        q = q.filter(models.AppTrendingScore.trend_score >= threshold)
+        hits = q.order_by(models.AppTrendingScore.trend_score.desc()).limit(5).all()
+
+        for app_id, score, name in hits:
+            event = models.AlertEvent(
+                alert_id=alert.id,
+                workspace_id=alert.workspace_id,
+                title=f"{name} is trending (score {score:.0f})",
+                message=f"App \"{name}\" reached a trending score of {score:.1f}, above your threshold of {threshold}.",
+                data={"app_id": app_id, "score": round(score, 1), "threshold": threshold},
+            )
+            db.add(event)
+            created += 1
+
+    elif alert.alert_type == "keyword_rising":
+        threshold = float(config.get("threshold", 70))
+        keyword_filter = config.get("keyword", "")
+
+        from app.models.models import Keyword, KeywordMetrics
+
+        q = db.query(
+            Keyword.id,
+            Keyword.term,
+            Keyword.opportunity_score,
+        ).filter(Keyword.opportunity_score >= threshold)
+
+        if keyword_filter:
+            q = q.filter(Keyword.term.ilike(f"%{keyword_filter}%"))
+
+        hits = q.order_by(Keyword.opportunity_score.desc()).limit(5).all()
+
+        for kw_id, term, score in hits:
+            event = models.AlertEvent(
+                alert_id=alert.id,
+                workspace_id=alert.workspace_id,
+                title=f"Keyword \"{term}\" rising (score {score:.0f})",
+                message=f"Keyword \"{term}\" opportunity score reached {score:.1f}, above your threshold of {threshold}.",
+                data={"keyword_id": kw_id, "keyword": term, "score": round(score, 1), "threshold": threshold},
+            )
+            db.add(event)
+            created += 1
+
+    elif alert.alert_type == "new_opportunity":
+        from app.models.models import DailyOpportunity
+
+        min_score = float(config.get("min_score", 75))
+        category_filter = config.get("category", "")
+
+        q = db.query(DailyOpportunity).filter(
+            DailyOpportunity.success_probability >= min_score / 100.0,
+            DailyOpportunity.date >= (datetime.now(tz.utc) - timedelta(days=1)).date(),
+        )
+
+        hits = q.order_by(DailyOpportunity.success_probability.desc()).limit(3).all()
+
+        for opp in hits:
+            niche = opp.niche or opp.keyword or "Unknown"
+            if category_filter and category_filter.lower() not in (niche or "").lower():
+                continue
+            prob = (opp.success_probability or 0) * 100
+            event = models.AlertEvent(
+                alert_id=alert.id,
+                workspace_id=alert.workspace_id,
+                title=f"New opportunity: {niche} ({prob:.0f}%)",
+                message=opp.ai_summary or f"A new opportunity in \"{niche}\" was detected with {prob:.0f}% success probability.",
+                data={"niche": niche, "probability": round(prob, 1)},
+            )
+            db.add(event)
+            created += 1
+
+    elif alert.alert_type == "rank_drop":
+        drop_threshold = int(config.get("drop_positions", 20))
+        app_name = config.get("app_name", "")
+
+        # Compare latest ranking vs 24h-ago ranking
+        from sqlalchemy import func as sqla_func
+
+        q = db.query(
+            models.App.id,
+            models.App.name,
+            models.App.current_rank,
+        ).filter(models.App.current_rank.isnot(None))
+
+        if app_name:
+            q = q.filter(models.App.name.ilike(f"%{app_name}%"))
+
+        apps = q.limit(100).all()
+
+        cutoff_24h = datetime.now(tz.utc) - timedelta(hours=24)
+        for app_id, name, current_rank in apps:
+            prev_rank_row = (
+                db.query(sqla_func.min(models.Ranking.rank))
+                .filter(
+                    models.Ranking.app_id == app_id,
+                    models.Ranking.recorded_at >= cutoff_24h - timedelta(hours=24),
+                    models.Ranking.recorded_at < cutoff_24h,
+                )
+                .scalar()
+            )
+            if prev_rank_row and current_rank and current_rank - prev_rank_row >= drop_threshold:
+                event = models.AlertEvent(
+                    alert_id=alert.id,
+                    workspace_id=alert.workspace_id,
+                    title=f"{name} dropped {current_rank - prev_rank_row} positions",
+                    message=f"App \"{name}\" dropped from rank {prev_rank_row} to {current_rank} (lost {current_rank - prev_rank_row} positions).",
+                    data={"app_id": app_id, "prev_rank": prev_rank_row, "current_rank": current_rank, "drop": current_rank - prev_rank_row},
+                )
+                db.add(event)
+                created += 1
+
+    return created
+
+
+# ---------------------------------------------------------------------------
 # Scheduler setup
 # ---------------------------------------------------------------------------
 
@@ -1852,6 +2039,20 @@ def setup_scheduler() -> AsyncIOScheduler:
         ),
         id="enrich_cold",
         name="Every 24h: Enrich COLD tier light apps",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── every 1 h: evaluate user-defined alert rules ───────────────────────
+    # First run: 40 min after startup (after trending/blowing-up scores are fresh).
+    scheduler.add_job(
+        job_evaluate_alerts,
+        trigger=IntervalTrigger(
+            hours=1,
+            start_date=now + timedelta(minutes=40),
+            timezone="UTC",
+        ),
+        id="evaluate_alerts",
+        name="Every 1h: Evaluate User Alert Rules",
         **_JOB_DEFAULTS,
     )
 

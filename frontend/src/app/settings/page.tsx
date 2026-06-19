@@ -9,6 +9,8 @@ import {
   getUsageSummary,
   updateProfile,
   changePassword,
+  createStripeCheckout,
+  createBillingPortal,
   UsageSummary,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -27,6 +29,7 @@ import {
   Mail,
   Building2,
   ChevronRight,
+  ExternalLink,
   Loader2,
 } from 'lucide-react';
 
@@ -281,6 +284,17 @@ function GeneralSection({
       setPwMsg({ type: 'error', text: 'Password must be at least 8 characters.' });
       return;
     }
+    if (newPw.length > 72) {
+      setPwMsg({ type: 'error', text: 'Password must be at most 72 characters.' });
+      return;
+    }
+    const hasUpper = /[A-Z]/.test(newPw);
+    const hasLower = /[a-z]/.test(newPw);
+    const hasDigit = /[0-9]/.test(newPw);
+    if (!hasUpper || !hasLower || !hasDigit) {
+      setPwMsg({ type: 'error', text: 'Password must contain uppercase, lowercase, and a digit.' });
+      return;
+    }
     setPwSaving(true);
     setPwMsg(null);
     try {
@@ -364,7 +378,7 @@ function GeneralSection({
             onChange={setNewPw}
             type={showNew ? 'text' : 'password'}
             placeholder="••••••••"
-            hint="Minimum 8 characters."
+            hint="8–72 characters. Must include uppercase, lowercase, and a digit."
             suffix={
               <button
                 type="button"
@@ -540,12 +554,14 @@ const PLAN_LABELS: Record<string, { label: string; color: 'gray' | 'indigo' | 'v
 };
 
 function BillingSection({
+  token,
   planCode,
   status,
   isTrialing,
   trialDaysLeft,
   trialEndsAt,
 }: {
+  token: string;
   planCode: string;
   status: string;
   isTrialing: boolean;
@@ -554,6 +570,11 @@ function BillingSection({
 }) {
   const plan = PLAN_LABELS[planCode] ?? { label: planCode, color: 'gray' as const };
   const isPro = planCode === 'pro' || planCode === 'enterprise';
+  const hasPaidSub = isPro && (status === 'active' || status === 'trialing');
+
+  const [upgradeLoading, setUpgradeLoading] = useState(false);
+  const [portalLoading, setPortalLoading] = useState(false);
+  const [billingError, setBillingError] = useState<string | null>(null);
 
   const statusColor =
     status === 'active' ? 'green' : status === 'trialing' ? 'amber' : 'gray';
@@ -566,8 +587,44 @@ function BillingSection({
       })
     : null;
 
+  const handleUpgrade = async () => {
+    setUpgradeLoading(true);
+    setBillingError(null);
+    try {
+      const { checkout_url } = await createStripeCheckout(token, 'pro');
+      if (checkout_url && checkout_url.startsWith('https://checkout.stripe.com/')) {
+        window.location.href = checkout_url;
+      } else {
+        setBillingError('Invalid checkout URL received.');
+      }
+    } catch (e: unknown) {
+      setBillingError(e instanceof Error ? e.message : 'Failed to start checkout.');
+    } finally {
+      setUpgradeLoading(false);
+    }
+  };
+
+  const handleBillingPortal = async () => {
+    setPortalLoading(true);
+    setBillingError(null);
+    try {
+      const { portal_url } = await createBillingPortal(token);
+      if (portal_url && portal_url.startsWith('https://')) {
+        window.location.href = portal_url;
+      } else {
+        setBillingError('Invalid billing portal URL received.');
+      }
+    } catch (e: unknown) {
+      setBillingError(e instanceof Error ? e.message : 'Failed to open billing portal.');
+    } finally {
+      setPortalLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {billingError && <InlineAlert type="error" message={billingError} />}
+
       {/* Current plan */}
       <SectionCard title="Current plan" description="Your subscription and billing details.">
         <div className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -626,14 +683,16 @@ function BillingSection({
           </div>
           <div className="mt-5">
             <button
-              disabled
-              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white opacity-60 cursor-not-allowed"
+              onClick={handleUpgrade}
+              disabled={upgradeLoading}
+              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
             >
+              {upgradeLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               Upgrade now
               <ChevronRight className="h-4 w-4" />
             </button>
             <p className="mt-2 text-xs text-indigo-500 dark:text-indigo-500">
-              Stripe billing coming soon — contact us to upgrade manually.
+              Secure checkout powered by Stripe.
             </p>
           </div>
         </div>
@@ -645,18 +704,27 @@ function BillingSection({
         description="Invoices, payment methods, and subscription management."
       >
         <div className="space-y-4">
-          <PlaceholderAction
-            label="Manage billing portal"
-            description="View invoices, update payment method, and manage your subscription via Stripe."
-          />
-          <div className="border-t border-gray-100 dark:border-gray-800" />
-          <PlaceholderAction
-            label="View invoices"
-            description="Download past invoices and receipts."
-          />
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-gray-900 dark:text-white">Manage billing portal</p>
+              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                View invoices, update payment method, and manage your subscription via Stripe.
+              </p>
+            </div>
+            <button
+              onClick={handleBillingPortal}
+              disabled={portalLoading || !hasPaidSub}
+              className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
+            >
+              {portalLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <ExternalLink className="h-3 w-3" />}
+              Open portal
+            </button>
+          </div>
         </div>
         <p className="mt-4 text-xs text-gray-400 dark:text-gray-500">
-          Powered by Stripe — billing portal will be available when your plan is activated.
+          {hasPaidSub
+            ? 'Powered by Stripe — manage invoices, payment methods, and cancellation from the portal.'
+            : 'Billing portal is available after upgrading to a paid plan.'}
         </p>
       </SectionCard>
     </div>
@@ -874,6 +942,7 @@ function SettingsContent() {
             {activeTab === 'privacy' && <PrivacySection />}
             {activeTab === 'billing' && (
               <BillingSection
+                token={token}
                 planCode={planCode}
                 status={subStatus}
                 isTrialing={sub?.is_trialing ?? false}

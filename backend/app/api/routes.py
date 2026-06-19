@@ -92,6 +92,11 @@ from app.models.schemas import (
     KeywordGapReportResponse,
     ASOScoreResponse,
     KeywordSuggestionsResponse,
+    AlertCreate,
+    AlertUpdate,
+    AlertItem,
+    AlertListResponse,
+    AlertEventListResponse,
 )
 from app.scoring.engine import ScoringEngine, _BIG_BRAND_DEVELOPERS, _BIG_BRAND_APP_KEYWORDS
 from app.scoring.feature_gaps import FeatureGapAnalyzer
@@ -156,7 +161,14 @@ def get_dashboard_stats(db: Session = Depends(get_db), _user=Depends(get_current
             .scalar() or 0
         )
 
-    opportunities_count = db.query(func.count(models.Opportunity.id)).scalar() or 0
+    # Count opportunities from multiple sources:
+    # 1. Legacy opportunities table (populated by hourly scoring)
+    # 2. Daily opportunities (populated by opportunity_compute job)
+    # 3. Weekly opportunities (populated by weekly_opportunities_compute job)
+    legacy_opps = db.query(func.count(models.Opportunity.id)).scalar() or 0
+    daily_opps = db.query(func.count(models.DailyOpportunity.id)).scalar() or 0
+    weekly_opps = db.query(func.count(models.WeeklyOpportunity.id)).scalar() or 0
+    opportunities_count = max(legacy_opps, daily_opps + weekly_opps)
 
     # Freshness metrics — apps released in last 30/90 days
     now_dt = datetime.utcnow()
@@ -4239,3 +4251,241 @@ def get_keyword_gaps(
 
     svc = CompetitorCompareService(db)
     return svc.keyword_gap_report(target_id, unique_comp)
+
+
+# ---------------------------------------------------------------------------
+# Alerts
+# ---------------------------------------------------------------------------
+
+_VALID_ALERT_TYPES = {"app_trending", "keyword_rising", "new_opportunity", "rank_drop"}
+
+
+@router.get("/alerts", response_model=AlertListResponse)
+def list_alerts(
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """List all alerts for the current workspace."""
+    rows = (
+        db.query(models.Alert)
+        .filter(models.Alert.workspace_id == ctx.workspace.id)
+        .order_by(models.Alert.created_at.desc())
+        .all()
+    )
+    items = []
+    for a in rows:
+        unread = (
+            db.query(func.count(models.AlertEvent.id))
+            .filter(models.AlertEvent.alert_id == a.id, models.AlertEvent.is_read == False)
+            .scalar() or 0
+        )
+        items.append({
+            "id": a.id,
+            "alert_type": a.alert_type,
+            "name": a.name,
+            "config": a.config or {},
+            "is_active": a.is_active,
+            "created_at": a.created_at,
+            "unread_count": unread,
+        })
+    return {"alerts": items, "total": len(items)}
+
+
+@router.post("/alerts", status_code=201, response_model=AlertItem)
+def create_alert(
+    body: AlertCreate,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Create a new alert rule."""
+    if body.alert_type not in _VALID_ALERT_TYPES:
+        raise HTTPException(status_code=400, detail=f"Invalid alert_type. Must be one of: {', '.join(sorted(_VALID_ALERT_TYPES))}")
+    if not body.name or len(body.name.strip()) == 0:
+        raise HTTPException(status_code=400, detail="Alert name is required")
+
+    # Limit alerts per workspace
+    count = (
+        db.query(func.count(models.Alert.id))
+        .filter(models.Alert.workspace_id == ctx.workspace.id)
+        .scalar() or 0
+    )
+    if count >= 50:
+        raise HTTPException(status_code=400, detail="Maximum 50 alerts per workspace")
+
+    alert = models.Alert(
+        workspace_id=ctx.workspace.id,
+        user_id=ctx.user.id,
+        alert_type=body.alert_type,
+        name=body.name.strip(),
+        config=body.config or {},
+        is_active=True,
+    )
+    db.add(alert)
+    db.commit()
+    db.refresh(alert)
+    return {
+        "id": alert.id,
+        "alert_type": alert.alert_type,
+        "name": alert.name,
+        "config": alert.config or {},
+        "is_active": alert.is_active,
+        "created_at": alert.created_at,
+        "unread_count": 0,
+    }
+
+
+@router.put("/alerts/{alert_id}", response_model=AlertItem)
+def update_alert(
+    alert_id: int,
+    body: AlertUpdate,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Update an alert rule."""
+    alert = (
+        db.query(models.Alert)
+        .filter(models.Alert.id == alert_id, models.Alert.workspace_id == ctx.workspace.id)
+        .first()
+    )
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+
+    if body.name is not None:
+        alert.name = body.name.strip()
+    if body.config is not None:
+        alert.config = body.config
+    if body.is_active is not None:
+        alert.is_active = body.is_active
+
+    db.commit()
+    db.refresh(alert)
+    unread = (
+        db.query(func.count(models.AlertEvent.id))
+        .filter(models.AlertEvent.alert_id == alert.id, models.AlertEvent.is_read == False)
+        .scalar() or 0
+    )
+    return {
+        "id": alert.id,
+        "alert_type": alert.alert_type,
+        "name": alert.name,
+        "config": alert.config or {},
+        "is_active": alert.is_active,
+        "created_at": alert.created_at,
+        "unread_count": unread,
+    }
+
+
+@router.delete("/alerts/{alert_id}")
+def delete_alert(
+    alert_id: int,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Delete an alert rule and all its events."""
+    alert = (
+        db.query(models.Alert)
+        .filter(models.Alert.id == alert_id, models.Alert.workspace_id == ctx.workspace.id)
+        .first()
+    )
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    db.delete(alert)
+    db.commit()
+    return {"status": "deleted"}
+
+
+@router.get("/alerts/events", response_model=AlertEventListResponse)
+def list_alert_events(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    unread_only: bool = Query(False),
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """List triggered alert events/notifications."""
+    q = (
+        db.query(models.AlertEvent)
+        .filter(models.AlertEvent.workspace_id == ctx.workspace.id)
+    )
+    if unread_only:
+        q = q.filter(models.AlertEvent.is_read == False)
+
+    total = q.count()
+    events = q.order_by(models.AlertEvent.created_at.desc()).offset(offset).limit(limit).all()
+
+    unread_count = (
+        db.query(func.count(models.AlertEvent.id))
+        .filter(models.AlertEvent.workspace_id == ctx.workspace.id, models.AlertEvent.is_read == False)
+        .scalar() or 0
+    )
+
+    # Fetch alert names in one query
+    alert_ids = {e.alert_id for e in events}
+    alert_map = {}
+    if alert_ids:
+        alerts = db.query(models.Alert.id, models.Alert.name, models.Alert.alert_type).filter(models.Alert.id.in_(alert_ids)).all()
+        alert_map = {a.id: (a.name, a.alert_type) for a in alerts}
+
+    items = []
+    for e in events:
+        aname, atype = alert_map.get(e.alert_id, (None, None))
+        items.append({
+            "id": e.id,
+            "alert_id": e.alert_id,
+            "alert_name": aname,
+            "alert_type": atype,
+            "title": e.title,
+            "message": e.message,
+            "data": e.data,
+            "is_read": e.is_read,
+            "created_at": e.created_at,
+        })
+
+    return {"events": items, "total": total, "unread_count": unread_count}
+
+
+@router.get("/alerts/events/unread-count")
+def alert_unread_count(
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Get count of unread alert events."""
+    count = (
+        db.query(func.count(models.AlertEvent.id))
+        .filter(models.AlertEvent.workspace_id == ctx.workspace.id, models.AlertEvent.is_read == False)
+        .scalar() or 0
+    )
+    return {"unread_count": count}
+
+
+@router.post("/alerts/events/{event_id}/read")
+def mark_event_read(
+    event_id: int,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Mark a single alert event as read."""
+    event = (
+        db.query(models.AlertEvent)
+        .filter(models.AlertEvent.id == event_id, models.AlertEvent.workspace_id == ctx.workspace.id)
+        .first()
+    )
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    event.is_read = True
+    db.commit()
+    return {"status": "ok"}
+
+
+@router.post("/alerts/events/read-all")
+def mark_all_events_read(
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Mark all alert events as read for this workspace."""
+    db.query(models.AlertEvent).filter(
+        models.AlertEvent.workspace_id == ctx.workspace.id,
+        models.AlertEvent.is_read == False,
+    ).update({"is_read": True})
+    db.commit()
+    return {"status": "ok"}

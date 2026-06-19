@@ -518,6 +518,36 @@ _MIGRATIONS = [
         updated_at TIMESTAMPTZ DEFAULT NOW()
     )""",
     "CREATE INDEX IF NOT EXISTS idx_admin_settings_key ON admin_settings (key)",
+
+    # Alerts system — user-defined alert rules + triggered events
+    """CREATE TABLE IF NOT EXISTS alerts (
+        id SERIAL PRIMARY KEY,
+        workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        alert_type VARCHAR(50) NOT NULL,
+        name VARCHAR(200) NOT NULL,
+        config JSONB NOT NULL DEFAULT '{}',
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_alert_workspace ON alerts (workspace_id)",
+    "CREATE INDEX IF NOT EXISTS idx_alert_user ON alerts (user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_alert_type ON alerts (alert_type)",
+
+    """CREATE TABLE IF NOT EXISTS alert_events (
+        id SERIAL PRIMARY KEY,
+        alert_id INTEGER NOT NULL REFERENCES alerts(id) ON DELETE CASCADE,
+        workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        title VARCHAR(300) NOT NULL,
+        message TEXT,
+        data JSONB,
+        is_read BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_alert_event_workspace ON alert_events (workspace_id)",
+    "CREATE INDEX IF NOT EXISTS idx_alert_event_alert ON alert_events (alert_id)",
+    "CREATE INDEX IF NOT EXISTS idx_alert_event_read ON alert_events (workspace_id, is_read)",
 ]
 
 

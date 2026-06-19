@@ -2652,3 +2652,131 @@ export async function getKeywordGaps(
   competitorIds.forEach((id) => params.append('competitor_ids', String(id)));
   return fetchApi<KeywordGapReportResponse>(`/competitors/keyword-gaps?${params.toString()}`);
 }
+
+
+// ---------------------------------------------------------------------------
+// Alerts
+// ---------------------------------------------------------------------------
+
+export interface AlertItem {
+  id: number;
+  alert_type: string;
+  name: string;
+  config: Record<string, unknown>;
+  is_active: boolean;
+  created_at: string | null;
+  unread_count: number;
+}
+
+export interface AlertListResponse {
+  alerts: AlertItem[];
+  total: number;
+}
+
+export interface AlertEventItem {
+  id: number;
+  alert_id: number;
+  alert_name: string | null;
+  alert_type: string | null;
+  title: string;
+  message: string | null;
+  data: Record<string, unknown> | null;
+  is_read: boolean;
+  created_at: string | null;
+}
+
+export interface AlertEventListResponse {
+  events: AlertEventItem[];
+  total: number;
+  unread_count: number;
+}
+
+export async function getAlerts(): Promise<AlertListResponse> {
+  const res = await fetch(`${API_BASE}/alerts`, {
+    headers: _authHeaders(),
+    cache: 'no-store',
+  });
+  if (!res.ok) return { alerts: [], total: 0 };
+  return res.json();
+}
+
+export async function createAlert(body: {
+  alert_type: string;
+  name: string;
+  config: Record<string, unknown>;
+}): Promise<AlertItem> {
+  const res = await fetch(`${API_BASE}/alerts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Failed to create alert (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function updateAlert(
+  alertId: number,
+  body: { name?: string; config?: Record<string, unknown>; is_active?: boolean },
+): Promise<AlertItem> {
+  const res = await fetch(`${API_BASE}/alerts/${alertId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Failed to update alert (${res.status})`);
+  return res.json();
+}
+
+export async function deleteAlert(alertId: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/alerts/${alertId}`, {
+    method: 'DELETE',
+    headers: _authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed to delete alert (${res.status})`);
+}
+
+export async function getAlertEvents(
+  limit = 50,
+  offset = 0,
+  unreadOnly = false,
+): Promise<AlertEventListResponse> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (unreadOnly) params.set('unread_only', 'true');
+  const res = await fetch(`${API_BASE}/alerts/events?${params}`, {
+    headers: _authHeaders(),
+    cache: 'no-store',
+  });
+  if (!res.ok) return { events: [], total: 0, unread_count: 0 };
+  return res.json();
+}
+
+export async function getAlertUnreadCount(): Promise<{ unread_count: number }> {
+  const res = await fetch(`${API_BASE}/alerts/events/unread-count`, {
+    headers: _authHeaders(),
+    cache: 'no-store',
+  });
+  if (!res.ok) return { unread_count: 0 };
+  return res.json();
+}
+
+export async function markAlertEventRead(eventId: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/alerts/events/${eventId}/read`, {
+    method: 'POST',
+    headers: _authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed to mark event read (${res.status})`);
+}
+
+export async function markAllAlertEventsRead(): Promise<void> {
+  const res = await fetch(`${API_BASE}/alerts/events/read-all`, {
+    method: 'POST',
+    headers: _authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed to mark all read (${res.status})`);
+}
