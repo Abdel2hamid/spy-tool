@@ -1011,6 +1011,15 @@ export async function getAppDetail(appId: number): Promise<AppDetail> {
   return fetchApi<AppDetail>(`/apps/${appId}/detail`);
 }
 
+export async function refreshApp(appId: number): Promise<{ status: string; app_id: number; app_name?: string; message: string }> {
+  const res = await fetch(`${API_BASE}/apps/${appId}/refresh`, {
+    method: 'POST',
+    headers: _authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Failed to refresh app (${res.status})`);
+  return res.json();
+}
+
 export async function getAppVersions(appId: number): Promise<AppVersion[]> {
   return fetchApi<AppVersion[]>(`/apps/${appId}/versions`);
 }

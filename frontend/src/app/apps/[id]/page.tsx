@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useState, useEffect } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components';
-import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, DownloadEstimate, ASOScoreResponse, ASOBreakdownItem, KeywordSuggestionsResponse, KeywordSuggestionItem, getAppDetail, getAppReviews, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, getDownloadEstimate, getASOScore, getKeywordSuggestions, RankHistory, getFavoriteIds, addFavorite, removeFavorite, getMyAppIds, addMyApp, removeMyApp } from '@/lib/api';
+import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, DownloadEstimate, ASOScoreResponse, ASOBreakdownItem, KeywordSuggestionsResponse, KeywordSuggestionItem, getAppDetail, getAppReviews, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, getDownloadEstimate, getASOScore, getKeywordSuggestions, RankHistory, getFavoriteIds, addFavorite, removeFavorite, getMyAppIds, addMyApp, removeMyApp, refreshApp } from '@/lib/api';
 import { fmtNum, fmtRev, fmtRange, fmtRevRange, confidenceLabel, CONFIDENCE_BADGE } from '@/lib/estimate-format';
 import {
   ArrowLeft, Star, Download, Calendar, Globe, MessageSquare,
@@ -52,7 +52,7 @@ function formatRevenue(min: number | null, max: number | null): string {
   return `${fmt(min ?? 0)}–${fmt(max)}`;
 }
 
-function AppHeader({ app, isFavorited, onToggleFavorite, isMyApp, onToggleMyApp, inComparison, comparisonFull, onToggleComparison }: { app: AppDetail; isFavorited: boolean; onToggleFavorite: () => void; isMyApp: boolean; onToggleMyApp: () => void; inComparison: boolean; comparisonFull: boolean; onToggleComparison: () => void }) {
+function AppHeader({ app, isFavorited, onToggleFavorite, isMyApp, onToggleMyApp, inComparison, comparisonFull, onToggleComparison, onRefresh, isRefreshing }: { app: AppDetail; isFavorited: boolean; onToggleFavorite: () => void; isMyApp: boolean; onToggleMyApp: () => void; inComparison: boolean; comparisonFull: boolean; onToggleComparison: () => void; onRefresh: () => void; isRefreshing: boolean }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
       {/* Gradient accent bar */}
@@ -147,6 +147,19 @@ function AppHeader({ app, isFavorited, onToggleFavorite, isMyApp, onToggleMyApp,
                   )}
                 >
                   {inComparison ? <Check className="h-3.5 w-3.5" /> : <GitCompare className="h-3.5 w-3.5" />}
+                </button>
+                <button
+                  onClick={onRefresh}
+                  disabled={isRefreshing}
+                  title="Re-import app data from App Store"
+                  className={cn(
+                    'pill transition-colors',
+                    isRefreshing
+                      ? 'bg-indigo-100 text-indigo-500 cursor-wait dark:bg-indigo-950/50 dark:text-indigo-400'
+                      : 'bg-gray-100 text-gray-400 hover:bg-gray-200 hover:text-indigo-500 dark:bg-gray-800 dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-indigo-400',
+                  )}
+                >
+                  <RefreshCw className={cn('h-3.5 w-3.5', isRefreshing && 'animate-spin')} />
                 </button>
               </div>
             </div>
@@ -3131,6 +3144,7 @@ export default function AppDetailPage() {
   const [reviewsLoaded, setReviewsLoaded] = useState(false);
   const [isFavorited, setIsFavorited] = useState(false);
   const [isMyApp, setIsMyApp] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const comparisonIds = useComparison();
   const inComparison = comparisonIds.includes(appId);
   const comparisonFull = comparisonIds.length >= 5;
@@ -3192,6 +3206,25 @@ export default function AppDetailPage() {
       // ignore
     }
   }
+
+  async function handleRefresh() {
+    setIsRefreshing(true);
+    try {
+      await refreshApp(appId);
+      // Re-fetch app data after refresh
+      const appData = await getAppDetail(appId);
+      setApp(appData);
+      setVersions(appData.versions ?? []);
+      setAnalytics(appData.analytics ?? null);
+    } catch {
+      // ignore
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+
+  // Detect incomplete data — missing description, icon, or rating suggests the app needs re-import
+  const hasIncompleteData = app && (!app.description || !app.icon_url || (app.current_rating == null && app.current_reviews === 0));
 
   useEffect(() => {
     if (activeTab !== 'reviews' || reviewsLoaded) return;
@@ -3302,7 +3335,39 @@ export default function AppDetailPage() {
           </div>
         )}
 
-        <AppHeader app={app} isFavorited={isFavorited} onToggleFavorite={toggleFavorite} isMyApp={isMyApp} onToggleMyApp={toggleMyApp} inComparison={inComparison} comparisonFull={comparisonFull} onToggleComparison={toggleComparison} />
+        {/* Incomplete data banner */}
+        {hasIncompleteData && !isRefreshing && (
+          <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-800/50 dark:bg-amber-950/30">
+            <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                Some data is missing for this app
+              </p>
+              <p className="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
+                Description, ratings, or other details may be unavailable. Re-import to fetch the latest data from the App Store.
+              </p>
+            </div>
+            <button
+              onClick={handleRefresh}
+              className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-200 dark:bg-amber-900/50 dark:text-amber-300 dark:hover:bg-amber-900 transition-colors"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Re-import
+            </button>
+          </div>
+        )}
+
+        {/* Refreshing banner */}
+        {isRefreshing && (
+          <div className="flex items-center gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 dark:border-indigo-800/50 dark:bg-indigo-950/30">
+            <RefreshCw className="h-4 w-4 flex-shrink-0 text-indigo-500 animate-spin" />
+            <p className="text-sm font-medium text-indigo-700 dark:text-indigo-300">
+              Re-importing app data from the App Store...
+            </p>
+          </div>
+        )}
+
+        <AppHeader app={app} isFavorited={isFavorited} onToggleFavorite={toggleFavorite} isMyApp={isMyApp} onToggleMyApp={toggleMyApp} inComparison={inComparison} comparisonFull={comparisonFull} onToggleComparison={toggleComparison} onRefresh={handleRefresh} isRefreshing={isRefreshing} />
 
         {/* Tab navigation — horizontally scrollable on mobile */}
         <div className="relative">
