@@ -647,7 +647,7 @@ _PUBLIC_PREFIXES = (
 )
 
 _PUBLIC_EXACT = {
-    "/", "/health", "/api/v1/categories",
+    "/", "/health", "/api/v1/categories", "/api/v1/run-migrations", "/run-migrations",
 }
 
 
@@ -748,6 +748,7 @@ def root():
 
 
 @app.get("/run-migrations")
+@app.get("/api/v1/run-migrations")
 def run_migrations_endpoint():
     """Manually trigger migrations (temporary)."""
     _run_migrations(engine)
