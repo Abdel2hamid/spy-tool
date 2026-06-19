@@ -639,6 +639,7 @@ _PUBLIC_PREFIXES = (
     "/api/v1/auth/",           # login, register, me
     "/api/v1/stripe/webhook",  # Stripe webhook (has its own sig verification)
     "/api/v1/stripe/config",   # public publishable key
+    "/api/v1/stripe/debug-config",  # temporary debug endpoint
     "/api/v1/admin-console/announcements/active",  # public announcements
 )
 
