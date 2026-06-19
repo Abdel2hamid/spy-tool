@@ -68,7 +68,6 @@ def create_checkout_session(
     return stripe.checkout.Session.create(
         customer=customer_id,
         mode="subscription",
-        payment_method_types=["card", "paypal"],
         line_items=[{"price": price_id, "quantity": 1}],
         subscription_data={"trial_period_days": 7},
         success_url=success_url,
