@@ -600,6 +600,56 @@ export async function getFreshRisers(params: { limit?: number; mode?: string } =
 }
 
 // ---------------------------------------------------------------------------
+// Upgrade event bus — allows non-React code to trigger the upgrade modal.
+// The UpgradeModal component listens for these events.
+// ---------------------------------------------------------------------------
+
+export type UpgradeEventDetail =
+  | { kind: 'premium_required'; plan: string; message: string; upgradeMessage: string }
+  | { kind: 'limit_exceeded'; action: string; message: string; currentUsage: number; limit: number; plan: string; upgradeMessage: string };
+
+export function emitUpgradeEvent(detail: UpgradeEventDetail): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('rankspy:upgrade', { detail }));
+  }
+}
+
+/**
+ * Check a fetch Response for 402/403 plan errors and emit upgrade event.
+ * Returns true if a plan error was detected (caller should throw).
+ */
+async function _checkUpgrade(res: Response): Promise<boolean> {
+  if (res.status !== 402 && res.status !== 403) return false;
+  const body = await res.json().catch(() => ({}));
+  _handlePlanError(res, body);
+  return true;
+}
+
+function _handlePlanError(res: Response, body: Record<string, unknown>): void {
+  const detail = body?.detail as Record<string, unknown> | undefined;
+  if (!detail) return;
+
+  if (res.status === 402 && detail.code === 'PLAN_LIMIT_EXCEEDED') {
+    emitUpgradeEvent({
+      kind: 'limit_exceeded',
+      action: (detail.action as string) ?? '',
+      message: (detail.message as string) ?? 'You have reached your plan limit.',
+      currentUsage: (detail.current_usage as number) ?? 0,
+      limit: (detail.limit as number) ?? 0,
+      plan: (detail.plan as string) ?? 'free',
+      upgradeMessage: (detail.upgrade_message as string) ?? 'Upgrade to Pro for higher limits.',
+    });
+  } else if (res.status === 403 && detail.code === 'PREMIUM_REQUIRED') {
+    emitUpgradeEvent({
+      kind: 'premium_required',
+      plan: (detail.plan as string) ?? 'free',
+      message: (detail.message as string) ?? 'This feature requires a paid plan.',
+      upgradeMessage: (detail.upgrade_message as string) ?? 'Upgrade to Pro to unlock this feature.',
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 async function fetchApi<T>(endpoint: string): Promise<T> {
   const controller = new AbortController();
@@ -610,6 +660,11 @@ async function fetchApi<T>(endpoint: string): Promise<T> {
       signal: controller.signal,
       headers: _authHeaders(),
     });
+    if (res.status === 402 || res.status === 403) {
+      const body = await res.json().catch(() => ({}));
+      _handlePlanError(res, body);
+      throw new Error(body?.detail?.message ?? `API error: ${res.status}`);
+    }
     if (!res.ok) {
       throw new Error(`API error: ${res.status}`);
     }
@@ -643,6 +698,7 @@ async function fetchApiAuth<T>(
     });
     if (res.status === 402) {
       const body = await res.json().catch(() => ({}));
+      _handlePlanError(res, body);
       const detail = body?.detail;
       if (detail?.code === 'PLAN_LIMIT_EXCEEDED') {
         throw new PlanLimitExceededError(detail as PlanLimitError);
@@ -651,6 +707,7 @@ async function fetchApiAuth<T>(
     }
     if (res.status === 403) {
       const body = await res.json().catch(() => ({}));
+      _handlePlanError(res, body);
       const detail = body?.detail;
       if (detail?.code === 'PREMIUM_REQUIRED') {
         throw new PremiumRequiredError(detail as PremiumRequiredDetail);
@@ -1165,7 +1222,7 @@ export interface KeywordIntelligence {
 
 export async function getKeywordIntelligence(appId: number): Promise<KeywordIntelligence> {
   const res = await fetch(`${API_BASE}/apps/${appId}/keyword-intelligence`, { cache: 'no-store', headers: _authHeaders() });
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  if (!res.ok) { await _checkUpgrade(res); throw new Error(`API error: ${res.status}`); }
   return res.json();
 }
 
@@ -1357,13 +1414,13 @@ export interface RevenueEstimate {
 
 export async function getInstallEstimate(appId: number): Promise<InstallEstimate> {
   const res = await fetch(`${API_BASE}/apps/${appId}/install-estimate`, { cache: 'no-store', headers: _authHeaders() });
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  if (!res.ok) { await _checkUpgrade(res); throw new Error(`API error: ${res.status}`); }
   return res.json();
 }
 
 export async function getRevenueEstimate(appId: number): Promise<RevenueEstimate> {
   const res = await fetch(`${API_BASE}/apps/${appId}/revenue-estimate`, { cache: 'no-store', headers: _authHeaders() });
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  if (!res.ok) { await _checkUpgrade(res); throw new Error(`API error: ${res.status}`); }
   return res.json();
 }
 
@@ -1392,7 +1449,7 @@ export interface DownloadEstimate {
 
 export async function getDownloadEstimate(appId: number): Promise<DownloadEstimate> {
   const res = await fetch(`${API_BASE}/apps/${appId}/download-estimate`, { cache: 'no-store', headers: _authHeaders() });
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  if (!res.ok) { await _checkUpgrade(res); throw new Error(`API error: ${res.status}`); }
   return res.json();
 }
 
@@ -1464,7 +1521,7 @@ export interface NicheRadarResponse {
 
 export async function getNicheRadar(limit = 20): Promise<NicheRadarResponse> {
   const res = await fetch(`${API_BASE}/niche-radar?limit=${limit}`, { cache: 'no-store', headers: _authHeaders() });
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  if (!res.ok) { await _checkUpgrade(res); throw new Error(`API error: ${res.status}`); }
   return res.json();
 }
 
@@ -1489,7 +1546,7 @@ export async function getReviewIntelligence(appId: number, force = false): Promi
     `${API_BASE}/apps/${appId}/review-intelligence?force=${force}`,
     { cache: 'no-store', headers: _authHeaders() }
   );
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  if (!res.ok) { await _checkUpgrade(res); throw new Error(`API error: ${res.status}`); }
   return res.json();
 }
 
@@ -1540,7 +1597,7 @@ export async function getAppAutopsy(appId: number, useLlm = true): Promise<AppAu
     `${API_BASE}/apps/${appId}/autopsy?use_llm=${useLlm}`,
     { cache: 'no-store', headers: _authHeaders() }
   );
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  if (!res.ok) { await _checkUpgrade(res); throw new Error(`API error: ${res.status}`); }
   return res.json();
 }
 
@@ -1765,13 +1822,13 @@ export async function getAppMetrics(appId: number, days = 30): Promise<MetricSna
 
 export async function getAppAdIntelligence(appId: number): Promise<AppAdIntelligence> {
   const res = await fetch(`${API_BASE}/apps/${appId}/ads`, { cache: 'no-store', headers: _authHeaders() });
-  if (!res.ok) throw new Error(`Failed to fetch ad intelligence: ${res.status}`);
+  if (!res.ok) { await _checkUpgrade(res); throw new Error(`Failed to fetch ad intelligence: ${res.status}`); }
   return res.json();
 }
 
 export async function scanAppAds(appId: number): Promise<{ status: string; creatives_upserted: number; campaigns_upserted: number }> {
   const res = await fetch(`${API_BASE}/apps/${appId}/ads/scan`, { method: 'POST', headers: _authHeaders(), cache: 'no-store' });
-  if (!res.ok) throw new Error(`Ad scan failed: ${res.status}`);
+  if (!res.ok) { await _checkUpgrade(res); throw new Error(`Ad scan failed: ${res.status}`); }
   return res.json();
 }
 
@@ -1787,13 +1844,13 @@ export async function getAdIntelligenceList(params: {
   if (params.skip !== undefined) p.set('skip', String(params.skip));
   if (params.limit !== undefined) p.set('limit', String(params.limit));
   const res = await fetch(`${API_BASE}/ads?${p}`, { cache: 'no-store', headers: _authHeaders() });
-  if (!res.ok) throw new Error(`Failed to fetch ad intelligence list: ${res.status}`);
+  if (!res.ok) { await _checkUpgrade(res); throw new Error(`Failed to fetch ad intelligence list: ${res.status}`); }
   return res.json();
 }
 
 export async function getAppGrowthEvents(appId: number, activeOnly = false): Promise<AppGrowthEvents> {
   const res = await fetch(`${API_BASE}/apps/${appId}/growth-events?active_only=${activeOnly}`, { cache: 'no-store', headers: _authHeaders() });
-  if (!res.ok) throw new Error(`Failed to fetch growth events: ${res.status}`);
+  if (!res.ok) { await _checkUpgrade(res); throw new Error(`Failed to fetch growth events: ${res.status}`); }
   return res.json();
 }
 
@@ -1811,7 +1868,7 @@ export async function getCampaignTrackingList(params: {
   if (params.skip !== undefined) p.set('skip', String(params.skip));
   if (params.limit !== undefined) p.set('limit', String(params.limit));
   const res = await fetch(`${API_BASE}/campaigns?${p}`, { cache: 'no-store', headers: _authHeaders() });
-  if (!res.ok) throw new Error(`Failed to fetch campaigns: ${res.status}`);
+  if (!res.ok) { await _checkUpgrade(res); throw new Error(`Failed to fetch campaigns: ${res.status}`); }
   return res.json();
 }
 

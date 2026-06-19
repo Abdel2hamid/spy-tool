@@ -12,3 +12,4 @@ export { SimpleChart, RankHistoryChart } from './Charts';
 export { SearchDropdown } from './SearchDropdown';
 export { SearchResultRow } from './SearchResultRow';
 export { SearchSection } from './SearchSection';
+export { UpgradeModalProvider, useUpgradeModal } from './UpgradeModal';
