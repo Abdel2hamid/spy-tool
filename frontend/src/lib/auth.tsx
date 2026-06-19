@@ -105,8 +105,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const register = useCallback(async (email: string, password: string, fullName?: string, planCode?: string): Promise<string | null> => {
     const data = await authRegister(email, password, fullName, planCode);
+    if (data.checkout_url) {
+      // Only save token — don't update React state so isAuthenticated stays false
+      // and the signup page doesn't redirect to "/" before Stripe opens
+      localStorage.setItem(TOKEN_KEY, data.access_token);
+      return data.checkout_url;
+    }
     _applyAuth(data);
-    return data.checkout_url ?? null;
+    return null;
   }, [_applyAuth]);
 
   const logout = useCallback(() => {
