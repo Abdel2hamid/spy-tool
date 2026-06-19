@@ -59,19 +59,8 @@ def create_checkout_session(
     cancel_url: str,
 ) -> stripe.checkout.Session:
     """
-    Create a Stripe Checkout session.
-    - free plan  → setup mode (saves card, no charge)
-    - paid plans → subscription mode with 7-day trial
+    Create a Stripe Checkout session for a paid plan with 7-day trial.
     """
-    if plan_code == "free":
-        return stripe.checkout.Session.create(
-            customer=customer_id,
-            mode="setup",
-            payment_method_types=["card", "paypal"],
-            success_url=success_url,
-            cancel_url=cancel_url,
-        )
-
     price_id = PLAN_TO_PRICE.get(plan_code)
     if not price_id:
         raise ValueError(f"No Stripe price configured for plan: {plan_code}")

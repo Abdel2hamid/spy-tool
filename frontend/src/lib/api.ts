@@ -1925,7 +1925,7 @@ export async function authRegister(
   email: string,
   password: string,
   fullName?: string,
-  planCode: string = 'free',
+  planCode: string = 'starter',
 ): Promise<AuthResponse> {
   const res = await fetch(`${API_BASE}/auth/register`, {
     method: 'POST',
