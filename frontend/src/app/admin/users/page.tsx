@@ -336,7 +336,7 @@ export default function AdminUsersPage() {
               <button onClick={() => setBulkPlanOpen(!bulkPlanOpen)} disabled={busyAction} className="rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 transition dark:border-indigo-700 dark:bg-gray-900 dark:text-indigo-300 dark:hover:bg-gray-800">Change Plan</button>
               {bulkPlanOpen && (
                 <div className="absolute left-0 top-full z-20 mt-1 w-40 rounded-lg border border-gray-200 bg-white py-1 shadow-xl dark:border-gray-700 dark:bg-gray-900">
-                  {['trial', 'starter', 'pro', 'enterprise'].map((p) => (
+                  {['trial', 'starter', 'pro', 'enterprise', 'lifetime'].map((p) => (
                     <button key={p} onClick={() => handleBulk('change_plan', p)} className="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800 capitalize">{p}</button>
                   ))}
                 </div>

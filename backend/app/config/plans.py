@@ -7,6 +7,7 @@ Plans:
   starter    - entry paid tier
   pro        - full power
   enterprise - unlimited
+  lifetime   - one-time purchase, full unlimited access forever
 
 Add new plans here; enforcement reads from PLAN_LIMITS[plan_code].
 All per-month limits; None means unlimited.
@@ -55,6 +56,13 @@ PLAN_LIMITS: dict[str, dict] = {
         "exports": None,
         "access_premium": True,
     },
+    "lifetime": {
+        "app_imports": None,
+        "keyword_refreshes": None,
+        "ai_requests": None,
+        "exports": None,
+        "access_premium": True,
+    },
 }
 
 _UPGRADE_MESSAGES: dict[str, str] = {
@@ -63,6 +71,7 @@ _UPGRADE_MESSAGES: dict[str, str] = {
     "starter": "Upgrade to Pro for unlimited access.",
     "pro": "You're on the Pro plan with unlimited access.",
     "enterprise": "You're on the Enterprise plan with unlimited access.",
+    "lifetime": "You're on the Lifetime plan with unlimited access.",
 }
 
 _ACTION_LABELS: dict[str, str] = {
@@ -79,6 +88,7 @@ PLAN_DISPLAY_NAMES: dict[str, str] = {
     "starter": "Starter",
     "pro": "Pro",
     "enterprise": "Enterprise",
+    "lifetime": "Lifetime",
 }
 
 

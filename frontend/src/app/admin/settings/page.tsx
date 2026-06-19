@@ -243,7 +243,7 @@ function PaymentSettings() {
 // Plans Settings Tab
 // ---------------------------------------------------------------------------
 
-const PLAN_CODES = ['free', 'starter', 'pro', 'enterprise'] as const;
+const PLAN_CODES = ['free', 'starter', 'pro', 'enterprise', 'lifetime'] as const;
 
 const LIMIT_FIELDS = [
   { key: 'app_imports', label: 'App Imports / month' },

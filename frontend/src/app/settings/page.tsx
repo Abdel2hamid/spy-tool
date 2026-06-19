@@ -551,6 +551,7 @@ const PLAN_LABELS: Record<string, { label: string; color: 'gray' | 'indigo' | 'v
   starter: { label: 'Starter', color: 'indigo' },
   pro: { label: 'Pro', color: 'violet' },
   enterprise: { label: 'Enterprise', color: 'violet' },
+  lifetime: { label: 'Lifetime', color: 'violet' },
 };
 
 function BillingSection({
@@ -569,7 +570,7 @@ function BillingSection({
   trialEndsAt: string | null;
 }) {
   const plan = PLAN_LABELS[planCode] ?? { label: planCode, color: 'gray' as const };
-  const isPro = planCode === 'pro' || planCode === 'enterprise';
+  const isPro = planCode === 'pro' || planCode === 'enterprise' || planCode === 'lifetime';
   const hasPaidSub = isPro && (status === 'active' || status === 'trialing');
 
   const [upgradeLoading, setUpgradeLoading] = useState(false);

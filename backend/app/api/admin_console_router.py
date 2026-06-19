@@ -1026,7 +1026,7 @@ class AdminSubscriptionUpdate(BaseModel):
     @field_validator("plan_code")
     @classmethod
     def valid_plan_code(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None and v not in ("free", "starter", "pro", "enterprise", "trial"):
+        if v is not None and v not in ("free", "starter", "pro", "enterprise", "trial", "lifetime"):
             raise ValueError("Invalid plan code")
         return v
 
