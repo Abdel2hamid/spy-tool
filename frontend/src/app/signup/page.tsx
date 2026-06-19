@@ -108,10 +108,10 @@ function SignupContent() {
   }, [searchParams]);
 
   useEffect(() => {
-    if (!isLoading && isAuthenticated) {
+    if (!isLoading && isAuthenticated && !submitting) {
       router.replace('/');
     }
-  }, [isAuthenticated, isLoading, router]);
+  }, [isAuthenticated, isLoading, router, submitting]);
 
   function handleSelectPlan(code: string) {
     setSelectedPlan(code);
@@ -139,20 +139,20 @@ function SignupContent() {
     try {
       const checkoutUrl = await register(email, password, fullName || undefined, selectedPlan || 'starter');
 
-      if (checkoutUrl && checkoutUrl.startsWith('https://checkout.stripe.com/')) {
-        // Redirect to Stripe Checkout for card collection
+      if (checkoutUrl) {
+        // Redirect to Stripe Checkout for payment collection
         window.location.href = checkoutUrl;
-      } else if (!checkoutUrl) {
-        // No Stripe configured — go to dashboard
-        router.replace('/');
+        return; // prevent any further state updates
       }
+      // No Stripe configured — go to dashboard
+      router.replace('/');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Registration failed. Please try again.');
       setSubmitting(false);
     }
   }
 
-  if (isLoading || isAuthenticated) {
+  if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950">
         <div className="w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
