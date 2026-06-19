@@ -563,6 +563,7 @@ def _run_migrations(db_engine):
                 conn.execute(text(sql))
                 conn.commit()
             except Exception as exc:
+                conn.rollback()
                 logger.warning(f"Migration skipped ({exc})")
 
 
@@ -759,6 +760,7 @@ def run_migrations_endpoint():
                 conn.commit()
                 results.append({"sql": sql[:80], "status": "ok"})
             except Exception as exc:
+                conn.rollback()
                 results.append({"sql": sql[:80], "status": f"FAILED: {exc}"})
     failed = [r for r in results if r["status"] != "ok"]
     return {"ok": len(failed) == 0, "total": len(results), "failed": failed}
