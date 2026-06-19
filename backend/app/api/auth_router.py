@@ -239,18 +239,17 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     checkout_url = None
     from app.services.stripe_service import is_configured
     if is_configured() and subscription:
-        from app.services import stripe_service
-        from app.config import settings as _s
-        import logging as _log
-
-        customer = stripe_service.create_customer(
-            email=user.email, name=user.full_name,
-        )
-        subscription.stripe_customer_id = customer.id
-        subscription.status = "pending_payment"
-        db.commit()
-
         try:
+            from app.services import stripe_service
+            from app.config import settings as _s
+
+            customer = stripe_service.create_customer(
+                email=user.email, name=user.full_name,
+            )
+            subscription.stripe_customer_id = customer.id
+            subscription.status = "pending_payment"
+            db.commit()
+
             session = stripe_service.create_checkout_session(
                 customer_id=customer.id,
                 plan_code=body.plan_code,
@@ -259,10 +258,11 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
             )
             checkout_url = session.url
         except Exception as exc:
-            _log.getLogger(__name__).error("Stripe checkout creation failed: %s", exc)
+            import logging as _log
+            _log.getLogger(__name__).error("Stripe setup failed: %s", exc, exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Payment setup failed: {exc}. Please try again.",
+                detail=f"Payment setup failed: {type(exc).__name__}: {exc}",
             )
 
     resp = _build_auth_response(user, workspace, membership, subscription, token)
