@@ -751,8 +751,17 @@ def root():
 @app.get("/api/v1/run-migrations")
 def run_migrations_endpoint():
     """Manually trigger migrations (temporary)."""
-    _run_migrations(engine)
-    return {"ok": True, "migrations_count": len(_MIGRATIONS)}
+    results = []
+    with engine.connect() as conn:
+        for sql in _MIGRATIONS:
+            try:
+                conn.execute(text(sql))
+                conn.commit()
+                results.append({"sql": sql[:80], "status": "ok"})
+            except Exception as exc:
+                results.append({"sql": sql[:80], "status": f"FAILED: {exc}"})
+    failed = [r for r in results if r["status"] != "ok"]
+    return {"ok": len(failed) == 0, "total": len(results), "failed": failed}
 
 
 @app.get("/health")
