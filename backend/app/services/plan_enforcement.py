@@ -33,7 +33,7 @@ from app.config.plans import (
     get_effective_plan,
     get_limit,
 )
-from app.models.models import Subscription, WorkspaceUsage
+from app.models.models import Subscription, User, WorkspaceUsage
 from app.services.auth_service import decode_access_token
 
 logger = logging.getLogger(__name__)
@@ -53,10 +53,12 @@ class PlanEnforcer:
         db: Session,
         workspace_id: int,
         subscription: Optional[Subscription],
+        is_superadmin: bool = False,
     ):
         self.db = db
         self.workspace_id = workspace_id
         self.plan_code = get_effective_plan(subscription)
+        self.is_superadmin = is_superadmin
         self._month = datetime.now(timezone.utc).strftime("%Y-%m")
 
     # ------------------------------------------------------------------
@@ -90,7 +92,13 @@ class PlanEnforcer:
             .filter(Subscription.workspace_id == workspace_id)
             .first()
         )
-        return cls(db, workspace_id, subscription)
+        # Check if user is superadmin — bypass plan restrictions
+        user_id = int(payload.get("sub", 0))
+        is_superadmin = False
+        if user_id:
+            user = db.query(User).filter(User.id == user_id).first()
+            is_superadmin = bool(user and user.is_superadmin)
+        return cls(db, workspace_id, subscription, is_superadmin=is_superadmin)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -121,8 +129,10 @@ class PlanEnforcer:
     def check_premium(self) -> None:
         """
         Raise HTTP 403 if the workspace plan does not include premium features.
-        Free users cannot access premium endpoints.
+        Free users cannot access premium endpoints. Superadmins bypass this check.
         """
+        if self.is_superadmin:
+            return
         if not can_access_premium(self.plan_code):
             upgrade_msg = _UPGRADE_MESSAGES.get(
                 self.plan_code, "Upgrade to unlock premium features."
@@ -140,8 +150,10 @@ class PlanEnforcer:
     def check(self, action: str) -> None:
         """
         Raise HTTP 402 if the workspace has reached its plan limit for action.
-        No-op if the plan has unlimited access (limit=None).
+        No-op if the plan has unlimited access (limit=None). Superadmins bypass.
         """
+        if self.is_superadmin:
+            return
         limit = get_limit(self.plan_code, action)
         if limit is None:
             return  # unlimited plan
