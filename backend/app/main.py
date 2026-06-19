@@ -747,6 +747,13 @@ def root():
     }
 
 
+@app.get("/run-migrations")
+def run_migrations_endpoint():
+    """Manually trigger migrations (temporary)."""
+    _run_migrations(engine)
+    return {"ok": True, "migrations_count": len(_MIGRATIONS)}
+
+
 @app.get("/health")
 def health_check():
     """Real health check: verifies DB connectivity and scheduler state."""
