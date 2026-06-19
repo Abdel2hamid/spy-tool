@@ -472,51 +472,98 @@ async def job_full_metadata():
 @_with_timeout("backfill_incomplete")
 async def job_backfill_incomplete():
     """
-    Find apps missing full metadata (no description) and scrape them.
-    Processes up to 200 apps per run, prioritizing recently created apps.
+    Fast bulk backfill for apps missing metadata (no description).
+    Uses iTunes batch lookup API (200 IDs per request) for ~100x speed vs
+    individual full scrapes.  Processes up to 1000 apps per run.
     """
     job_id = "backfill_incomplete"
     t0 = _log_start(job_id)
-    from app.workers.tasks import ScraperWorker
+    import urllib.request
+    import json as _json
     from app.models.models import App
     from app.database import SessionLocal
 
     db = SessionLocal()
+    total_updated = 0
     try:
-        # Find apps with no description (never fully enriched)
-        incomplete = (
-            db.query(App.app_id)
-            .filter(App.description.is_(None))
-            .order_by(App.created_at.desc())
-            .limit(200)
-            .all()
-        )
-        app_ids = [row[0] for row in incomplete]
-        db.close()
+        max_apps = 1000
+        while total_updated < max_apps:
+            rows = (
+                db.query(App)
+                .filter(App.description.is_(None))
+                .order_by(App.created_at.desc())
+                .limit(200)
+                .all()
+            )
+            if not rows:
+                break
 
-        if not app_ids:
-            _log_done(job_id, t0, "0 incomplete apps found")
-            return
+            store_ids = [a.app_id for a in rows]
+            app_map = {str(a.app_id): a for a in rows}
 
-        logger.info(f"[SCHEDULER]    {job_id}: found {len(app_ids)} incomplete apps to backfill")
+            ids_param = ",".join(str(sid) for sid in store_ids)
+            url = f"https://itunes.apple.com/lookup?id={ids_param}&country=us&entity=software"
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "RankSpy/1.0"})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = _json.loads(resp.read().decode())
+            except Exception as e:
+                logger.warning(f"[SCHEDULER]    {job_id}: iTunes batch lookup failed: {e}")
+                break
 
-        worker = ScraperWorker()
-        await worker.initialize()
-        try:
-            success = 0
-            for app_id in app_ids:
-                try:
-                    ok = await worker.scrape_app_full_details(app_id)
-                    if ok:
-                        success += 1
-                except Exception as e:
-                    logger.warning(f"[SCHEDULER]    {job_id}: failed {app_id}: {e}")
-            _log_done(job_id, t0, f"{success}/{len(app_ids)} apps backfilled")
-        finally:
-            await worker.cleanup()
+            results = data.get("results", [])
+            batch_updated = 0
+            for r in results:
+                track_id = str(r.get("trackId", ""))
+                app_obj = app_map.get(track_id)
+                if not app_obj:
+                    continue
+                app_obj.description = r.get("description") or app_obj.description
+                app_obj.subtitle = r.get("subtitle") or app_obj.subtitle
+                app_obj.developer = r.get("sellerName") or r.get("artistName") or app_obj.developer
+                app_obj.icon_url = r.get("artworkUrl512") or r.get("artworkUrl100") or app_obj.icon_url
+                genres = r.get("genres", [])
+                app_obj.primary_category = r.get("primaryGenreName") or (genres[0] if genres else None) or app_obj.primary_category
+                app_obj.current_rating = r.get("averageUserRating") or app_obj.current_rating
+                app_obj.current_reviews = r.get("userRatingCount") or app_obj.current_reviews or 0
+                app_obj.current_version = r.get("version") or app_obj.current_version
+                app_obj.is_free = r.get("price", 0) == 0
+                app_obj.price = r.get("price", 0)
+                screenshots = r.get("screenshotUrls", []) + r.get("ipadScreenshotUrls", [])
+                if screenshots:
+                    app_obj.screenshots = screenshots
+                if r.get("releaseDate"):
+                    try:
+                        from datetime import datetime as _dt, timezone as _tz
+                        app_obj.release_date = _dt.fromisoformat(r["releaseDate"].replace("Z", "+00:00"))
+                    except Exception:
+                        pass
+                if r.get("currentVersionReleaseDate"):
+                    try:
+                        from datetime import datetime as _dt
+                        app_obj.last_updated = _dt.fromisoformat(r["currentVersionReleaseDate"].replace("Z", "+00:00"))
+                    except Exception:
+                        pass
+                app_obj.url = r.get("trackViewUrl") or app_obj.url
+                batch_updated += 1
+
+            # Mark apps that weren't in iTunes results (removed from store)
+            for sid in store_ids:
+                if str(sid) not in {str(r.get("trackId", "")) for r in results}:
+                    orphan = app_map.get(str(sid))
+                    if orphan and not orphan.description:
+                        orphan.description = "(Removed from App Store)"
+
+            db.commit()
+            total_updated += batch_updated
+            logger.info(f"[SCHEDULER]    {job_id}: batch {batch_updated} updated, {total_updated} total")
+
+        _log_done(job_id, t0, f"{total_updated} apps backfilled via iTunes batch lookup")
     except Exception as exc:
-        db.close()
+        db.rollback()
         _log_fail(job_id, exc)
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1721,12 +1768,12 @@ def setup_scheduler() -> AsyncIOScheduler:
     scheduler.add_job(
         job_backfill_incomplete,
         trigger=IntervalTrigger(
-            hours=2,
-            start_date=now + timedelta(minutes=5),
+            hours=1,
+            start_date=now + timedelta(minutes=3),
             timezone="UTC",
         ),
         id="backfill_incomplete",
-        name="Every 2h: Backfill Incomplete Apps",
+        name="Every 1h: Backfill Incomplete Apps (iTunes batch)",
         **_JOB_DEFAULTS,
     )
 

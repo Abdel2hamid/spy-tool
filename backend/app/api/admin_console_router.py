@@ -1241,6 +1241,124 @@ def force_rescrape(
     return {"ok": True, "app_id": app_id, "name": app.name}
 
 
+@router.post("/apps/bulk-backfill")
+def bulk_backfill_apps(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_superadmin),
+    batch_size: int = Query(default=200, ge=50, le=1000),
+):
+    """
+    Fast bulk backfill for apps missing descriptions.
+    Uses iTunes batch lookup API (200 IDs per request) instead of
+    individual full scrapes — ~100x faster than the scheduled job.
+    Runs synchronously in a background thread; returns immediately.
+    """
+    incomplete_count = (
+        db.query(func.count(App.id))
+        .filter(App.description.is_(None))
+        .scalar() or 0
+    )
+    if incomplete_count == 0:
+        return {"ok": True, "message": "No incomplete apps found", "total_incomplete": 0}
+
+    def _run_bulk_backfill():
+        import urllib.request
+        import json as _json
+        from app.database import SessionLocal
+
+        sess = SessionLocal()
+        total_updated = 0
+        try:
+            # Process in batches of 200 (iTunes API limit)
+            while True:
+                rows = (
+                    sess.query(App)
+                    .filter(App.description.is_(None))
+                    .order_by(App.created_at.desc())
+                    .limit(200)
+                    .all()
+                )
+                if not rows:
+                    break
+
+                store_ids = [a.app_id for a in rows]
+                app_map = {str(a.app_id): a for a in rows}
+
+                # Batch iTunes lookup (comma-separated IDs)
+                ids_param = ",".join(str(sid) for sid in store_ids)
+                url = f"https://itunes.apple.com/lookup?id={ids_param}&country=us&entity=software"
+                try:
+                    req = urllib.request.Request(url, headers={"User-Agent": "RankSpy/1.0"})
+                    with urllib.request.urlopen(req, timeout=30) as resp:
+                        data = _json.loads(resp.read().decode())
+                except Exception as e:
+                    logger.error(f"[BULK-BACKFILL] iTunes batch lookup failed: {e}")
+                    break
+
+                results = data.get("results", [])
+                batch_updated = 0
+                for r in results:
+                    track_id = str(r.get("trackId", ""))
+                    app_obj = app_map.get(track_id)
+                    if not app_obj:
+                        continue
+
+                    app_obj.description = r.get("description") or app_obj.description
+                    app_obj.subtitle = r.get("subtitle") or app_obj.subtitle
+                    app_obj.developer = r.get("sellerName") or r.get("artistName") or app_obj.developer
+                    app_obj.developer_id = str(r.get("artistId", "")) or app_obj.developer_id
+                    app_obj.icon_url = r.get("artworkUrl512") or r.get("artworkUrl100") or app_obj.icon_url
+                    genres = r.get("genres", [])
+                    app_obj.primary_category = r.get("primaryGenreName") or (genres[0] if genres else None) or app_obj.primary_category
+                    app_obj.secondary_category = (genres[1] if len(genres) > 1 else None) or app_obj.secondary_category
+                    app_obj.current_rating = r.get("averageUserRating") or app_obj.current_rating
+                    app_obj.current_reviews = r.get("userRatingCount") or app_obj.current_reviews or 0
+                    app_obj.current_version = r.get("version") or app_obj.current_version
+                    app_obj.content_rating = r.get("contentAdvisoryRating") or app_obj.content_rating
+                    app_obj.is_free = r.get("price", 0) == 0
+                    app_obj.price = r.get("price", 0)
+                    app_obj.currency = r.get("currency", "USD")
+                    screenshots = r.get("screenshotUrls", []) + r.get("ipadScreenshotUrls", [])
+                    if screenshots:
+                        app_obj.screenshots = screenshots
+                    if r.get("releaseDate"):
+                        try:
+                            app_obj.release_date = datetime.fromisoformat(r["releaseDate"].replace("Z", "+00:00"))
+                        except Exception:
+                            pass
+                    if r.get("currentVersionReleaseDate"):
+                        try:
+                            app_obj.last_updated = datetime.fromisoformat(r["currentVersionReleaseDate"].replace("Z", "+00:00"))
+                        except Exception:
+                            pass
+                    app_obj.url = r.get("trackViewUrl") or app_obj.url
+                    batch_updated += 1
+
+                sess.commit()
+                total_updated += batch_updated
+                logger.info(f"[BULK-BACKFILL] Batch done: {batch_updated} updated, {total_updated} total so far")
+
+                if total_updated >= batch_size:
+                    break
+
+            logger.info(f"[BULK-BACKFILL] Complete: {total_updated} apps updated")
+        except Exception as exc:
+            logger.error(f"[BULK-BACKFILL] Failed: {exc}")
+            sess.rollback()
+        finally:
+            sess.close()
+
+    t = threading.Thread(target=_run_bulk_backfill, daemon=True)
+    t.start()
+
+    _log_activity(db, admin, "apps.bulk_backfill", detail={"batch_size": batch_size, "total_incomplete": incomplete_count})
+    return {
+        "ok": True,
+        "message": f"Bulk backfill started for up to {batch_size} apps",
+        "total_incomplete": incomplete_count,
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # System Health
 # ═══════════════════════════════════════════════════════════════════════════════
