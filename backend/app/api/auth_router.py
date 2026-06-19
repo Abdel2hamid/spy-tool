@@ -212,7 +212,15 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     - Assigns owner role
     - Creates Stripe customer + checkout session (if Stripe configured)
     - Subscription starts as pending_payment until card is collected
+
+    If email already exists with pending_payment subscription (Stripe failed
+    on a previous attempt), allow retry by generating a new checkout session.
     """
+    from app.models.models import Membership, Subscription, User
+    from app.services.stripe_service import is_configured
+    from app.services.auth_service import verify_password, create_access_token
+
+    is_retry = False
     try:
         user, workspace, token = register_user(
             db,
@@ -222,12 +230,30 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
             plan_code=body.plan_code,
         )
     except EmailAlreadyRegistered:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Unable to create account. Please try a different email or sign in.",
-        )
+        # Check if this is a retry — user exists but never completed payment
+        existing_user = db.query(User).filter(User.email == body.email.lower().strip()).first()
+        if not existing_user or not verify_password(body.password, existing_user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Unable to create account. Please try a different email or sign in.",
+            )
+        # Find their workspace + subscription
+        mem = db.query(Membership).filter(Membership.user_id == existing_user.id).first()
+        if not mem:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Account exists. Please sign in.")
+        sub = db.query(Subscription).filter(Subscription.workspace_id == mem.workspace_id).first()
+        # Only allow retry if subscription is pending_payment (never completed checkout)
+        if not sub or sub.status not in ("pending_payment", "trialing"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Unable to create account. Please try a different email or sign in.",
+            )
+        from app.models.models import Workspace
+        user = existing_user
+        workspace = db.query(Workspace).filter(Workspace.id == mem.workspace_id).first()
+        token = create_access_token(user.id, workspace.id)
+        is_retry = True
 
-    from app.models.models import Membership, Subscription
     membership = db.query(Membership).filter(
         Membership.user_id == user.id, Membership.workspace_id == workspace.id
     ).first()
@@ -237,21 +263,24 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
 
     # Create Stripe customer + checkout session
     checkout_url = None
-    from app.services.stripe_service import is_configured
     if is_configured() and subscription:
         try:
             from app.services import stripe_service
             from app.config import settings as _s
 
-            customer = stripe_service.create_customer(
-                email=user.email, name=user.full_name,
-            )
-            subscription.stripe_customer_id = customer.id
+            # Reuse existing Stripe customer or create new one
+            if not subscription.stripe_customer_id:
+                customer = stripe_service.create_customer(
+                    email=user.email, name=user.full_name,
+                )
+                subscription.stripe_customer_id = customer.id
             subscription.status = "pending_payment"
+            if not is_retry:
+                subscription.plan_code = body.plan_code
             db.commit()
 
             session = stripe_service.create_checkout_session(
-                customer_id=customer.id,
+                customer_id=subscription.stripe_customer_id,
                 plan_code=body.plan_code,
                 success_url=f"{_s.frontend_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
                 cancel_url=f"{_s.frontend_url}/signup",
