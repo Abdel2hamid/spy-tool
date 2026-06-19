@@ -22,9 +22,16 @@ from typing import Optional
 
 PLAN_LIMITS: dict[str, dict] = {
     "free": {
-        "app_imports": 5,
-        "keyword_refreshes": 10,
-        "ai_requests": 5,
+        "app_imports": 0,
+        "keyword_refreshes": 0,
+        "ai_requests": 0,
+        "exports": 0,
+        "access_premium": False,
+    },
+    "expired": {
+        "app_imports": 0,
+        "keyword_refreshes": 0,
+        "ai_requests": 0,
         "exports": 0,
         "access_premium": False,
     },
@@ -66,7 +73,8 @@ PLAN_LIMITS: dict[str, dict] = {
 }
 
 _UPGRADE_MESSAGES: dict[str, str] = {
-    "free": "Start your free trial or upgrade to Pro for higher limits.",
+    "free": "Subscribe to a paid plan to continue using RankSpy.",
+    "expired": "Your free trial has ended. Subscribe to a paid plan to continue.",
     "trial": "Upgrade to Pro for unlimited access after your trial.",
     "starter": "Upgrade to Pro for unlimited access.",
     "pro": "You're on the Pro plan with unlimited access.",
@@ -84,6 +92,7 @@ _ACTION_LABELS: dict[str, str] = {
 # Human-readable display names for the plan
 PLAN_DISPLAY_NAMES: dict[str, str] = {
     "free": "Free",
+    "expired": "Expired",
     "trial": "Trial",
     "starter": "Starter",
     "pro": "Pro",
@@ -100,26 +109,27 @@ def get_effective_plan(subscription) -> str:
     """
     Resolve the plan code whose limits apply to this workspace.
     - trialing + not expired → 'trial'
-    - trialing + expired     → 'free'  (auto-downgrade)
-    - active                 → subscription.plan_code  (or 'free' if unknown code)
-    - else                   → 'free'   (expired / cancelled / missing)
+    - trialing + expired     → 'expired'  (must subscribe)
+    - active                 → subscription.plan_code
+    - else                   → 'expired'  (cancelled / missing — must subscribe)
     """
     if subscription is None:
-        return "free"
+        return "expired"
     if subscription.status == "pending_payment":
-        return "free"
+        # Allow pending_payment to proceed (Stripe checkout in progress)
+        return "trial"
     if subscription.status == "trialing":
-        # Check if trial has actually expired
         from datetime import datetime, timezone
         if subscription.trial_ends_at and subscription.trial_ends_at.replace(
             tzinfo=timezone.utc
         ) < datetime.now(timezone.utc):
-            return "free"
+            return "expired"
         return "trial"
     if subscription.status == "active":
-        code = subscription.plan_code or "free"
-        return code if code in PLAN_LIMITS else "free"
-    return "free"
+        code = subscription.plan_code or "expired"
+        return code if code in PLAN_LIMITS else "expired"
+    # canceled, past_due, etc.
+    return "expired"
 
 
 def get_limit(plan_code: str, action: str) -> Optional[int]:

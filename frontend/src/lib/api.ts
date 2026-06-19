@@ -638,6 +638,13 @@ function _handlePlanError(res: Response, body: Record<string, unknown>): void {
       plan: (detail.plan as string) ?? 'free',
       upgradeMessage: (detail.upgrade_message as string) ?? 'Upgrade to Pro for higher limits.',
     });
+  } else if (res.status === 403 && detail.code === 'SUBSCRIPTION_REQUIRED') {
+    emitUpgradeEvent({
+      kind: 'premium_required',
+      plan: (detail.plan as string) ?? 'expired',
+      message: (detail.message as string) ?? 'Your free trial has ended.',
+      upgradeMessage: (detail.upgrade_message as string) ?? 'Subscribe to a paid plan to continue.',
+    });
   } else if (res.status === 403 && detail.code === 'PREMIUM_REQUIRED') {
     emitUpgradeEvent({
       kind: 'premium_required',
@@ -1882,6 +1889,7 @@ export interface SubscriptionInfo {
   trial_ends_at: string | null;
   is_trialing: boolean;
   trial_days_left: number | null;
+  trial_expired: boolean;
 }
 
 export interface WorkspaceInfo {

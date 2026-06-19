@@ -9,7 +9,7 @@ import DashboardPage from './DashboardClient';
 import LandingPage from './landing/page';
 
 export default function Page() {
-  const { isAuthenticated, isLoading, isPendingPayment } = useAuth();
+  const { isAuthenticated, isLoading, isPendingPayment, isTrialExpired } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
@@ -17,6 +17,9 @@ export default function Page() {
       router.replace('/payment');
     }
   }, [isLoading, isAuthenticated, isPendingPayment, router]);
+
+  // Trial expired users get the subscribe wall via AuthGuard in DashboardPage
+  // No special handling needed here — DashboardPage uses AppShell which includes AuthGuard
 
   if (isLoading) {
     return (

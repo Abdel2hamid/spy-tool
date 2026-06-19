@@ -77,7 +77,7 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     full_name: Optional[str] = None
-    plan_code: str = "free"
+    plan_code: str = "starter"
 
     @field_validator("password")
     @classmethod
@@ -87,8 +87,8 @@ class RegisterRequest(BaseModel):
     @field_validator("plan_code")
     @classmethod
     def valid_plan(cls, v: str) -> str:
-        if v not in ("free", "starter", "pro", "enterprise"):
-            raise ValueError("Invalid plan code")
+        if v not in ("starter", "pro", "enterprise"):
+            raise ValueError("Please select a paid plan (starter, pro, or enterprise)")
         return v
 
 
@@ -103,6 +103,7 @@ class SubscriptionInfo(BaseModel):
     trial_ends_at: Optional[datetime]
     is_trialing: bool
     trial_days_left: Optional[int]
+    trial_expired: bool = False
 
 
 class WorkspaceInfo(BaseModel):
@@ -140,22 +141,35 @@ class MeResponse(BaseModel):
 
 def _subscription_info(sub, membership_role: str) -> Optional[SubscriptionInfo]:
     if not sub:
-        return None
+        return SubscriptionInfo(
+            plan_code="expired",
+            status="expired",
+            trial_ends_at=None,
+            is_trialing=False,
+            trial_days_left=None,
+            trial_expired=True,
+        )
     now = datetime.now(timezone.utc)
     trial_days_left = None
     is_trialing = sub.status == "trialing"
+    trial_expired = False
     if is_trialing and sub.trial_ends_at:
         trial_end = sub.trial_ends_at
         if trial_end.tzinfo is None:
             trial_end = trial_end.replace(tzinfo=timezone.utc)
         remaining = (trial_end - now).days
         trial_days_left = max(0, remaining)
+        trial_expired = trial_end < now
+    elif sub.status not in ("active", "pending_payment", "trialing"):
+        # canceled, past_due, etc. — treat as expired
+        trial_expired = True
     return SubscriptionInfo(
         plan_code=sub.plan_code,
         status=sub.status,
         trial_ends_at=sub.trial_ends_at,
         is_trialing=is_trialing,
         trial_days_left=trial_days_left,
+        trial_expired=trial_expired,
     )
 
 

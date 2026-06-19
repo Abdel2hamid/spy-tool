@@ -126,13 +126,27 @@ class PlanEnforcer:
     # Public API
     # ------------------------------------------------------------------
 
+    def _require_active_subscription(self) -> None:
+        """Raise HTTP 403 if the user's trial has expired and they have no paid plan."""
+        if self.plan_code in ("expired", "free"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "SUBSCRIPTION_REQUIRED",
+                    "message": "Your free trial has ended. Please subscribe to continue using RankSpy.",
+                    "plan": self.plan_code,
+                    "upgrade_message": _UPGRADE_MESSAGES.get(self.plan_code, "Subscribe to a paid plan to continue."),
+                },
+            )
+
     def check_premium(self) -> None:
         """
         Raise HTTP 403 if the workspace plan does not include premium features.
-        Free users cannot access premium endpoints. Superadmins bypass this check.
+        Expired users get SUBSCRIPTION_REQUIRED. Superadmins bypass.
         """
         if self.is_superadmin:
             return
+        self._require_active_subscription()
         if not can_access_premium(self.plan_code):
             upgrade_msg = _UPGRADE_MESSAGES.get(
                 self.plan_code, "Upgrade to unlock premium features."
@@ -150,10 +164,11 @@ class PlanEnforcer:
     def check(self, action: str) -> None:
         """
         Raise HTTP 402 if the workspace has reached its plan limit for action.
-        No-op if the plan has unlimited access (limit=None). Superadmins bypass.
+        Expired users get SUBSCRIPTION_REQUIRED. Superadmins bypass.
         """
         if self.is_superadmin:
             return
+        self._require_active_subscription()
         limit = get_limit(self.plan_code, action)
         if limit is None:
             return  # unlimited plan

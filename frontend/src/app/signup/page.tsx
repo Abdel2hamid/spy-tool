@@ -25,21 +25,6 @@ export default function SignupPage() {
 
 const PLANS = [
   {
-    code: 'free',
-    name: 'Free',
-    price: '$0',
-    period: '/forever',
-    description: 'Explore the platform basics',
-    features: [
-      '5 app imports / month',
-      '10 keyword refreshes / month',
-      '5 AI requests / month',
-    ],
-    excluded: ['Export data', 'Premium features'],
-    cta: 'Get Started',
-    popular: false,
-  },
-  {
     code: 'starter',
     name: 'Starter',
     price: '$29',
@@ -53,7 +38,7 @@ const PLANS = [
       'All premium features',
     ],
     excluded: [],
-    cta: 'Start Free Trial',
+    cta: 'Start 7-Day Free Trial',
     popular: false,
   },
   {
@@ -70,7 +55,7 @@ const PLANS = [
       'All premium features',
     ],
     excluded: [],
-    cta: 'Start Free Trial',
+    cta: 'Start 7-Day Free Trial',
     popular: true,
   },
   {
@@ -87,7 +72,7 @@ const PLANS = [
       'SLA guarantee',
     ],
     excluded: [],
-    cta: 'Start Free Trial',
+    cta: 'Start 7-Day Free Trial',
     popular: false,
   },
 ];
@@ -152,7 +137,7 @@ function SignupContent() {
 
     setSubmitting(true);
     try {
-      const checkoutUrl = await register(email, password, fullName || undefined, selectedPlan || 'free');
+      const checkoutUrl = await register(email, password, fullName || undefined, selectedPlan || 'starter');
 
       if (checkoutUrl && checkoutUrl.startsWith('https://checkout.stripe.com/')) {
         // Redirect to Stripe Checkout for card collection
@@ -222,7 +207,7 @@ function SignupContent() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
           <div className="text-center mb-10">
             <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Choose your plan</h1>
-            <p className="text-gray-500 dark:text-gray-400">All paid plans include a 7-day free trial. No charge until the trial ends.</p>
+            <p className="text-gray-500 dark:text-gray-400">All plans include a 7-day free trial. No charge until the trial ends.</p>
           </div>
 
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">

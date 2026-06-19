@@ -21,6 +21,7 @@ export interface SubscriptionInfo {
   trial_ends_at: string | null;
   is_trialing: boolean;
   trial_days_left: number | null;
+  trial_expired: boolean;
 }
 
 export interface WorkspaceInfo {
@@ -50,6 +51,7 @@ interface AuthContextValue {
   isLoading: boolean;
   isAuthenticated: boolean;
   isPendingPayment: boolean;
+  isTrialExpired: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, fullName?: string, planCode?: string) => Promise<string | null>;
   logout: () => void;
@@ -123,6 +125,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isLoading,
         isAuthenticated: !!user,
         isPendingPayment: workspace?.subscription?.status === 'pending_payment',
+        isTrialExpired: !!(workspace?.subscription?.trial_expired),
         login,
         register,
         logout,
