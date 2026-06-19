@@ -2420,6 +2420,15 @@ export async function adminGetSystemHealth(): Promise<AdminSystemHealth> {
   return _adminFetch('/admin-console/system');
 }
 
+export async function adminBulkBackfill(batchSize = 1000): Promise<{ ok: boolean; message: string; total_incomplete: number }> {
+  const res = await fetch(`${API_BASE}/admin-console/apps/bulk-backfill?batch_size=${batchSize}`, {
+    method: 'POST',
+    headers: _authHeaders(),
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
 export async function adminResetPassword(userId: number, newPassword: string): Promise<{ ok: boolean }> {
   const res = await fetch(`${API_BASE}/admin-console/users/${userId}/reset-password`, {
     method: 'POST',
