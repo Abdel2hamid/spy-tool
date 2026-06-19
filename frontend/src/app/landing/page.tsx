@@ -198,23 +198,6 @@ const FEATURES = [
 
 const PLANS = [
   {
-    code: 'free',
-    name: 'Free',
-    price: '$0',
-    period: '/forever',
-    description: 'Explore the platform basics',
-    features: [
-      { text: '5 app imports / month', included: true },
-      { text: '10 keyword refreshes / month', included: true },
-      { text: '5 AI requests / month', included: true },
-      { text: 'Export data', included: false },
-      { text: 'Premium features', included: false },
-    ],
-    cta: 'Get Started',
-    popular: false,
-    color: 'border-gray-200 dark:border-gray-800',
-  },
-  {
     code: 'starter',
     name: 'Starter',
     price: '$29',
@@ -227,7 +210,7 @@ const PLANS = [
       { text: '50 exports / month', included: true },
       { text: 'All premium features', included: true },
     ],
-    cta: 'Start Free Trial',
+    cta: 'Start 7-Day Free Trial',
     popular: false,
     color: 'border-gray-200 dark:border-gray-800',
   },
@@ -244,7 +227,7 @@ const PLANS = [
       { text: 'Unlimited exports', included: true },
       { text: 'All premium features', included: true },
     ],
-    cta: 'Start Free Trial',
+    cta: 'Start 7-Day Free Trial',
     popular: true,
     color: 'border-indigo-500 dark:border-indigo-400',
   },
@@ -261,7 +244,7 @@ const PLANS = [
       { text: 'Dedicated account manager', included: true },
       { text: 'SLA guarantee', included: true },
     ],
-    cta: 'Contact Sales',
+    cta: 'Start 7-Day Free Trial',
     popular: false,
     color: 'border-gray-200 dark:border-gray-800',
   },
@@ -298,7 +281,7 @@ const TESTIMONIALS = [
 const FAQS = [
   {
     q: 'How does the 7-day free trial work?',
-    a: 'Sign up with just your email and password — no credit card required. You get full access to all Pro features for 7 days. If you love it, pick a plan. If not, you can continue on the free tier.',
+    a: 'Pick any plan and create your account. You get full access to all features for 7 days. Your subscription begins automatically after the trial ends.',
   },
   {
     q: 'What makes RankSpy different from Sensor Tower or data.ai?',
@@ -318,7 +301,7 @@ const FAQS = [
   },
   {
     q: 'Can I cancel my subscription anytime?',
-    a: 'Yes. You can cancel anytime from your account settings. No long-term contracts, no cancellation fees. Your data stays accessible on the free tier.',
+    a: 'Yes. You can cancel anytime from your account settings. No long-term contracts, no cancellation fees.',
   },
 ];
 
@@ -330,7 +313,7 @@ const COMPARISONS = [
   { feature: 'Rank Monitoring', us: true, others: true },
   { feature: 'Download Estimates', us: true, others: true },
   { feature: 'Blowing-Up Detection', us: true, others: false },
-  { feature: 'Starting Price', us: '$0/mo', others: '$149/mo' },
+  { feature: 'Starting Price', us: '$29/mo', others: '$149/mo' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -387,7 +370,7 @@ function Navbar() {
               href="/signup"
               className="text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg transition-all duration-200 shadow-sm shadow-indigo-500/25 hover:shadow-md hover:shadow-indigo-500/30 hover:-translate-y-px"
             >
-              Start Free Trial
+              Start 7-Day Free Trial
             </Link>
           </div>
 
@@ -408,7 +391,7 @@ function Navbar() {
                 Sign In
               </Link>
               <Link href="/signup" className="flex-1 text-center text-sm font-medium text-white bg-indigo-600 px-4 py-2.5 rounded-lg">
-                Start Free Trial
+                Start 7-Day Free Trial
               </Link>
             </div>
           </div>
@@ -475,7 +458,7 @@ function HeroSection() {
               href="/signup"
               className="group w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-8 py-3.5 rounded-xl text-base transition-all duration-300 shadow-lg shadow-indigo-500/25 hover:shadow-xl hover:shadow-indigo-500/40 hover:-translate-y-0.5"
             >
-              Start Free Trial
+              Start 7-Day Free Trial
               <ArrowRight className="w-4 h-4 transition-transform duration-300 group-hover:translate-x-1" />
             </Link>
             <a
@@ -488,7 +471,7 @@ function HeroSection() {
           </div>
 
           <p className="mt-5 text-sm text-gray-500 dark:text-gray-500">
-            7-day free trial &middot; No credit card required &middot; Cancel anytime
+            7-day free trial &middot; Cancel anytime
           </p>
         </div>
 
@@ -729,7 +712,7 @@ function PricingSection() {
 
         <AnimateIn className="text-center mt-8">
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            All plans include a 7-day free trial. No credit card required.
+            All plans include a 7-day free trial.
           </p>
         </AnimateIn>
       </div>
@@ -857,7 +840,7 @@ function CTASection() {
                   href="/signup"
                   className="group w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-white text-indigo-700 font-semibold px-8 py-3.5 rounded-xl text-base hover:bg-indigo-50 transition-all duration-300 shadow-lg hover:-translate-y-0.5"
                 >
-                  Start Free Trial
+                  Start 7-Day Free Trial
                   <ArrowRight className="w-4 h-4 transition-transform duration-300 group-hover:translate-x-1" />
                 </Link>
                 <Link
@@ -868,7 +851,7 @@ function CTASection() {
                 </Link>
               </div>
               <p className="mt-5 text-sm text-indigo-200">
-                No credit card required &middot; 7-day free trial &middot; Cancel anytime
+                7-day free trial &middot; Cancel anytime
               </p>
             </div>
           </div>
