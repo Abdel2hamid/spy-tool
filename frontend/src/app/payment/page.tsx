@@ -15,6 +15,12 @@ export default function PaymentPage() {
 
   const planCode = workspace?.subscription?.plan_code || 'free';
 
+  // Lifetime plan doesn't need payment — go straight to dashboard
+  if (planCode === 'lifetime' && !isLoading && isAuthenticated) {
+    router.replace('/');
+    return null;
+  }
+
   async function handlePay() {
     if (!token) return;
     setLoading(true);
@@ -120,8 +126,7 @@ export default function PaymentPage() {
         <p className="text-center text-xs text-gray-400">
           <button onClick={logout} className="hover:text-gray-600 underline">
             Sign out
-          </button>{' '}
-          and use a different account
+          </button>
         </p>
       </div>
     </div>
