@@ -118,7 +118,11 @@ def get_effective_plan(subscription) -> str:
     if subscription.status == "active":
         code = subscription.plan_code or "expired"
         return code if code in PLAN_LIMITS else "expired"
-    # canceled, past_due, etc.
+    if subscription.status == "past_due":
+        # Grace period — keep current plan but warn
+        code = subscription.plan_code or "expired"
+        return code if code in PLAN_LIMITS else "expired"
+    # canceled, incomplete, incomplete_expired, paused, etc.
     return "expired"
 
 

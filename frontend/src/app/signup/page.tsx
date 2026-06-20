@@ -78,6 +78,7 @@ function SignupContent() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -115,6 +116,10 @@ function SignupContent() {
     }
     if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password)) {
       setError('Password must contain uppercase, lowercase, and a digit.');
+      return;
+    }
+    if (!agreedToTerms) {
+      setError('You must agree to the Terms of Service and Privacy Policy.');
       return;
     }
 
@@ -342,6 +347,27 @@ function SignupContent() {
               )}
             </div>
 
+            {/* Terms acceptance checkbox */}
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={agreedToTerms}
+                onChange={(e) => setAgreedToTerms(e.target.checked)}
+                className="mt-1 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <span className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+                I agree to the{' '}
+                <Link href="/terms" className="text-indigo-600 hover:underline" target="_blank">Terms of Service</Link>{' '}
+                and{' '}
+                <Link href="/privacy" className="text-indigo-600 hover:underline" target="_blank">Privacy Policy</Link>.
+                {planInfo && planInfo.code !== 'free' && (
+                  <span className="block mt-1 text-gray-400">
+                    Your 7-day free trial starts today. After the trial, you will be automatically charged {planInfo.price}/month unless you cancel before the trial ends.
+                  </span>
+                )}
+              </span>
+            </label>
+
             {error && (
               <div className="px-3.5 py-2.5 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-400 text-sm">
                 {error}
@@ -350,7 +376,7 @@ function SignupContent() {
 
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !agreedToTerms}
               className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition flex items-center justify-center gap-2 mt-2"
             >
               {submitting ? (
@@ -371,13 +397,6 @@ function SignupContent() {
             <Link href="/login" className="text-indigo-600 hover:text-indigo-700 font-medium">
               Sign in
             </Link>
-          </p>
-
-          <p className="mt-4 text-center text-xs text-gray-400">
-            By signing up, you agree to our{' '}
-            <Link href="/terms" className="underline hover:text-gray-600">Terms of Service</Link>{' '}
-            and{' '}
-            <Link href="/privacy" className="underline hover:text-gray-600">Privacy Policy</Link>.
           </p>
         </div>
       )}

@@ -115,14 +115,24 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     event_type = event.get("type", "")
     data = event.get("data", {}).get("object", {})
 
-    if event_type == "checkout.session.completed":
-        stripe_service.handle_checkout_completed(data, db)
-    elif event_type == "customer.subscription.updated":
-        stripe_service.handle_subscription_updated(data, db)
-    elif event_type == "customer.subscription.deleted":
-        stripe_service.handle_subscription_deleted(data, db)
-    else:
-        logger.debug("Unhandled Stripe event: %s", event_type)
+    try:
+        if event_type == "checkout.session.completed":
+            stripe_service.handle_checkout_completed(data, db)
+        elif event_type == "customer.subscription.updated":
+            stripe_service.handle_subscription_updated(data, db)
+        elif event_type == "customer.subscription.deleted":
+            stripe_service.handle_subscription_deleted(data, db)
+        elif event_type == "invoice.payment_succeeded":
+            stripe_service.handle_invoice_payment_succeeded(data, db)
+        elif event_type == "invoice.payment_failed":
+            stripe_service.handle_invoice_payment_failed(data, db)
+        elif event_type == "customer.subscription.trial_will_end":
+            stripe_service.handle_trial_will_end(data, db)
+        else:
+            logger.debug("Unhandled Stripe event: %s", event_type)
+    except Exception as e:
+        logger.error("Webhook handler failed for %s: %s", event_type, e)
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Webhook processing failed.")
 
     return {"status": "ok"}
 
@@ -143,9 +153,13 @@ def billing_portal(
     if not sub or not sub.stripe_customer_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No billing account found.")
 
-    session = stripe_service.create_billing_portal_session(
-        customer_id=sub.stripe_customer_id,
-        return_url=f"{settings.frontend_url}/settings",
-    )
+    try:
+        session = stripe_service.create_billing_portal_session(
+            customer_id=sub.stripe_customer_id,
+            return_url=f"{settings.frontend_url}/settings",
+        )
+    except Exception as e:
+        logger.error("Stripe billing portal creation failed: %s", e)
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Failed to open billing portal. Please try again.")
 
     return PortalResponse(portal_url=session.url)

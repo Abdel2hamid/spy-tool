@@ -14,6 +14,8 @@ export default function PaymentPage() {
   const [error, setError] = useState('');
 
   const planCode = workspace?.subscription?.plan_code || 'free';
+  const planPrices: Record<string, string> = { starter: '$19.99', pro: '$49.99' };
+  const planPrice = planPrices[planCode] || '';
 
   // Lifetime plan doesn't need payment — go straight to dashboard
   if (planCode === 'lifetime' && !isLoading && isAuthenticated) {
@@ -89,12 +91,19 @@ export default function PaymentPage() {
             <p className="text-sm text-gray-700 dark:text-gray-300">
               <strong>Selected plan:</strong>{' '}
               <span className="capitalize">{planCode}</span>
-              {planCode !== 'free' && (
-                <span className="block text-xs text-gray-500 mt-1">
-                  Includes 7-day free trial — you won&apos;t be charged today.
-                </span>
-              )}
+              {planPrice && <span className="text-gray-500"> — {planPrice}/month</span>}
             </p>
+            {planCode !== 'free' && (
+              <div className="mt-2 space-y-1">
+                <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                  7-day free trial — you won&apos;t be charged today.
+                </p>
+                <p className="text-xs text-gray-500">
+                  After your trial ends, your subscription will automatically renew at {planPrice}/month.
+                  You can cancel anytime from Settings before the trial ends to avoid being charged.
+                </p>
+              </div>
+            )}
           </div>
 
           {error && (

@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
-import { CheckCircle, Zap } from 'lucide-react';
+import { CheckCircle, Zap, Settings, Calendar, Shield } from 'lucide-react';
 import Link from 'next/link';
 
 export default function PaymentSuccessPage() {
@@ -21,10 +21,16 @@ export default function PaymentSuccessPage() {
 function PaymentSuccessContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { isAuthenticated, isLoading } = useAuth();
-  const [countdown, setCountdown] = useState(5);
+  const { isAuthenticated, isLoading, workspace } = useAuth();
+  const [countdown, setCountdown] = useState(8);
 
   const sessionId = searchParams.get('session_id');
+  const planCode = workspace?.subscription?.plan_code || 'starter';
+  const planPrices: Record<string, string> = { starter: '$19.99', pro: '$49.99' };
+  const planPrice = planPrices[planCode] || '';
+  const trialEndDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString('en-US', {
+    month: 'long', day: 'numeric', year: 'numeric',
+  });
 
   // Auto-redirect to dashboard after countdown
   useEffect(() => {
@@ -65,17 +71,44 @@ function PaymentSuccessContent() {
           Your account is now active. Welcome to RankSpy!
         </p>
 
-        <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 mb-8">
-          <div className="flex items-center justify-center gap-2 mb-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600">
-              <Zap className="h-4 w-4 text-white" />
+        <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-6 mb-8 text-left">
+          {/* Plan summary */}
+          <div className="flex items-center gap-3 mb-4 pb-4 border-b border-gray-100 dark:border-gray-800">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600">
+              <Zap className="h-5 w-5 text-white" />
             </div>
-            <span className="text-lg font-bold text-gray-900 dark:text-white">RankSpy</span>
+            <div>
+              <p className="font-semibold text-gray-900 dark:text-white capitalize">{planCode} Plan</p>
+              {planPrice && (
+                <p className="text-sm text-gray-500">{planPrice}/month after trial</p>
+              )}
+            </div>
           </div>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            Your subscription is being activated. You can manage your billing
-            anytime from the Settings page.
-          </p>
+
+          {/* Key details */}
+          <div className="space-y-3">
+            <div className="flex items-start gap-2.5">
+              <Calendar className="w-4 h-4 text-indigo-500 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-gray-900 dark:text-white">7-day free trial active</p>
+                <p className="text-xs text-gray-500">Your first charge of {planPrice || 'your plan price'} will be on {trialEndDate}, unless you cancel before then.</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-2.5">
+              <Settings className="w-4 h-4 text-indigo-500 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-gray-900 dark:text-white">Manage your subscription</p>
+                <p className="text-xs text-gray-500">You can cancel, upgrade, or change your plan anytime from <Link href="/settings" className="text-indigo-600 hover:underline">Settings &rarr; Billing</Link>.</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-2.5">
+              <Shield className="w-4 h-4 text-indigo-500 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-gray-900 dark:text-white">Secure payment via Stripe</p>
+                <p className="text-xs text-gray-500">Your payment details are securely stored by Stripe. We never see your card number.</p>
+              </div>
+            </div>
+          </div>
         </div>
 
         <Link

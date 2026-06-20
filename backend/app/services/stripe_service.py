@@ -71,6 +71,8 @@ def create_checkout_session(
         subscription_data={"trial_period_days": 7},
         success_url=success_url,
         cancel_url=cancel_url,
+        consent_collection={"terms_of_service": "required"},
+        billing_address_collection="required",
     )
 
 
@@ -135,6 +137,7 @@ def handle_subscription_updated(stripe_sub: dict, db: Session) -> None:
         Subscription.stripe_customer_id == customer_id,
     ).first()
     if not sub:
+        logger.warning("Subscription updated: no local subscription for Stripe customer %s", customer_id)
         return
 
     sub.stripe_subscription_id = stripe_sub.get("id")
@@ -144,6 +147,9 @@ def handle_subscription_updated(stripe_sub: dict, db: Session) -> None:
         "past_due": "past_due",
         "canceled": "canceled",
         "unpaid": "past_due",
+        "incomplete": "incomplete",
+        "incomplete_expired": "canceled",
+        "paused": "paused",
     }
     new_status = status_map.get(stripe_sub.get("status", ""), None)
     if new_status:
@@ -152,6 +158,11 @@ def handle_subscription_updated(stripe_sub: dict, db: Session) -> None:
     period_end = stripe_sub.get("current_period_end")
     if period_end:
         sub.current_period_end = datetime.fromtimestamp(period_end, tz=timezone.utc)
+
+    # Sync trial_ends_at from Stripe
+    trial_end = stripe_sub.get("trial_end")
+    if trial_end:
+        sub.trial_ends_at = datetime.fromtimestamp(trial_end, tz=timezone.utc)
 
     db.commit()
     logger.info("Subscription updated for customer %s → status=%s", customer_id, sub.status)
@@ -164,6 +175,7 @@ def handle_subscription_deleted(stripe_sub: dict, db: Session) -> None:
         Subscription.stripe_customer_id == customer_id,
     ).first()
     if not sub:
+        logger.warning("Subscription deleted: no local subscription for Stripe customer %s", customer_id)
         return
 
     sub.status = "canceled"
@@ -171,3 +183,62 @@ def handle_subscription_deleted(stripe_sub: dict, db: Session) -> None:
     sub.stripe_subscription_id = None
     db.commit()
     logger.info("Subscription cancelled for customer %s", customer_id)
+
+
+def handle_invoice_payment_succeeded(invoice: dict, db: Session) -> None:
+    """Process invoice.payment_succeeded event."""
+    customer_id = invoice.get("customer")
+    if not customer_id:
+        return
+
+    sub = db.query(Subscription).filter(
+        Subscription.stripe_customer_id == customer_id,
+    ).first()
+    if not sub:
+        logger.warning("Invoice paid: no local subscription for Stripe customer %s", customer_id)
+        return
+
+    # If subscription was past_due and payment succeeded, reactivate
+    if sub.status in ("past_due", "incomplete"):
+        sub.status = "active"
+        db.commit()
+        logger.info("Invoice paid — reactivated subscription for customer %s", customer_id)
+
+
+def handle_invoice_payment_failed(invoice: dict, db: Session) -> None:
+    """Process invoice.payment_failed event."""
+    customer_id = invoice.get("customer")
+    if not customer_id:
+        return
+
+    sub = db.query(Subscription).filter(
+        Subscription.stripe_customer_id == customer_id,
+    ).first()
+    if not sub:
+        logger.warning("Invoice failed: no local subscription for Stripe customer %s", customer_id)
+        return
+
+    sub.status = "past_due"
+    db.commit()
+    logger.warning("Invoice payment failed for customer %s — marked past_due", customer_id)
+
+
+def handle_trial_will_end(stripe_sub: dict, db: Session) -> None:
+    """Process customer.subscription.trial_will_end event (fires 3 days before trial end)."""
+    customer_id = stripe_sub.get("customer")
+    if not customer_id:
+        return
+
+    sub = db.query(Subscription).filter(
+        Subscription.stripe_customer_id == customer_id,
+    ).first()
+    if not sub:
+        logger.warning("Trial ending: no local subscription for Stripe customer %s", customer_id)
+        return
+
+    trial_end = stripe_sub.get("trial_end")
+    if trial_end:
+        sub.trial_ends_at = datetime.fromtimestamp(trial_end, tz=timezone.utc)
+        db.commit()
+
+    logger.info("Trial ending soon for customer %s (ends %s)", customer_id, sub.trial_ends_at)

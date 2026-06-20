@@ -118,9 +118,14 @@ function VerifyEmailContent() {
               {pendingEmail && (
                 <p className="text-sm font-semibold text-gray-900 dark:text-white mb-6">{pendingEmail}</p>
               )}
-              <p className="text-sm text-gray-500 dark:text-gray-400 mb-8">
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
                 Click the link in the email to verify your account and continue to payment setup.
               </p>
+              <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-4 py-3 mb-8 text-left">
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  <strong>Next step:</strong> After verifying your email, you&apos;ll be asked to add a payment method. Your 7-day free trial starts immediately — you won&apos;t be charged until the trial ends.
+                </p>
+              </div>
 
               <button
                 onClick={handleResend}
