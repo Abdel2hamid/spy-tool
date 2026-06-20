@@ -14,7 +14,7 @@ import stripe
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models.models import Subscription
+from app.models.models import Subscription, Membership, User
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,11 @@ def create_checkout_session(
         customer=customer_id,
         mode="subscription",
         line_items=[{"price": price_id, "quantity": 1}],
-        subscription_data={"trial_period_days": 7},
+        subscription_data={
+            "trial_period_days": 7,
+            "description": f"RankSpy {plan_code.capitalize()} Plan",
+        },
+        payment_method_collection="always",
         success_url=success_url,
         cancel_url=cancel_url,
         consent_collection={"terms_of_service": "required"},
@@ -88,6 +92,21 @@ def create_billing_portal_session(
         customer=customer_id,
         return_url=return_url,
     )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _get_workspace_owner(db: Session, workspace_id: int):
+    """Get the owner User of a workspace (for email notifications)."""
+    membership = db.query(Membership).filter(
+        Membership.workspace_id == workspace_id,
+        Membership.role == "owner",
+    ).first()
+    if membership:
+        return db.query(User).filter(User.id == membership.user_id).first()
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +189,8 @@ def handle_subscription_updated(stripe_sub: dict, db: Session) -> None:
 
 def handle_subscription_deleted(stripe_sub: dict, db: Session) -> None:
     """Process customer.subscription.deleted event."""
+    from app.services.email_service import send_cancellation_email
+
     customer_id = stripe_sub.get("customer")
     sub = db.query(Subscription).filter(
         Subscription.stripe_customer_id == customer_id,
@@ -178,10 +199,22 @@ def handle_subscription_deleted(stripe_sub: dict, db: Session) -> None:
         logger.warning("Subscription deleted: no local subscription for Stripe customer %s", customer_id)
         return
 
+    old_plan = sub.plan_code
+
     sub.status = "canceled"
     sub.plan_code = "free"
     sub.stripe_subscription_id = None
     db.commit()
+
+    # Send cancellation confirmation email
+    owner = _get_workspace_owner(db, sub.workspace_id)
+    if owner:
+        send_cancellation_email(
+            email=owner.email,
+            plan_code=old_plan,
+            full_name=owner.full_name,
+        )
+
     logger.info("Subscription cancelled for customer %s", customer_id)
 
 
@@ -207,6 +240,8 @@ def handle_invoice_payment_succeeded(invoice: dict, db: Session) -> None:
 
 def handle_invoice_payment_failed(invoice: dict, db: Session) -> None:
     """Process invoice.payment_failed event."""
+    from app.services.email_service import send_payment_failed_email
+
     customer_id = invoice.get("customer")
     if not customer_id:
         return
@@ -220,11 +255,19 @@ def handle_invoice_payment_failed(invoice: dict, db: Session) -> None:
 
     sub.status = "past_due"
     db.commit()
+
+    # Notify user about failed payment
+    owner = _get_workspace_owner(db, sub.workspace_id)
+    if owner:
+        send_payment_failed_email(email=owner.email, full_name=owner.full_name)
+
     logger.warning("Invoice payment failed for customer %s — marked past_due", customer_id)
 
 
 def handle_trial_will_end(stripe_sub: dict, db: Session) -> None:
     """Process customer.subscription.trial_will_end event (fires 3 days before trial end)."""
+    from app.services.email_service import send_trial_ending_email
+
     customer_id = stripe_sub.get("customer")
     if not customer_id:
         return
@@ -240,5 +283,16 @@ def handle_trial_will_end(stripe_sub: dict, db: Session) -> None:
     if trial_end:
         sub.trial_ends_at = datetime.fromtimestamp(trial_end, tz=timezone.utc)
         db.commit()
+
+    # Send trial ending email
+    owner = _get_workspace_owner(db, sub.workspace_id)
+    if owner:
+        trial_end_str = sub.trial_ends_at.strftime("%B %d, %Y") if sub.trial_ends_at else "soon"
+        send_trial_ending_email(
+            email=owner.email,
+            plan_code=sub.plan_code,
+            trial_end_date=trial_end_str,
+            full_name=owner.full_name,
+        )
 
     logger.info("Trial ending soon for customer %s (ends %s)", customer_id, sub.trial_ends_at)
