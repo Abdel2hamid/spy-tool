@@ -399,8 +399,8 @@ IDEA_GENERATOR_CONFIG: dict = {
     # A feature gap must be reported across at least this many distinct apps
     # AND have at least this many total user mentions to qualify.
     # Tuning: lower to 1 and 1 in early-data scenarios; raise for mature datasets.
-    "feature_gap_min_apps":     2,
-    "feature_gap_min_mentions": 2,
+    "feature_gap_min_apps":     5,
+    "feature_gap_min_mentions": 10,
     "feature_gap_limit":       20,   # max ideas generated from this pattern
 
     # ── Pattern B — Weak Market ───────────────────────────────────────────────
