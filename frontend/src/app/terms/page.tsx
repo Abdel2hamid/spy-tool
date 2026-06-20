@@ -22,7 +22,7 @@ export default function TermsPage() {
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Terms of Service</h1>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-10">Last updated: June 18, 2026</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-10">Last updated: June 19, 2026</p>
 
         <div className="prose prose-gray dark:prose-invert max-w-none space-y-8 text-sm leading-relaxed text-gray-700 dark:text-gray-300">
           <section>
@@ -51,7 +51,9 @@ export default function TermsPage() {
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">4. Subscription Plans &amp; Billing</h2>
             <p className="mb-3"><strong className="text-gray-900 dark:text-white">Free Trial:</strong> New accounts receive a 7-day free trial with access to premium features. No credit card is required to start the trial.</p>
             <p className="mb-3"><strong className="text-gray-900 dark:text-white">Paid Plans:</strong> After the trial, you may subscribe to a paid plan (Starter, Pro, or Enterprise). Paid subscriptions are billed monthly or annually, as selected at the time of purchase.</p>
-            <p className="mb-3"><strong className="text-gray-900 dark:text-white">Automatic Renewal:</strong> Subscriptions automatically renew at the end of each billing period unless cancelled before the renewal date.</p>
+            <p className="mb-3"><strong className="text-gray-900 dark:text-white">Automatic Renewal:</strong> Subscriptions automatically renew at the end of each billing period unless cancelled before the renewal date. By subscribing, you authorize recurring charges to your payment method at the then-current rate. You may cancel at any time from your Settings page to prevent future renewals.</p>
+            <p className="mb-3"><strong className="text-gray-900 dark:text-white">Payment Processing:</strong> All payments are securely processed by Stripe, Inc. By providing your payment details, you also agree to <a href="https://stripe.com/legal" className="text-indigo-600 dark:text-indigo-400 hover:underline" target="_blank" rel="noopener noreferrer">Stripe&apos;s Terms of Service</a>. We do not store your credit card details.</p>
+            <p className="mb-3"><strong className="text-gray-900 dark:text-white">Billing Disputes:</strong> If you believe there is an error on your bill, contact us at <a href="mailto:billing@rankspy.app" className="text-indigo-600 dark:text-indigo-400 hover:underline">billing@rankspy.app</a> within 30 days of the charge. We encourage you to resolve billing issues directly with us before initiating a chargeback with your bank, as unresolved chargebacks may result in account suspension.</p>
             <p><strong className="text-gray-900 dark:text-white">Price Changes:</strong> We reserve the right to change pricing with 30 days&apos; notice. Price changes will take effect at your next billing cycle.</p>
           </section>
 
@@ -112,12 +114,30 @@ export default function TermsPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">14. Governing Law</h2>
-            <p>These Terms shall be governed by and construed in accordance with applicable laws. Any disputes arising from these Terms or your use of the Service shall be resolved through binding arbitration or in the courts of the applicable jurisdiction.</p>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">14. Indemnification</h2>
+            <p>You agree to indemnify, defend, and hold harmless RankSpy, its officers, directors, employees, and agents from any claims, damages, losses, liabilities, and expenses (including reasonable legal fees) arising out of your use of the Service, your violation of these Terms, or your infringement of any third-party rights.</p>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">15. Contact Us</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">15. Governing Law &amp; Dispute Resolution</h2>
+            <p className="mb-3">These Terms shall be governed by and construed in accordance with applicable laws. Any disputes arising from these Terms or your use of the Service shall be resolved as follows:</p>
+            <ul className="list-disc pl-5 space-y-2">
+              <li>You agree to first attempt to resolve any dispute informally by contacting us at <a href="mailto:support@rankspy.app" className="text-indigo-600 dark:text-indigo-400 hover:underline">support@rankspy.app</a></li>
+              <li>If a dispute cannot be resolved informally within 30 days, either party may pursue resolution through binding arbitration or in the courts of competent jurisdiction</li>
+              <li>You agree to waive any right to participate in a class action lawsuit or class-wide arbitration</li>
+            </ul>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">16. General Provisions</h2>
+            <p className="mb-3"><strong className="text-gray-900 dark:text-white">Severability:</strong> If any provision of these Terms is found to be unenforceable, the remaining provisions will continue in full force and effect.</p>
+            <p className="mb-3"><strong className="text-gray-900 dark:text-white">Entire Agreement:</strong> These Terms, together with the Privacy Policy and Refund Policy, constitute the entire agreement between you and RankSpy regarding the Service.</p>
+            <p className="mb-3"><strong className="text-gray-900 dark:text-white">Assignment:</strong> You may not assign or transfer your rights under these Terms without our prior written consent. We may assign our rights and obligations without restriction.</p>
+            <p><strong className="text-gray-900 dark:text-white">Force Majeure:</strong> We shall not be liable for any failure or delay in performance due to circumstances beyond our reasonable control, including natural disasters, wars, pandemics, internet outages, or governmental actions.</p>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">17. Contact Us</h2>
             <p>If you have questions about these Terms, please contact us at <a href="mailto:support@rankspy.app" className="text-indigo-600 dark:text-indigo-400 hover:underline">support@rankspy.app</a>.</p>
           </section>
         </div>

@@ -44,7 +44,6 @@ import {
 // ---------------------------------------------------------------------------
 const PLAN_COLORS: Record<string, string> = {
   pro: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300',
-  enterprise: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300',
   starter: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300',
   trial: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
   lifetime: 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300',
@@ -521,7 +520,6 @@ function SubscriptionSection({
                   <option value="trial">Trial</option>
                   <option value="starter">Starter</option>
                   <option value="pro">Pro</option>
-                  <option value="enterprise">Enterprise</option>
                   <option value="lifetime">Lifetime</option>
                 </select>
               </div>

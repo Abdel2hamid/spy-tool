@@ -27,7 +27,7 @@ const PLANS = [
   {
     code: 'starter',
     name: 'Starter',
-    price: '$29',
+    price: '$19.99',
     period: '/month',
     description: 'For indie developers getting started',
     features: [
@@ -44,7 +44,7 @@ const PLANS = [
   {
     code: 'pro',
     name: 'Pro',
-    price: '$79',
+    price: '$49.99',
     period: '/month',
     description: 'For serious ASO professionals',
     features: [
@@ -57,23 +57,6 @@ const PLANS = [
     excluded: [],
     cta: 'Start 7-Day Free Trial',
     popular: true,
-  },
-  {
-    code: 'enterprise',
-    name: 'Enterprise',
-    price: '$199',
-    period: '/month',
-    description: 'For teams and agencies',
-    features: [
-      'Everything in Pro',
-      'Priority support',
-      'Custom integrations',
-      'Dedicated account manager',
-      'SLA guarantee',
-    ],
-    excluded: [],
-    cta: 'Start 7-Day Free Trial',
-    popular: false,
   },
 ];
 
@@ -214,7 +197,7 @@ function SignupContent() {
             <p className="text-gray-500 dark:text-gray-400">All plans include a 7-day free trial. No charge until the trial ends.</p>
           </div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
+          <div className="grid md:grid-cols-2 gap-5 max-w-2xl mx-auto">
             {PLANS.map((plan) => (
               <div
                 key={plan.code}

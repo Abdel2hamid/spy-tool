@@ -110,7 +110,7 @@ class Subscription(Base):
     Workspace-level subscription record.
     One row per workspace — updated as the plan changes.
 
-    plan_code  : 'trial' | 'starter' | 'pro' | 'enterprise'
+    plan_code  : 'trial' | 'starter' | 'pro'
     status     : 'trialing' | 'active' | 'past_due' | 'canceled'
     trial_ends_at : when the trial period expires (NULL for paid plans)
     """

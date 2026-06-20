@@ -4,9 +4,8 @@ Central plan definitions for RankSpy.
 Plans:
   free       - unauthenticated / downgraded users
   trial      - 7-day trial (generous limits)
-  starter    - entry paid tier
-  pro        - full power
-  enterprise - unlimited
+  starter    - entry paid tier ($19.99/mo)
+  pro        - full power ($49.99/mo)
   lifetime   - one-time purchase, full unlimited access forever
 
 Add new plans here; enforcement reads from PLAN_LIMITS[plan_code].
@@ -56,13 +55,6 @@ PLAN_LIMITS: dict[str, dict] = {
         "exports": None,
         "access_premium": True,
     },
-    "enterprise": {
-        "app_imports": None,
-        "keyword_refreshes": None,
-        "ai_requests": None,
-        "exports": None,
-        "access_premium": True,
-    },
     "lifetime": {
         "app_imports": None,
         "keyword_refreshes": None,
@@ -78,7 +70,6 @@ _UPGRADE_MESSAGES: dict[str, str] = {
     "trial": "Upgrade to Pro for unlimited access after your trial.",
     "starter": "Upgrade to Pro for unlimited access.",
     "pro": "You're on the Pro plan with unlimited access.",
-    "enterprise": "You're on the Enterprise plan with unlimited access.",
     "lifetime": "You're on the Lifetime plan with unlimited access.",
 }
 
@@ -96,7 +87,6 @@ PLAN_DISPLAY_NAMES: dict[str, str] = {
     "trial": "Trial",
     "starter": "Starter",
     "pro": "Pro",
-    "enterprise": "Enterprise",
     "lifetime": "Lifetime",
 }
 

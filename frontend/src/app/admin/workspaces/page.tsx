@@ -104,7 +104,6 @@ export default function AdminWorkspacesPage() {
                     <div className="flex flex-col gap-0.5">
                       <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium w-fit ${
                         ws.plan_code === 'pro' ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300' :
-                        ws.plan_code === 'enterprise' ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300' :
                         ws.plan_code === 'starter' ? 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300' :
                         'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'
                       }`}>
@@ -179,7 +178,6 @@ export default function AdminWorkspacesPage() {
                     <option value="trial">Trial</option>
                     <option value="starter">Starter</option>
                     <option value="pro">Pro</option>
-                    <option value="enterprise">Enterprise</option>
                   </select>
                 </div>
                 <div>

@@ -27,7 +27,6 @@ stripe.api_key = settings.stripe_secret_key
 PLAN_TO_PRICE: dict[str, str] = {
     "starter": settings.stripe_price_starter,
     "pro": settings.stripe_price_pro,
-    "enterprise": settings.stripe_price_enterprise,
 }
 
 

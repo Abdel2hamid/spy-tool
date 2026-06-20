@@ -39,24 +39,17 @@ function SubscribeWall() {
     {
       code: 'starter',
       name: 'Starter',
-      price: '$29',
+      price: '$19.99',
       period: '/month',
       features: ['100 app imports/mo', '200 keyword refreshes/mo', '100 AI requests/mo', '50 exports/mo', 'All premium features'],
     },
     {
       code: 'pro',
       name: 'Pro',
-      price: '$79',
+      price: '$49.99',
       period: '/month',
       popular: true,
       features: ['Unlimited app imports', 'Unlimited keyword refreshes', 'Unlimited AI requests', 'Unlimited exports', 'All premium features'],
-    },
-    {
-      code: 'enterprise',
-      name: 'Enterprise',
-      price: '$199',
-      period: '/month',
-      features: ['Everything in Pro', 'Priority support', 'Custom integrations', 'Dedicated account manager', 'SLA guarantee'],
     },
   ];
 
@@ -99,7 +92,7 @@ function SubscribeWall() {
           </div>
 
           {/* Plan cards */}
-          <div className="grid md:grid-cols-3 gap-5">
+          <div className="grid md:grid-cols-2 gap-5 max-w-2xl mx-auto">
             {plans.map((plan) => (
               <div
                 key={plan.code}

@@ -22,7 +22,7 @@ export default function RefundPage() {
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Refund Policy</h1>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-10">Last updated: June 18, 2026</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-10">Last updated: June 19, 2026</p>
 
         <div className="prose prose-gray dark:prose-invert max-w-none space-y-8 text-sm leading-relaxed text-gray-700 dark:text-gray-300">
           <section>
@@ -64,11 +64,16 @@ export default function RefundPage() {
               <li>Email <a href="mailto:support@rankspy.app" className="text-indigo-600 dark:text-indigo-400 hover:underline">support@rankspy.app</a> with the subject line &quot;Refund Request&quot;</li>
               <li>Include your registered email address and the reason for your request</li>
             </ul>
-            <p className="mt-3">We aim to process all refund requests within 5 business days. Approved refunds will be returned to your original payment method and may take 5–10 business days to appear on your statement.</p>
+            <p className="mt-3">We aim to process all refund requests within 5 business days. Approved refunds will be returned to your original payment method via Stripe and may take 5&ndash;10 business days to appear on your statement. Refunds are issued in the original currency of the transaction.</p>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">6. Cancellation</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">6. Chargebacks</h2>
+            <p>We strongly encourage you to contact us at <a href="mailto:billing@rankspy.app" className="text-indigo-600 dark:text-indigo-400 hover:underline">billing@rankspy.app</a> before initiating a chargeback with your bank. We are committed to resolving billing issues quickly and fairly. Initiating a chargeback without first contacting us may result in account suspension pending investigation.</p>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">7. Cancellation</h2>
             <p>You can cancel your subscription at any time from the <strong className="text-gray-900 dark:text-white">Settings</strong> page in your dashboard. After cancellation:</p>
             <ul className="list-disc pl-5 space-y-2 mt-2">
               <li>You retain access to paid features until the end of your current billing period</li>
@@ -78,12 +83,17 @@ export default function RefundPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">7. Annual Subscriptions</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">8. Annual Subscriptions</h2>
             <p>For annual subscriptions, the 7-day refund window applies from the date of the annual charge. After the 7-day window, annual subscriptions are non-refundable but may be cancelled to prevent renewal.</p>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">8. Contact Us</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">9. Taxes</h2>
+            <p>Refunds include any applicable taxes that were charged on the original transaction. Tax amounts may vary based on your jurisdiction and are handled by Stripe.</p>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">10. Contact Us</h2>
             <p>For any billing questions or concerns not covered here, contact us at <a href="mailto:support@rankspy.app" className="text-indigo-600 dark:text-indigo-400 hover:underline">support@rankspy.app</a>.</p>
           </section>
         </div>

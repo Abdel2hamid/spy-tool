@@ -174,9 +174,8 @@ class TrialItem(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 PLAN_PRICES: dict[str, float] = {
-    "starter": 29.0,
-    "pro": 79.0,
-    "enterprise": 199.0,
+    "starter": 19.99,
+    "pro": 49.99,
 }
 
 
@@ -1026,7 +1025,7 @@ class AdminSubscriptionUpdate(BaseModel):
     @field_validator("plan_code")
     @classmethod
     def valid_plan_code(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None and v not in ("free", "starter", "pro", "enterprise", "trial", "lifetime"):
+        if v is not None and v not in ("free", "starter", "pro", "trial", "lifetime"):
             raise ValueError("Invalid plan code")
         return v
 
@@ -1591,7 +1590,7 @@ def promote_to_superadmin(
 # Keys we expose to the admin UI.  Sensitive keys are masked on read.
 _PAYMENT_KEYS = [
     "stripe_secret_key", "stripe_publishable_key", "stripe_webhook_secret",
-    "stripe_price_starter", "stripe_price_pro", "stripe_price_enterprise",
+    "stripe_price_starter", "stripe_price_pro",
     "paypal_client_id", "paypal_client_secret", "paypal_webhook_id",
     "paypal_mode",  # sandbox | live
 ]
@@ -1599,7 +1598,7 @@ _PAYMENT_KEYS = [
 _SENSITIVE_KEYS = {"stripe_secret_key", "stripe_webhook_secret", "paypal_client_secret"}
 
 _PLAN_KEYS = [
-    "plans_config",  # JSON blob: { free: {...}, starter: {...}, pro: {...}, enterprise: {...} }
+    "plans_config",  # JSON blob: { free: {...}, starter: {...}, pro: {...} }
 ]
 
 
@@ -1684,7 +1683,7 @@ _DEFAULT_PLANS = {
     },
     "starter": {
         "name": "Starter",
-        "price": 29,
+        "price": 19.99,
         "period": "month",
         "app_imports": 100,
         "keyword_refreshes": 200,
@@ -1694,17 +1693,7 @@ _DEFAULT_PLANS = {
     },
     "pro": {
         "name": "Pro",
-        "price": 79,
-        "period": "month",
-        "app_imports": None,
-        "keyword_refreshes": None,
-        "ai_requests": None,
-        "exports": None,
-        "access_premium": True,
-    },
-    "enterprise": {
-        "name": "Enterprise",
-        "price": 199,
+        "price": 49.99,
         "period": "month",
         "app_imports": None,
         "keyword_refreshes": None,

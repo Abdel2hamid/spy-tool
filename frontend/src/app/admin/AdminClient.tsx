@@ -30,7 +30,6 @@ const PLAN_COLORS: Record<string, { bg: string; text: string; bar: string }> = {
   trial: { bg: 'bg-amber-50 dark:bg-amber-950/30', text: 'text-amber-700 dark:text-amber-400', bar: 'bg-amber-400' },
   starter: { bg: 'bg-blue-50 dark:bg-blue-950/30', text: 'text-blue-700 dark:text-blue-400', bar: 'bg-blue-500' },
   pro: { bg: 'bg-indigo-50 dark:bg-indigo-950/30', text: 'text-indigo-700 dark:text-indigo-400', bar: 'bg-indigo-500' },
-  enterprise: { bg: 'bg-purple-50 dark:bg-purple-950/30', text: 'text-purple-700 dark:text-purple-400', bar: 'bg-purple-500' },
   free: { bg: 'bg-gray-50 dark:bg-gray-800/30', text: 'text-gray-600 dark:text-gray-400', bar: 'bg-gray-400' },
 };
 

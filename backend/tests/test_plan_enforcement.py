@@ -51,7 +51,7 @@ def _db_with_usage(usage_row=None, workspace_id=1, month="2026-03"):
 
 class TestPlanConfig:
     def test_all_plans_present(self):
-        for plan in ("free", "trial", "starter", "pro", "enterprise"):
+        for plan in ("free", "trial", "starter", "pro"):
             assert plan in PLAN_LIMITS
 
     def test_free_has_small_limits(self):

@@ -91,8 +91,8 @@ class RegisterRequest(BaseModel):
     @field_validator("plan_code")
     @classmethod
     def valid_plan(cls, v: str) -> str:
-        if v not in ("starter", "pro", "enterprise"):
-            raise ValueError("Please select a paid plan (starter, pro, or enterprise)")
+        if v not in ("starter", "pro"):
+            raise ValueError("Please select a paid plan (starter or pro)")
         return v
 
 

@@ -29,7 +29,7 @@ router = APIRouter(prefix="/stripe", tags=["stripe"])
 # ---------------------------------------------------------------------------
 
 class CheckoutRequest(BaseModel):
-    plan_code: str  # free | starter | pro | enterprise
+    plan_code: str  # starter | pro
 
 
 class CheckoutResponse(BaseModel):

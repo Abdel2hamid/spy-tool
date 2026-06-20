@@ -22,7 +22,7 @@ export default function CookiesPage() {
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
         <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Cookie Policy</h1>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-10">Last updated: June 18, 2026</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-10">Last updated: June 19, 2026</p>
 
         <div className="prose prose-gray dark:prose-invert max-w-none space-y-8 text-sm leading-relaxed text-gray-700 dark:text-gray-300">
           <section>
@@ -76,11 +76,17 @@ export default function CookiesPage() {
 
           <section>
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">4. Third-Party Cookies</h2>
-            <p>RankSpy does not use third-party advertising or tracking cookies. We do not share cookie data with advertisers or data brokers. If our payment processor sets cookies during checkout, those are governed by their own cookie policy.</p>
+            <p className="mb-3">RankSpy does not use third-party advertising or tracking cookies. We do not share cookie data with advertisers or data brokers.</p>
+            <p><strong className="text-gray-900 dark:text-white">Stripe:</strong> When you proceed to checkout, Stripe may set cookies on its own domain (checkout.stripe.com) for fraud prevention and payment processing. These cookies are governed by <a href="https://stripe.com/cookies-policy/legal" className="text-indigo-600 dark:text-indigo-400 hover:underline" target="_blank" rel="noopener noreferrer">Stripe&apos;s Cookie Policy</a>.</p>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">5. Managing Cookies</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">5. Do Not Track</h2>
+            <p>RankSpy respects Do Not Track (DNT) browser signals. Since we do not use third-party advertising or tracking cookies, your browsing activity on our platform is not tracked across other websites regardless of your DNT setting.</p>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">6. Managing Cookies</h2>
             <p className="mb-3">You can control cookies through your browser settings. Most browsers allow you to:</p>
             <ul className="list-disc pl-5 space-y-2">
               <li>View what cookies are stored and delete them individually</li>
@@ -93,17 +99,17 @@ export default function CookiesPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">6. Local Storage</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">7. Local Storage</h2>
             <p>In addition to cookies, we use browser local storage to cache non-sensitive UI preferences and temporary data for performance. Local storage data does not leave your browser and is not sent to our servers with requests.</p>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">7. Changes to This Policy</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">8. Changes to This Policy</h2>
             <p>We may update this Cookie Policy to reflect changes in technology or legal requirements. Material changes will be communicated through the platform or by updating this page.</p>
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">8. Contact Us</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">9. Contact Us</h2>
             <p>If you have questions about our use of cookies, contact us at <a href="mailto:support@rankspy.app" className="text-indigo-600 dark:text-indigo-400 hover:underline">support@rankspy.app</a>.</p>
           </section>
         </div>

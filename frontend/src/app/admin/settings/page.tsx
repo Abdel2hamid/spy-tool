@@ -127,7 +127,6 @@ const STRIPE_FIELDS = [
   { key: 'stripe_webhook_secret', label: 'Webhook Secret', sensitive: true, placeholder: 'whsec_...' },
   { key: 'stripe_price_starter', label: 'Starter Price ID', sensitive: false, placeholder: 'price_...' },
   { key: 'stripe_price_pro', label: 'Pro Price ID', sensitive: false, placeholder: 'price_...' },
-  { key: 'stripe_price_enterprise', label: 'Enterprise Price ID', sensitive: false, placeholder: 'price_...' },
 ];
 
 const PAYPAL_FIELDS = [
@@ -243,7 +242,7 @@ function PaymentSettings() {
 // Plans Settings Tab
 // ---------------------------------------------------------------------------
 
-const PLAN_CODES = ['free', 'starter', 'pro', 'enterprise', 'lifetime'] as const;
+const PLAN_CODES = ['free', 'starter', 'pro', 'lifetime'] as const;
 
 const LIMIT_FIELDS = [
   { key: 'app_imports', label: 'App Imports / month' },

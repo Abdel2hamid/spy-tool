@@ -44,9 +44,8 @@ class Settings(BaseSettings):
     stripe_secret_key: str = ""
     stripe_publishable_key: str = ""
     stripe_webhook_secret: str = ""
-    stripe_price_starter: str = ""    # Stripe Price ID for Starter ($29/mo)
-    stripe_price_pro: str = ""        # Stripe Price ID for Pro ($79/mo)
-    stripe_price_enterprise: str = "" # Stripe Price ID for Enterprise ($199/mo)
+    stripe_price_starter: str = ""    # Stripe Price ID for Starter ($19.99/mo)
+    stripe_price_pro: str = ""        # Stripe Price ID for Pro ($49.99/mo)
     frontend_url: str = "http://localhost:3000"
 
     # ── Email verification (Resend) ────────────────────────────────────

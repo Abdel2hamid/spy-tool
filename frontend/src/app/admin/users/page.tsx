@@ -42,7 +42,6 @@ import {
 // ---------------------------------------------------------------------------
 const PLAN_COLORS: Record<string, string> = {
   pro: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300',
-  enterprise: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300',
   starter: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300',
   trial: 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300',
   lifetime: 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300',
@@ -336,7 +335,7 @@ export default function AdminUsersPage() {
               <button onClick={() => setBulkPlanOpen(!bulkPlanOpen)} disabled={busyAction} className="rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 transition dark:border-indigo-700 dark:bg-gray-900 dark:text-indigo-300 dark:hover:bg-gray-800">Change Plan</button>
               {bulkPlanOpen && (
                 <div className="absolute left-0 top-full z-20 mt-1 w-40 rounded-lg border border-gray-200 bg-white py-1 shadow-xl dark:border-gray-700 dark:bg-gray-900">
-                  {['trial', 'starter', 'pro', 'enterprise', 'lifetime'].map((p) => (
+                  {['trial', 'starter', 'pro', 'lifetime'].map((p) => (
                     <button key={p} onClick={() => handleBulk('change_plan', p)} className="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800 capitalize">{p}</button>
                   ))}
                 </div>
@@ -571,7 +570,6 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
               <option value="trial">Trial (7 days)</option>
               <option value="starter">Starter</option>
               <option value="pro">Pro</option>
-              <option value="enterprise">Enterprise</option>
             </select>
           </div>
           {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-950/50 dark:text-red-400">{error}</div>}
