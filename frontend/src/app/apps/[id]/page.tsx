@@ -5,13 +5,13 @@ export const dynamic = 'force-dynamic';
 import { useState, useEffect } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components';
-import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, DownloadEstimate, ASOScoreResponse, ASOBreakdownItem, KeywordSuggestionsResponse, KeywordSuggestionItem, getAppDetail, getAppReviews, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, getDownloadEstimate, getASOScore, getKeywordSuggestions, RankHistory, getFavoriteIds, addFavorite, removeFavorite, getMyAppIds, addMyApp, removeMyApp, refreshApp } from '@/lib/api';
+import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, DownloadEstimate, ASOScoreResponse, ASOBreakdownItem, KeywordSuggestionsResponse, KeywordSuggestionItem, DeveloperAppsResponse, AppListItem, getAppDetail, getAppReviews, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, getDownloadEstimate, getASOScore, getKeywordSuggestions, getDeveloperApps, RankHistory, getFavoriteIds, addFavorite, removeFavorite, getMyAppIds, addMyApp, removeMyApp, refreshApp } from '@/lib/api';
 import { fmtNum, fmtRev, fmtRange, fmtRevRange, confidenceLabel, CONFIDENCE_BADGE } from '@/lib/estimate-format';
 import {
   ArrowLeft, Star, Download, Calendar, Globe, MessageSquare,
   TrendingUp, BarChart3, AlertTriangle, ThumbsUp, Code, ExternalLink,
   ChevronRight, Filter, Lightbulb, RefreshCw, Search, Target,
-  Zap, DollarSign, Users, FlaskConical, Sparkles, X as XIcon, Heart, GitCompare, Check
+  Zap, DollarSign, Users, FlaskConical, Sparkles, X as XIcon, Heart, GitCompare, Check, Building2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toCSV, downloadCSV } from '@/lib/csv-export';
@@ -167,10 +167,13 @@ function AppHeader({ app, isFavorited, onToggleFavorite, isMyApp, onToggleMyApp,
             {/* Developer + category */}
             <div className="flex flex-wrap items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
               {app.developer && (
-                <span className="flex items-center gap-1.5">
+                <button
+                  onClick={() => document.getElementById('developer-card')?.scrollIntoView({ behavior: 'smooth' })}
+                  className="flex items-center gap-1.5 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+                >
                   <Code className="h-3.5 w-3.5" />
                   {app.developer}
-                </span>
+                </button>
               )}
               {app.primary_category && (
                 <span className="flex items-center gap-1.5">
@@ -553,6 +556,114 @@ function ASOScoreCard({ appId }: { appId: number }) {
 }
 
 
+// ---------------------------------------------------------------------------
+// DeveloperAppsCard — shows developer info and their other apps
+// ---------------------------------------------------------------------------
+
+function DeveloperAppsCard({ appId, app }: { appId: number; app: AppDetail }) {
+  const router = useRouter();
+  const [data, setData] = useState<DeveloperAppsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [showAll, setShowAll] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    getDeveloperApps(appId, 50)
+      .then(setData)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [appId]);
+
+  if (!loading && (!data || data.total_apps === 0) && !app.developer) return null;
+
+  const displayApps = showAll ? (data?.apps ?? []) : (data?.apps ?? []).slice(0, 6);
+
+  return (
+    <div id="developer-card" className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+      {/* Developer header */}
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 shadow-sm">
+            <Building2 className="h-5 w-5 text-white" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
+              {app.developer || 'Unknown Developer'}
+            </h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              {loading ? 'Loading...' : `${(data?.total_apps ?? 0) + 1} apps on the App Store`}
+            </p>
+          </div>
+        </div>
+        {app.developer_id && (
+          <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-mono text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+            ID: {app.developer_id}
+          </span>
+        )}
+      </div>
+
+      {/* Loading skeleton */}
+      {loading ? (
+        <div className="animate-pulse grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {[0, 1, 2].map(i => (
+            <div key={i} className="h-20 rounded-lg bg-gray-100 dark:bg-gray-800" />
+          ))}
+        </div>
+      ) : data && data.total_apps > 0 ? (
+        <>
+          <p className="mb-3 text-xs font-medium text-gray-500 dark:text-gray-400">Other apps by this developer</p>
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {displayApps.map((devApp) => (
+              <button
+                key={devApp.id}
+                onClick={() => router.push(`/apps/${devApp.id}`)}
+                className="flex items-center gap-3 rounded-lg border border-gray-100 bg-gray-50 p-3 text-left transition-all hover:border-indigo-200 hover:bg-indigo-50/50 hover:shadow-sm dark:border-gray-700 dark:bg-gray-800/50 dark:hover:border-indigo-800 dark:hover:bg-indigo-950/20"
+              >
+                {devApp.icon_url ? (
+                  <img src={devApp.icon_url} alt={devApp.name} className="h-10 w-10 flex-shrink-0 rounded-lg object-cover ring-1 ring-black/5 dark:ring-white/10" />
+                ) : (
+                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-gray-200 to-gray-300 dark:from-gray-600 dark:to-gray-700">
+                    <span className="text-sm font-bold text-gray-500 dark:text-gray-300">{devApp.name?.[0] || '?'}</span>
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{devApp.name}</p>
+                  <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                    {devApp.primary_category && <span className="truncate">{devApp.primary_category}</span>}
+                    {devApp.current_rating != null && (
+                      <span className="flex items-center gap-0.5 flex-shrink-0">
+                        <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                        {devApp.current_rating.toFixed(1)}
+                      </span>
+                    )}
+                    {devApp.is_free ? (
+                      <span className="flex-shrink-0 text-emerald-600 dark:text-emerald-400">Free</span>
+                    ) : (
+                      <span className="flex-shrink-0">${devApp.price}</span>
+                    )}
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 flex-shrink-0 text-gray-300 dark:text-gray-600" />
+              </button>
+            ))}
+          </div>
+          {data.total_apps > 6 && (
+            <button
+              onClick={() => setShowAll(!showAll)}
+              className="mt-3 text-xs font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
+            >
+              {showAll ? 'Show less' : `Show all ${data.total_apps} apps`}
+            </button>
+          )}
+        </>
+      ) : (
+        <p className="text-xs text-gray-400 dark:text-gray-500">No other apps found for this developer.</p>
+      )}
+    </div>
+  );
+}
+
+
 function OverviewTab({ app, appId, isMyApp }: { app: AppDetail; appId: number; isMyApp?: boolean }) {
   const [descExpanded, setDescExpanded] = useState(false);
   const descTruncLen = 300;
@@ -657,6 +768,9 @@ function OverviewTab({ app, appId, isMyApp }: { app: AppDetail; appId: number; i
 
       {/* ── Market Estimates ───────────────────────────────── */}
       <MarketEstimatesCard appId={appId} app={app} />
+
+      {/* ── Developer & Other Apps ─────────────────────────── */}
+      <DeveloperAppsCard appId={appId} app={app} />
 
       {/* ── ASO Score — only for user's own apps ──────────── */}
       {isMyApp && <ASOScoreCard appId={appId} />}

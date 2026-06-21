@@ -14,6 +14,7 @@ from app.models import models
 from app.models.schemas import (
     AppResponse,
     AppListResponse,
+    DeveloperAppsResponse,
     AppDetailResponse,
     AppCreate,
     AppUpdate,
@@ -2212,12 +2213,57 @@ def get_app_detail(app_id: int, db: Session = Depends(get_db)):
     return app_data
 
 
+@router.get("/apps/{app_id}/developer-apps", response_model=DeveloperAppsResponse)
+def get_developer_apps(
+    app_id: int,
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """Return the developer info and their other apps (excluding the current one)."""
+    app = db.query(models.App).filter(models.App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+    if not app.developer and not app.developer_id:
+        return DeveloperAppsResponse(
+            developer="Unknown",
+            developer_id=None,
+            total_apps=0,
+            apps=[],
+        )
+
+    # Match by developer_id first (accurate), fall back to developer name
+    if app.developer_id:
+        q = db.query(models.App).filter(
+            models.App.developer_id == app.developer_id,
+            models.App.id != app_id,
+        )
+    else:
+        q = db.query(models.App).filter(
+            models.App.developer == app.developer,
+            models.App.id != app_id,
+        )
+
+    total = q.count()
+    other_apps = (
+        q.order_by(models.App.current_reviews.desc().nullslast())
+        .limit(limit)
+        .all()
+    )
+
+    return DeveloperAppsResponse(
+        developer=app.developer or "Unknown",
+        developer_id=app.developer_id,
+        total_apps=total,
+        apps=other_apps,
+    )
+
+
 @router.get("/apps/{app_id}/versions", response_model=List[AppVersionResponse])
 def get_app_versions(app_id: int, db: Session = Depends(get_db)):
     app = db.query(models.App).filter(models.App.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="App not found")
-    
+
     return db.query(models.AppVersion).filter(
         models.AppVersion.app_id == app_id
     ).order_by(models.AppVersion.release_date.desc()).all()

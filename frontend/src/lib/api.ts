@@ -483,6 +483,13 @@ export interface AppListResponse {
   limit: number;
 }
 
+export interface DeveloperAppsResponse {
+  developer: string;
+  developer_id: string | null;
+  total_apps: number;
+  apps: AppListItem[];
+}
+
 export async function getFilteredApps(filters: AppFilters = {}): Promise<AppListResponse> {
   const params = new URLSearchParams();
   const set = (k: string, v: unknown) => {
@@ -1025,6 +1032,10 @@ export async function refreshApp(appId: number): Promise<{ status: string; app_i
   });
   if (!res.ok) throw new Error(`Failed to refresh app (${res.status})`);
   return res.json();
+}
+
+export async function getDeveloperApps(appId: number, limit: number = 20): Promise<DeveloperAppsResponse> {
+  return fetchApi<DeveloperAppsResponse>(`/apps/${appId}/developer-apps?limit=${limit}`);
 }
 
 export async function getAppVersions(appId: number): Promise<AppVersion[]> {

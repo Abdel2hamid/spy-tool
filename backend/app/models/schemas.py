@@ -223,6 +223,17 @@ class AppListResponse(BaseModel):
         from_attributes = True
 
 
+class DeveloperAppsResponse(BaseModel):
+    """Developer info and their other apps."""
+    developer: str
+    developer_id: Optional[str] = None
+    total_apps: int
+    apps: List[AppListItem]
+
+    class Config:
+        from_attributes = True
+
+
 # ---------------------------------------------------------------------------
 # Keyword Search / Discover Apps
 # ---------------------------------------------------------------------------
