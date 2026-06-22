@@ -552,6 +552,14 @@ _MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE",
     # Mark all existing users as verified (they signed up before this feature)
     "UPDATE users SET email_verified = TRUE WHERE email_verified = FALSE AND created_at < NOW() - INTERVAL '1 minute'",
+
+    # RankSpy search — app source tracking + full-text search
+    "ALTER TABLE apps ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'tracked'",
+    "ALTER TABLE apps ADD COLUMN IF NOT EXISTS discovered_at TIMESTAMPTZ",
+    "CREATE INDEX IF NOT EXISTS idx_app_source ON apps (source)",
+    "CREATE INDEX IF NOT EXISTS idx_app_discovered_at ON apps (discovered_at)",
+    # Backfill: existing apps are 'tracked'
+    "UPDATE apps SET source = 'tracked' WHERE source IS NULL",
 ]
 
 

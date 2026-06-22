@@ -214,6 +214,9 @@ class App(Base):
     sync_tier        = Column(String(10), default="warm")   # 'hot' | 'warm' | 'cold'
     tier_computed_at = Column(DateTime(timezone=True))      # last tier classification
     last_enriched_at = Column(DateTime(timezone=True))      # last full scrape timestamp
+    # RankSpy search: track how the app was discovered
+    source = Column(String(20), default="tracked")            # 'tracked' | 'discovered'
+    discovered_at = Column(DateTime(timezone=True))           # when first discovered via search
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -252,6 +255,7 @@ class App(Base):
         # Scalable ingestion pipeline queries
         Index("idx_app_ingestion", "ingestion_stage", "sync_tier"),
         Index("idx_app_developer_id", "developer_id"),
+        Index("idx_app_source", "source"),
     )
 
 

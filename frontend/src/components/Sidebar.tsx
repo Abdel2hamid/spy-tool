@@ -20,6 +20,7 @@ import {
   Star,
   Heart,
   Crown,
+  Globe,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -29,6 +30,7 @@ const navSections = [
     label: 'DISCOVER',
     items: [
       { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+      { href: '/search', label: 'App Store Search', icon: Globe },
       { href: '/apps', label: 'Apps', icon: AppWindow },
       { href: '/latest-apps', label: 'New Releases', icon: Zap },
       { href: '/trending', label: 'Trending', icon: TrendingUp },

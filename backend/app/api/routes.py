@@ -63,6 +63,7 @@ from app.models.schemas import (
     KeywordDiscoverResponse,
     AppImportSearchResponse,
     AppLookupResponse,
+    RankSpySearchResponse,
     TrendingAppsResponse,
     OpportunityOfDayWrapperResponse,
     KeywordOpportunitiesWrapperResponse,
@@ -693,6 +694,31 @@ def get_blowing_up_apps(
             items=[],
             total=0,
         )
+
+
+@router.get("/rankspy/search", response_model=RankSpySearchResponse, dependencies=[Depends(rate_limit(60, 60))])
+def rankspy_search(
+    q: str = Query(..., min_length=2, description="Search keyword"),
+    limit: int = Query(50, ge=1, le=200, description="Max results per page"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+    force_live: bool = Query(False, description="Force live App Store search even if local results are sufficient"),
+    db: Session = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+):
+    """
+    RankSpy unified search — merges local DB results with live App Store results.
+
+    - Searches local PostgreSQL first (trigram + ILIKE).
+    - If local results < 50 OR force_live=True, queries iTunes Search API.
+    - Merges + deduplicates by App Store ID.
+    - Auto-inserts newly discovered apps (source='discovered').
+    - Queues background enrichment for new apps (non-blocking).
+    - Returns results immediately with source badges.
+    """
+    from app.services.rankspy_search_service import RankSpySearchService
+
+    service = RankSpySearchService(db)
+    return service.search(q, limit=limit, offset=offset, force_live=force_live)
 
 
 @router.get("/apps/import", response_model=AppImportSearchResponse, dependencies=[Depends(rate_limit(20, 60))])

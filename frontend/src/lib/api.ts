@@ -917,6 +917,56 @@ export interface AppLookupResponse {
   is_new: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// RankSpy Search
+// ---------------------------------------------------------------------------
+
+export interface RankSpySearchItem {
+  id: number;
+  app_id: string;
+  name: string;
+  developer: string | null;
+  icon_url: string | null;
+  current_rating: number | null;
+  current_reviews: number | null;
+  primary_category: string | null;
+  price: number;
+  is_free: boolean;
+  url: string | null;
+  source: 'tracked' | 'discovered';
+  match_score: number;
+  match_type: string;
+  enrichment_status: 'complete' | 'pending';
+}
+
+export interface RankSpySearchResponse {
+  query: string;
+  results: RankSpySearchItem[];
+  total: number;
+  tracked_count: number;
+  discovered_count: number;
+  has_appstore_results: boolean;
+  error_hint: string | null;
+}
+
+export async function rankspySearch(
+  query: string,
+  limit: number = 50,
+  offset: number = 0,
+  forceLive: boolean = false,
+  token?: string | null,
+): Promise<RankSpySearchResponse> {
+  const params = new URLSearchParams({
+    q: query,
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (forceLive) params.set('force_live', 'true');
+  const endpoint = `/rankspy/search?${params}`;
+  if (token) return fetchApiAuth<RankSpySearchResponse>(endpoint, token);
+  return fetchApi<RankSpySearchResponse>(endpoint);
+}
+
 export async function searchAppsImport(
   query: string,
   limit: number = 10,

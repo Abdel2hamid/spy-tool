@@ -340,6 +340,46 @@ class AppLookupResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# RankSpy Search (unified local + App Store)
+# ---------------------------------------------------------------------------
+
+class RankSpySearchItem(BaseModel):
+    """Single app in RankSpy search results."""
+    id: int
+    app_id: str
+    name: str
+    developer: Optional[str] = None
+    icon_url: Optional[str] = None
+    current_rating: Optional[float] = None
+    current_reviews: Optional[int] = None
+    primary_category: Optional[str] = None
+    price: float = 0
+    is_free: bool = True
+    url: Optional[str] = None
+    source: str = "tracked"          # tracked | discovered
+    match_score: float = 0.0
+    match_type: str = "none"         # exact | prefix | substring | fuzzy | api
+    enrichment_status: str = "complete"  # complete | pending
+
+    class Config:
+        from_attributes = True
+
+
+class RankSpySearchResponse(BaseModel):
+    """Response for RankSpy unified search."""
+    query: str
+    results: List[RankSpySearchItem]
+    total: int
+    tracked_count: int = 0
+    discovered_count: int = 0
+    has_appstore_results: bool = False
+    error_hint: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ---------------------------------------------------------------------------
 # Ranking
 # ---------------------------------------------------------------------------
 
