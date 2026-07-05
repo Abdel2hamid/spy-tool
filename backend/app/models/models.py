@@ -1,6 +1,6 @@
 import enum
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, Date, Text, ForeignKey, Index, Boolean, JSON
+from sqlalchemy import Column, Integer, String, Float, DateTime, Date, Text, ForeignKey, Index, Boolean, JSON, text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -173,6 +173,26 @@ class Category(Base):
     rankings = relationship("Ranking", back_populates="category")
 
 
+class Country(Base):
+    """App Store storefront with acquisition-priority metadata.
+
+    Reference table driving the country-priority strategy: `tier`/`weight` set
+    how often each storefront is discovered/refreshed; `sla_hours` is the max
+    staleness before a country's tasks get a priority boost (never-starve).
+    """
+    __tablename__ = "countries"
+
+    # server_default (not default=) so create_all and the Alembic DDL produce
+    # identical DB-level defaults, and raw-SQL seeds/inserts don't hit NOT NULL.
+    code = Column(String(2), primary_key=True)               # ISO storefront code, lowercase: 'us','jp'
+    name = Column(String(100), nullable=False)
+    tier = Column(Integer, nullable=False, server_default=text("4"))        # 1 = highest value … 4 = long tail
+    weight = Column(Float, nullable=False, server_default=text("0.1"))      # relative acquisition weight
+    sla_hours = Column(Integer, nullable=False, server_default=text("720")) # max staleness (h) before boost
+    enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class App(Base):
     __tablename__ = "apps"
 
@@ -266,6 +286,7 @@ class Ranking(Base):
     app_id = Column(Integer, ForeignKey("apps.id"), nullable=False)
     category_id = Column(Integer, ForeignKey("categories.id"))
     chart_type = Column(String(50), nullable=False)
+    country = Column(String(2), nullable=False, server_default="us")  # storefront; 'us' for legacy rows
     rank = Column(Integer, nullable=False)
     previous_rank = Column(Integer)
     rank_velocity = Column(Float, default=0)
@@ -278,6 +299,7 @@ class Ranking(Base):
         Index("idx_ranking_app_date", "app_id", "recorded_at"),
         Index("idx_ranking_chart_date", "chart_type", "recorded_at"),
         Index("idx_ranking_category_date", "category_id", "recorded_at"),
+        Index("idx_ranking_country_chart_date", "country", "chart_type", "recorded_at"),
     )
 
 
