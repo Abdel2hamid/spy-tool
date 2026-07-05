@@ -190,6 +190,7 @@ class Country(Base):
     weight = Column(Float, nullable=False, server_default=text("0.1"))      # relative acquisition weight
     sla_hours = Column(Integer, nullable=False, server_default=text("720")) # max staleness (h) before boost
     enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    charts_last_covered_at = Column(DateTime(timezone=True))  # last top-charts fetch; drives rotation
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
