@@ -2220,6 +2220,78 @@ def get_rankings(
     return rankings
 
 
+@router.get("/countries")
+def list_countries(enabled_only: bool = True, db: Session = Depends(get_db)):
+    """List App Store storefronts for the country selector (tier-ordered)."""
+    q = db.query(models.Country)
+    if enabled_only:
+        q = q.filter(models.Country.enabled.is_(True))
+    rows = q.order_by(models.Country.tier, models.Country.name).all()
+    return [
+        {"code": c.code, "name": c.name, "tier": c.tier}
+        for c in rows
+    ]
+
+
+@router.get("/charts")
+def get_country_charts(
+    country: str = Query("us"),
+    chart_type: str = Query("topfree"),
+    limit: int = Query(100, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """
+    Top-chart leaderboard for a storefront: each app's most recent rank in the
+    given (country, chart_type) all-genres chart, ordered by rank.
+    """
+    from sqlalchemy import text as _sa_text
+    cc = (country or "us").lower()
+    rows = db.execute(
+        _sa_text(
+            """
+            SELECT sub.rank, sub.previous_rank, sub.rank_velocity, sub.recorded_at,
+                   a.id AS app_pk, a.app_id, a.name, a.developer, a.icon_url,
+                   a.current_rating, a.current_reviews, a.primary_category
+            FROM (
+                SELECT DISTINCT ON (r.app_id)
+                       r.app_id, r.rank, r.previous_rank, r.rank_velocity, r.recorded_at
+                FROM rankings r
+                WHERE r.country = :cc
+                  AND r.chart_type = :ct
+                  AND r.category_id IS NULL
+                ORDER BY r.app_id, r.recorded_at DESC
+            ) sub
+            JOIN apps a ON a.id = sub.app_id
+            ORDER BY sub.rank ASC
+            LIMIT :lim
+            """
+        ),
+        {"cc": cc, "ct": chart_type, "lim": limit},
+    ).mappings().all()
+
+    return {
+        "country": cc,
+        "chart_type": chart_type,
+        "total": len(rows),
+        "results": [
+            {
+                "rank": r["rank"],
+                "previous_rank": r["previous_rank"],
+                "rank_velocity": r["rank_velocity"],
+                "id": r["app_pk"],
+                "app_id": r["app_id"],
+                "name": r["name"],
+                "developer": r["developer"],
+                "icon_url": r["icon_url"],
+                "current_rating": r["current_rating"],
+                "current_reviews": r["current_reviews"],
+                "primary_category": r["primary_category"],
+            }
+            for r in rows
+        ],
+    }
+
+
 @router.get("/apps/{app_id}/detail", response_model=AppDetailResponse)
 def get_app_detail(app_id: int, db: Session = Depends(get_db)):
     app = db.query(models.App).filter(models.App.id == app_id).first()
@@ -2737,6 +2809,29 @@ async def scrape_all_apps(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Scrape all failed: {e}")
         logger.exception("Internal error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
+    finally:
+        await worker.cleanup()
+
+
+@router.post("/scrape/country-charts", dependencies=[Depends(_require_admin)])
+async def scrape_country_charts(country: str = Query(...), db: Session = Depends(get_db)):
+    """Admin: fetch top charts (free + grossing, all-genres) for one storefront now."""
+    from app.workers.tasks import ScraperWorker
+
+    cc = (country or "").lower()
+    if not db.query(models.Country).filter(models.Country.code == cc).first():
+        raise HTTPException(status_code=404, detail=f"Unknown country '{cc}'")
+
+    worker = ScraperWorker()
+    await worker.initialize()
+    try:
+        await worker.scrape_top_charts(
+            chart_types=["topfree", "topgrossing"], categories=[None], country=cc,
+        )
+        return {"status": "completed", "country": cc}
+    except Exception as e:
+        logger.exception("country-charts scrape failed for %s: %s", cc, e)
         raise HTTPException(status_code=500, detail="Internal server error")
     finally:
         await worker.cleanup()

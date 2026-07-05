@@ -63,6 +63,7 @@ _JOB_DEFAULTS = dict(
 # ---------------------------------------------------------------------------
 _JOB_TIMEOUTS = {
     "ranking_refresh": 600,            # 10 min (chart RSS only, no full scrape)
+    "country_charts": 1800,           # 30 min (per-country charts for Tier-1)
     "trending_compute": 300,           # 5 min (fast, SQL-only)
     "blowing_up_compute": 600,         # 10 min
     "opportunity_compute": 600,        # 10 min
@@ -452,6 +453,56 @@ async def job_ranking_refresh():
         _log_fail(job_id, exc)
     finally:
         await worker.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# Job: every 6 h — per-country top charts (Tier-1 storefronts)
+# ---------------------------------------------------------------------------
+
+@_with_timeout("country_charts")
+async def job_country_charts():
+    """
+    Fetch top charts (free + grossing, all-genres) for enabled Tier-1
+    storefronts and write per-country ranking rows. Extends ranking coverage
+    beyond the US (which ranking_refresh / full_metadata already cover).
+    """
+    job_id = "country_charts"
+    t0 = _log_start(job_id)
+    try:
+        from app.models.models import Country
+
+        def _tier1_codes(db):
+            rows = (
+                db.query(Country.code)
+                .filter(Country.enabled.is_(True), Country.tier <= 1, Country.code != "us")
+                .order_by(Country.code)
+                .all()
+            )
+            return [r[0] for r in rows]
+
+        codes = await _run_in_thread_with_session(_tier1_codes)
+        if not codes:
+            _log_done(job_id, t0, "no non-US tier-1 countries configured")
+            return
+
+        from app.workers.tasks import ScraperWorker
+        worker = ScraperWorker()
+        await worker.initialize()
+        try:
+            done = 0
+            for cc in codes:
+                await worker.scrape_top_charts(
+                    chart_types=["topfree", "topgrossing"],
+                    categories=[None],
+                    country=cc,
+                )
+                done += 1
+                await asyncio.sleep(0.5)  # gentle pacing between storefronts
+            _log_done(job_id, t0, f"top charts fetched for {done} storefronts: {codes}")
+        finally:
+            await worker.cleanup()
+    except Exception as exc:
+        _log_fail(job_id, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -1646,6 +1697,19 @@ def setup_scheduler() -> AsyncIOScheduler:
         ),
         id="ranking_refresh",
         name="Every 2h: Ranking Refresh (chart RSS only)",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── Per-country top charts (Tier-1 storefronts) — every 6 h ───────────
+    scheduler.add_job(
+        job_country_charts,
+        trigger=IntervalTrigger(
+            hours=6,
+            start_date=now + timedelta(minutes=8),
+            timezone="UTC",
+        ),
+        id="country_charts",
+        name="Every 6h: Per-country Top Charts (Tier-1)",
         **_JOB_DEFAULTS,
     )
 

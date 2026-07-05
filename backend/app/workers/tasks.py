@@ -165,20 +165,21 @@ class ScraperWorker:
 
         logger.info("Search results scrape completed")
     
-    async def scrape_top_charts(self, chart_types: List[str] = None, categories: List[str] = None):
+    async def scrape_top_charts(self, chart_types: List[str] = None, categories: List[str] = None, country: str = "us"):
         if chart_types is None:
             chart_types = ["topfree", "toppaid", "topgrossing"]
 
         if categories is None:
             categories = [None]  # None → "all" genres in the RSS API
 
-        logger.info(f"Starting top charts scrape: {len(chart_types)} chart types (uncapped)")
+        cc = (country or "us").lower()
+        logger.info(f"Starting top charts scrape [{cc}]: {len(chart_types)} chart types (uncapped)")
 
         for chart_type in chart_types:
             for category in categories:
                 try:
-                    results = await self.scraper.get_top_charts(chart_type, category, limit=200)
-                    logger.info(f"Found {len(results)} apps in {chart_type}/{category or 'all'}")
+                    results = await self.scraper.get_top_charts(chart_type, category, limit=200, country=cc)
+                    logger.info(f"Found {len(results)} apps in {cc}/{chart_type}/{category or 'all'}")
 
                     new_apps_added = 0
                     for result in results:
@@ -190,8 +191,10 @@ class ScraperWorker:
                             app = self.get_or_create_app(result)
                             new_apps_added += 1
                         else:
-                            # Always update rank for existing apps
-                            existing_app.current_rank = result.get("rank", existing_app.current_rank)
+                            # current_rank is the global (US) headline rank — only
+                            # update it from the US storefront to avoid per-country drift.
+                            if cc == "us":
+                                existing_app.current_rank = result.get("rank", existing_app.current_rank)
                             app = existing_app
 
                         # Resolve category from the RSS result and link to App
@@ -209,6 +212,7 @@ class ScraperWorker:
                             Ranking.app_id == app.id,
                             Ranking.chart_type == chart_type,
                             Ranking.category_id == category_id,
+                            Ranking.country == cc,
                         ).order_by(Ranking.recorded_at.desc()).first()
 
                         if existing_ranking:
@@ -218,6 +222,7 @@ class ScraperWorker:
                             app_id=app.id,
                             chart_type=chart_type,
                             category_id=category_id,
+                            country=cc,
                             rank=result.get("rank", 0),
                             previous_rank=previous_rank,
                             rank_velocity=(previous_rank - result.get("rank", 0)) if previous_rank else 0
@@ -226,7 +231,7 @@ class ScraperWorker:
 
                     self.db.commit()
                     logger.info(
-                        f"Chart {chart_type}/{category or 'all'}: "
+                        f"Chart {cc}/{chart_type}/{category or 'all'}: "
                         f"{len(results)} ranks stored, {new_apps_added} new apps added"
                     )
 
