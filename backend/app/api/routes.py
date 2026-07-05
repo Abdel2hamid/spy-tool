@@ -2233,19 +2233,48 @@ def list_countries(enabled_only: bool = True, db: Session = Depends(get_db)):
     ]
 
 
+# App Store chart genres (slug → display name). 'all' = overall.
+_CHART_GENRES = [
+    ("all", "Overall"),
+    ("games", "Games"),
+    ("productivity", "Productivity"),
+    ("social-networking", "Social Networking"),
+    ("photo-video", "Photo & Video"),
+    ("finance", "Finance"),
+    ("health-fitness", "Health & Fitness"),
+    ("entertainment", "Entertainment"),
+    ("utilities", "Utilities"),
+    ("education", "Education"),
+    ("music", "Music"),
+    ("business", "Business"),
+    ("lifestyle", "Lifestyle"),
+    ("shopping", "Shopping"),
+    ("travel", "Travel"),
+]
+
+
+@router.get("/chart-genres")
+def list_chart_genres():
+    """Genres available for the top-charts genre selector."""
+    return [{"slug": slug, "name": name} for slug, name in _CHART_GENRES]
+
+
 @router.get("/charts")
 def get_country_charts(
     country: str = Query("us"),
     chart_type: str = Query("topfree"),
+    genre: str = Query("all"),
     limit: int = Query(100, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
     """
     Top-chart leaderboard for a storefront: each app's most recent rank in the
-    given (country, chart_type) all-genres chart, ordered by rank.
+    given (country, chart_type, genre) chart, ordered by rank. genre='all' is
+    the overall chart.
     """
     from sqlalchemy import text as _sa_text
     cc = (country or "us").lower()
+    g = (genre or "all").lower()
     rows = db.execute(
         _sa_text(
             """
@@ -2258,7 +2287,7 @@ def get_country_charts(
                 FROM rankings r
                 WHERE r.country = :cc
                   AND r.chart_type = :ct
-                  AND r.category_id IS NULL
+                  AND r.genre = :g
                 ORDER BY r.app_id, r.recorded_at DESC
             ) sub
             JOIN apps a ON a.id = sub.app_id
@@ -2266,12 +2295,13 @@ def get_country_charts(
             LIMIT :lim
             """
         ),
-        {"cc": cc, "ct": chart_type, "lim": limit},
+        {"cc": cc, "ct": chart_type, "g": g, "lim": limit},
     ).mappings().all()
 
     return {
         "country": cc,
         "chart_type": chart_type,
+        "genre": g,
         "total": len(rows),
         "results": [
             {
@@ -2826,8 +2856,10 @@ async def scrape_country_charts(country: str = Query(...), db: Session = Depends
     worker = ScraperWorker()
     await worker.initialize()
     try:
+        # Overall + a set of popular genre charts, so genre selection has data.
+        genres = [None, "games", "productivity", "social-networking", "photo-video", "finance"]
         await worker.scrape_top_charts(
-            chart_types=["topfree", "topgrossing"], categories=[None], country=cc,
+            chart_types=["topfree", "topgrossing"], categories=genres, country=cc,
         )
         return {"status": "completed", "country": cc}
     except Exception as e:

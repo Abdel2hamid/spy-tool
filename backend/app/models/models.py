@@ -288,6 +288,7 @@ class Ranking(Base):
     category_id = Column(Integer, ForeignKey("categories.id"))
     chart_type = Column(String(50), nullable=False)
     country = Column(String(2), nullable=False, server_default="us")  # storefront; 'us' for legacy rows
+    genre = Column(String(40), nullable=False, server_default="all")  # chart scope: 'all' or a genre slug
     rank = Column(Integer, nullable=False)
     previous_rank = Column(Integer)
     rank_velocity = Column(Float, default=0)
@@ -301,6 +302,7 @@ class Ranking(Base):
         Index("idx_ranking_chart_date", "chart_type", "recorded_at"),
         Index("idx_ranking_category_date", "category_id", "recorded_at"),
         Index("idx_ranking_country_chart_date", "country", "chart_type", "recorded_at"),
+        Index("idx_ranking_cc_chart_genre_date", "country", "chart_type", "genre", "recorded_at"),
     )
 
 

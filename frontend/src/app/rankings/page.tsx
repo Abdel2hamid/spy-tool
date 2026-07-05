@@ -8,6 +8,7 @@ import { AppShell } from '@/components';
 import {
   getRankHistory, RankHistory, getApps, AppListItem,
   getCountries, getCountryCharts, CountryOption, ChartRow,
+  getChartGenres, ChartGenre,
 } from '@/lib/api';
 import { BarChart3, TrendingUp, Search, Trophy, ChevronUp, ChevronDown, Minus, Globe } from 'lucide-react';
 import { RankHistoryChart } from '@/components/Charts';
@@ -27,8 +28,10 @@ function RankDelta({ rank, previous }: { rank: number; previous: number | null }
 
 function CountryCharts() {
   const [countries, setCountries] = useState<CountryOption[]>([]);
+  const [genres, setGenres] = useState<ChartGenre[]>([]);
   const [country, setCountry] = useState('us');
   const [chartType, setChartType] = useState('topfree');
+  const [genre, setGenre] = useState('all');
   const [rows, setRows] = useState<ChartRow[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -36,13 +39,14 @@ function CountryCharts() {
 
   useEffect(() => {
     getCountries().then(setCountries).catch(() => {});
+    getChartGenres().then(setGenres).catch(() => {});
   }, []);
 
   useEffect(() => {
     const id = ++reqRef.current;
     setLoading(true);
     setError(false);
-    getCountryCharts(country, chartType, 100)
+    getCountryCharts(country, chartType, genre, 100)
       .then((res) => {
         if (id !== reqRef.current) return; // stale response guard
         setRows(res.results);
@@ -55,7 +59,7 @@ function CountryCharts() {
       .finally(() => {
         if (id === reqRef.current) setLoading(false);
       });
-  }, [country, chartType]);
+  }, [country, chartType, genre]);
 
   const countryName = countries.find((c) => c.code === country)?.name ?? country.toUpperCase();
 
@@ -80,6 +84,16 @@ function CountryCharts() {
               ))}
             </select>
           </div>
+          <select
+            value={genre}
+            onChange={(e) => setGenre(e.target.value)}
+            className="rounded-lg border border-gray-200 bg-white py-1.5 px-3 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none dark:border-gray-800 dark:bg-gray-900 dark:text-white"
+          >
+            {genres.length === 0 && <option value="all">Overall</option>}
+            {genres.map((g) => (
+              <option key={g.slug} value={g.slug}>{g.name}</option>
+            ))}
+          </select>
           <div className="inline-flex rounded-lg border border-gray-200 p-0.5 dark:border-gray-800">
             {CHART_TYPES.map((ct) => (
               <button

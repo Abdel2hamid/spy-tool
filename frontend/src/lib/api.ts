@@ -895,6 +895,7 @@ export interface ChartRow {
 export interface CountryChartsResponse {
   country: string;
   chart_type: string;
+  genre: string;
   total: number;
   results: ChartRow[];
 }
@@ -902,11 +903,22 @@ export interface CountryChartsResponse {
 export async function getCountryCharts(
   country: string,
   chartType: string,
+  genre: string = 'all',
   limit: number = 100,
 ): Promise<CountryChartsResponse> {
   return fetchApi<CountryChartsResponse>(
-    `/charts?country=${encodeURIComponent(country)}&chart_type=${encodeURIComponent(chartType)}&limit=${limit}`,
+    `/charts?country=${encodeURIComponent(country)}&chart_type=${encodeURIComponent(chartType)}` +
+    `&genre=${encodeURIComponent(genre)}&limit=${limit}`,
   );
+}
+
+export interface ChartGenre {
+  slug: string;
+  name: string;
+}
+
+export async function getChartGenres(): Promise<ChartGenre[]> {
+  return fetchApi<ChartGenre[]>('/chart-genres');
 }
 
 export async function getApp(appId: number): Promise<App> {

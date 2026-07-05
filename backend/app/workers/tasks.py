@@ -177,9 +177,15 @@ class ScraperWorker:
 
         for chart_type in chart_types:
             for category in categories:
+                # Chart scope: 'all' (overall) or a genre slug. This is the axis
+                # the rank is measured on — distinct from an app's own category.
+                chart_genre = (
+                    category.lower().replace(" & ", "-").replace(" ", "-")
+                    if category else "all"
+                )
                 try:
                     results = await self.scraper.get_top_charts(chart_type, category, limit=200, country=cc)
-                    logger.info(f"Found {len(results)} apps in {cc}/{chart_type}/{category or 'all'}")
+                    logger.info(f"Found {len(results)} apps in {cc}/{chart_type}/{chart_genre}")
 
                     new_apps_added = 0
                     for result in results:
@@ -211,8 +217,8 @@ class ScraperWorker:
                         existing_ranking = self.db.query(Ranking).filter(
                             Ranking.app_id == app.id,
                             Ranking.chart_type == chart_type,
-                            Ranking.category_id == category_id,
                             Ranking.country == cc,
+                            Ranking.genre == chart_genre,
                         ).order_by(Ranking.recorded_at.desc()).first()
 
                         if existing_ranking:
@@ -221,8 +227,9 @@ class ScraperWorker:
                         ranking = Ranking(
                             app_id=app.id,
                             chart_type=chart_type,
-                            category_id=category_id,
+                            category_id=category_id,   # the app's own category (metadata)
                             country=cc,
+                            genre=chart_genre,          # the chart's scope
                             rank=result.get("rank", 0),
                             previous_rank=previous_rank,
                             rank_velocity=(previous_rank - result.get("rank", 0)) if previous_rank else 0
@@ -231,7 +238,7 @@ class ScraperWorker:
 
                     self.db.commit()
                     logger.info(
-                        f"Chart {cc}/{chart_type}/{category or 'all'}: "
+                        f"Chart {cc}/{chart_type}/{chart_genre}: "
                         f"{len(results)} ranks stored, {new_apps_added} new apps added"
                     )
 

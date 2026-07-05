@@ -461,12 +461,20 @@ async def job_ranking_refresh():
 
 _COUNTRY_CHART_BATCH = 25  # max storefronts refreshed per run (bounds request cost)
 
+# Genre depth by country tier (overall is always fetched; these add genre charts).
+# Higher tiers get more genre depth; T3/T4 get overall only.
+_GENRES_FOR_TIER = {
+    1: ["games", "productivity", "social-networking", "photo-video", "finance", "health-fitness"],
+    2: ["games", "productivity", "social-networking"],
+}
+
 
 @_with_timeout("country_charts")
 async def job_country_charts():
     """
-    Fetch top charts (free + grossing, all-genres) for the most-overdue
-    storefronts and write per-country ranking rows.
+    Fetch top charts (free + grossing) for the most-overdue storefronts and
+    write per-country ranking rows. Each country gets the overall chart plus a
+    tier-gated set of genre charts (_GENRES_FOR_TIER).
 
     SLA-weighted rotation over ALL enabled storefronts: a country is "due" once
     it hasn't been covered within its tier's sla_hours; each run picks up to
@@ -484,7 +492,7 @@ async def job_country_charts():
             rows = db.execute(
                 _sa_text(
                     """
-                    SELECT code FROM countries
+                    SELECT code, tier FROM countries
                     WHERE enabled AND code <> 'us'
                       AND (charts_last_covered_at IS NULL
                            OR now() - charts_last_covered_at > make_interval(hours => sla_hours))
@@ -495,11 +503,11 @@ async def job_country_charts():
                     """
                 ),
                 {"lim": _COUNTRY_CHART_BATCH},
-            ).scalars().all()
-            return list(rows)
+            ).all()
+            return [(r[0], r[1]) for r in rows]
 
-        codes = await _run_in_thread_with_session(_due_countries)
-        if not codes:
+        due = await _run_in_thread_with_session(_due_countries)
+        if not due:
             _log_done(job_id, t0, "no storefronts due for refresh")
             return
 
@@ -515,17 +523,18 @@ async def job_country_charts():
         await worker.initialize()
         try:
             done = 0
-            for cc in codes:
+            for cc, tier in due:
+                categories = [None] + _GENRES_FOR_TIER.get(tier, [])  # overall + genre charts
                 await worker.scrape_top_charts(
                     chart_types=["topfree", "topgrossing"],
-                    categories=[None],
+                    categories=categories,
                     country=cc,
                 )
                 # Mark covered per-country so a mid-run timeout is resumable.
                 await _run_in_thread_with_session(_mark_covered, cc)
                 done += 1
                 await asyncio.sleep(0.5)  # gentle pacing between storefronts
-            _log_done(job_id, t0, f"top charts fetched for {done}/{len(codes)} due storefronts: {codes}")
+            _log_done(job_id, t0, f"top charts fetched for {done}/{len(due)} due storefronts: {[c for c, _ in due]}")
         finally:
             await worker.cleanup()
     except Exception as exc:
