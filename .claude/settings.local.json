@@ -554,7 +554,29 @@
       "Bash(npx tsc --noEmit --skipLibCheck 2>&1 | tail -5)",
       "Bash(cd /Users/abdelhamid/appstore-spy/frontend && npx tsc --noEmit --skipLibCheck 2>&1 | tail -5)",
       "Bash(git add \\\\\n  backend/app/services/keyword_scoring_v2.py \\\\\n  backend/app/api/routes.py \\\\\n  backend/app/main.py \\\\\n  backend/app/models/models.py \\\\\n  backend/app/models/schemas.py \\\\\n  backend/app/services/keyword_discovery_service.py \\\\\n  backend/app/services/keyword_intelligence_pipeline.py \\\\\n  backend/app/services/opportunity_service.py \\\\\n  frontend/src/app/keywords/KeywordsClient.tsx \\\\\n  frontend/src/lib/api.ts)",
-      "Bash(git commit -m \"$\\(cat <<'EOF'\nfeat\\(keywords\\): add multi-signal keyword scoring v2 system\n\nReplace single-signal heuristics with weighted fusion of multiple data\nsources for volume, difficulty, and per-app ranking probability. Adds\nautocomplete rank fetching, full top-10 difficulty breakdown \\(incumbent\nstrength, title saturation, brand dominance, HHI concentration\\), per-app\nchance score + KEI + organic install estimation, and exposes all new\nmetrics through API and frontend UI with difficulty breakdown panel.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")"
+      "Bash(git commit -m \"$\\(cat <<'EOF'\nfeat\\(keywords\\): add multi-signal keyword scoring v2 system\n\nReplace single-signal heuristics with weighted fusion of multiple data\nsources for volume, difficulty, and per-app ranking probability. Adds\nautocomplete rank fetching, full top-10 difficulty breakdown \\(incumbent\nstrength, title saturation, brand dominance, HHI concentration\\), per-app\nchance score + KEI + organic install estimation, and exposes all new\nmetrics through API and frontend UI with difficulty breakdown panel.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(python3 -m compileall -q app)",
+      "Bash(awk '{print $6,$7,$8}')",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('app/workers/discovery_engine.py'\\).read\\(\\)\\); print\\('discovery_engine parse OK'\\)\")",
+      "Bash(python3 -m pytest tests/test_ai_potential.py tests/test_scoring_config.py tests/test_keyword_quality.py tests/test_keyword_hard_gate.py tests/test_primary_keyword_selection.py tests/test_opportunity_of_day.py tests/test_weekly_opportunities.py tests/test_plan_enforcement.py tests/test_trending_algorithm.py tests/test_download_estimator.py tests/test_blowing_up.py tests/test_fresh_risers.py tests/test_pre_filter_service.py tests/test_confidence_scoring.py tests/test_parse_appstore_query.py tests/test_app_tiering_service.py tests/test_reviews_intelligence.py tests/test_post_import_hydration.py tests/test_import_flow.py tests/test_import_search.py tests/test_trending_response_shape.py tests/test_endpoint_empty_states.py tests/test_scoring_config.py -p no:cacheprovider --tb=short -q -rf)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(grep -B1 \"^\\\\s*pass\\\\s*$\")",
+      "Bash(python3 -m pytest tests/test_ai_potential.py tests/test_scoring_config.py tests/test_keyword_quality.py tests/test_keyword_hard_gate.py tests/test_primary_keyword_selection.py tests/test_opportunity_of_day.py tests/test_weekly_opportunities.py tests/test_plan_enforcement.py tests/test_trending_algorithm.py tests/test_download_estimator.py tests/test_blowing_up.py tests/test_fresh_risers.py tests/test_pre_filter_service.py tests/test_confidence_scoring.py tests/test_parse_appstore_query.py tests/test_app_tiering_service.py tests/test_reviews_intelligence.py tests/test_post_import_hydration.py tests/test_import_flow.py tests/test_import_search.py tests/test_trending_response_shape.py tests/test_endpoint_empty_states.py tests/test_scoring_config.py -p no:cacheprovider --tb=no -q -rf)",
+      "Bash(git stash *)",
+      "Bash(echo \"POP: $?\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('backend/app/workers/discovery_engine.py'\\).read\\(\\)\\); print\\('discovery_engine restored OK'\\)\")",
+      "Bash(python3 -m pip install pyflakes -q)",
+      "Bash(python3 -m pyflakes app/main.py app/api/routes.py app/api/stripe_router.py app/api/admin_console_router.py app/workers/discovery_engine.py app/workers/scheduler.py app/workers/tasks.py app/utils/batch_utils.py app/utils/rate_limiter.py app/scoring/engine.py app/scoring/feature_gaps.py app/models/models.py app/scrapers/app_details.py app/services/apple_http_client.py app/services/keyword_search_service.py app/services/keyword_intelligence_pipeline.py app/services/keyword_scoring_v2.py app/services/keyword_gap_service.py app/services/keyword_suggestions_service.py app/services/competitor_compare_service.py app/services/niche_radar.py app/services/post_import_hydration.py app/services/app_import_service.py app/services/review_intelligence.py app/services/review_sentiment_service.py app/services/app_autopsy.py)",
+      "Bash(python3 -m pyflakes app/services/keyword_suggestions_service.py app/services/keyword_intelligence_pipeline.py)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('app/services/keyword_suggestions_service.py'\\).read\\(\\)\\); ast.parse\\(open\\('app/services/keyword_intelligence_pipeline.py'\\).read\\(\\)\\); print\\('parse OK'\\)\")",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -c 'import re,sys; s=open\\('\\\\''app/workers/discovery_engine.py'\\\\''\\).read\\(\\); *)",
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(git commit -q -m ' *)",
+      "Bash(git push *)",
+      "Bash(gh auth *)",
+      "Bash(env)"
     ]
   }
 }

@@ -15,9 +15,8 @@ Each suggestion includes a reason explaining *why* it's recommended.
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional, Set
+from typing import Dict, List
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -102,14 +101,16 @@ class KeywordSuggestionsService:
         v2_map: Dict[str, dict] = {}
         batch_sz = 500
         for i in range(0, len(all_terms), batch_sz):
-            batch = all_terms[i : i + batch_sz]
+            # keywords.term is stored lowercase — lowering the Python side
+            # keeps the plain index usable (func.lower() forced a seq scan).
+            batch = [t.lower() for t in all_terms[i : i + batch_sz]]
             rows = (
                 self.db.query(
                     Keyword.term,
                     Keyword.volume_score,
                     Keyword.difficulty_v2,
                 )
-                .filter(func.lower(Keyword.term).in_(batch))
+                .filter(Keyword.term.in_(batch))
                 .all()
             )
             for term, vs, dv in rows:

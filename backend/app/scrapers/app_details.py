@@ -268,7 +268,9 @@ class AppStoreAppScraper:
         """
         reviews = []
 
-        for page in range(1, (limit // 10) + 2):
+        # The feed serves ~50 reviews per page and hard-caps at page 10
+        max_page = min((limit + 49) // 50, 10)
+        for page in range(1, max_page + 1):
             url = (
                 f"https://itunes.apple.com/{country}/rss/customerreviews"
                 f"/page={page}/id={app_id}/sortby=mostrecent/json"
@@ -290,12 +292,9 @@ class AppStoreAppScraper:
 
                 for entry in entries:
                     entry_id = entry.get("id", {}).get("label", "")
-                    # Skip the app info entry (first entry, not a review)
-                    if not entry_id or entry_id.startswith("https://itunes.apple.com") and "/customerreviews/" not in entry_id:
-                        # Check if it looks like a review ID (numeric tail)
-                        tail = entry_id.split("/")[-1]
-                        if not tail.isdigit():
-                            continue
+                    # Skip the app-info entry: real reviews always carry im:rating
+                    if not entry_id or "im:rating" not in entry:
+                        continue
 
                     review = {
                         "review_id": entry_id.split("/")[-1],

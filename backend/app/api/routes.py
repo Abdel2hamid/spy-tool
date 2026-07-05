@@ -118,10 +118,11 @@ class _AppIdBody(_BaseModel):
 
 
 def _require_admin(x_admin_token: Optional[str] = Header(None)):
-    """Verify X-Admin-Token header matches ADMIN_TOKEN env var."""
+    """Verify X-Admin-Token header matches ADMIN_TOKEN env var. Fails closed."""
     import secrets as _secrets
     if not settings.admin_token:
-        return  # no token configured — allow (dev mode only, blocked in prod by config.py)
+        # No token configured — refuse rather than silently allowing.
+        raise HTTPException(status_code=503, detail="Admin endpoints disabled (ADMIN_TOKEN not configured)")
     if not x_admin_token or not _secrets.compare_digest(x_admin_token, settings.admin_token):
         raise HTTPException(status_code=403, detail="Invalid or missing admin token")
 

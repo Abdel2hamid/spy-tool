@@ -349,20 +349,22 @@ export default function AppsClient() {
       return;
     }
 
-    // If input looks like an App Store URL or numeric ID, skip text search
-    const directId = parseAppStoreInput(value);
-    if (directId) {
-      setStoreSearching(true);
-      lookupApp(directId)
-        .then(detail => {
-          router.push(`/apps/${detail.id}?imported=1`);
-        })
-        .catch(() => setStoreSearching(false))
-        .finally(() => setStoreSearching(false));
-      return;
-    }
-
     storeSearchTimer.current = setTimeout(async () => {
+      // If input looks like an App Store URL or numeric ID, import directly.
+      // This MUST live inside the debounce: running it per keystroke imported
+      // every numeric prefix ("123456", "1234567", …) as a different app.
+      const directId = parseAppStoreInput(value);
+      if (directId) {
+        setStoreSearching(true);
+        try {
+          const detail = await lookupApp(directId);
+          router.push(`/apps/${detail.id}?imported=1`);
+        } catch {
+          setStoreSearching(false);
+        }
+        return;
+      }
+
       setStoreSearching(true);
       try {
         const res = await searchAppsImport(value.trim(), 6);

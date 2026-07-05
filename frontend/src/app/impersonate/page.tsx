@@ -15,6 +15,13 @@ export default function ImpersonatePage() {
     const token = sessionStorage.getItem('impersonate_token');
     if (token) {
       sessionStorage.removeItem('impersonate_token');
+      // Preserve the admin's own session so impersonation is reversible —
+      // localStorage is shared across tabs, so overwriting auth_token
+      // silently demoted the still-open admin tab too.
+      const current = localStorage.getItem('auth_token');
+      if (current && current !== token && !localStorage.getItem('admin_token_backup')) {
+        localStorage.setItem('admin_token_backup', current);
+      }
       localStorage.setItem('auth_token', token);
       window.location.href = '/';
     } else {

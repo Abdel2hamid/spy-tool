@@ -681,7 +681,7 @@ class AppImportService:
 
         try:
             extractor = KeywordExtractionService(self.db)
-            extractor.extract_for_app(app_id)
+            extractor.extract_keywords_for_app(app_id)
             logger.info(f"[Search] Triggered extraction for app {app_id}")
         except Exception as e:
             logger.warning(f"[Search] Extraction failed for app {app_id}: {e}")

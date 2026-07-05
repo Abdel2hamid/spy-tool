@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, HTTPException, Request
+from typing import Optional
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
@@ -461,17 +462,10 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_ak_chance ON app_keywords (app_id, chance_score)",
     "CREATE INDEX IF NOT EXISTS idx_ak_kei ON app_keywords (app_id, kei)",
 
-    # ── Keyword data cleanup: purge junk from alphabet expansion ──────────
-    # Delete keywords ending in isolated single/double letters (e.g. "timer x", "exercise s j")
-    # Pattern: " x" or " x y" at end of term — uses PostgreSQL ~ regex operator
-    """DELETE FROM keyword_queue WHERE keyword_id IN (SELECT id FROM keywords WHERE term ~ ' [a-z]( [a-z])*$')""",
-    """DELETE FROM app_keywords WHERE keyword_id IN (SELECT id FROM keywords WHERE term ~ ' [a-z]( [a-z])*$')""",
-    """DELETE FROM keyword_trends WHERE keyword_id IN (SELECT id FROM keywords WHERE term ~ ' [a-z]( [a-z])*$')""",
-    """DELETE FROM keywords WHERE term ~ ' [a-z]( [a-z])*$'""",
-    # Also purge from app_discovered_keywords
-    """DELETE FROM app_discovered_keywords WHERE keyword ~ ' [a-z]( [a-z])*$'""",
-    # Reset enrichment status so pipeline re-scores everything with v2
-    "UPDATE keywords SET status = 'raw', volume_score = 0, difficulty_v2 = 0 WHERE volume_score = 0 AND status != 'raw'",
+    # NOTE: one-time keyword-cleanup DML (junk purge / status reset) was removed
+    # from this list — it re-ran on every startup, deleting legitimate keywords
+    # and resetting zero-volume keywords to 'raw' in a perpetual re-enrichment
+    # loop. One-time data fixes belong in versioned Alembic migrations.
 
     # Admin console — superadmin flag on users
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_superadmin BOOLEAN NOT NULL DEFAULT FALSE",
@@ -550,8 +544,9 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_alert_event_read ON alert_events (workspace_id, is_read)",
     # Email verification
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE",
-    # Mark all existing users as verified (they signed up before this feature)
-    "UPDATE users SET email_verified = TRUE WHERE email_verified = FALSE AND created_at < NOW() - INTERVAL '1 minute'",
+    # NOTE: the "mark existing users verified" backfill was removed — re-running
+    # it on every startup auto-verified ANY user registered >1 minute earlier,
+    # silently bypassing email verification.
 
     # RankSpy search — app source tracking + full-text search
     "ALTER TABLE apps ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'tracked'",
@@ -606,15 +601,24 @@ async def lifespan(app: FastAPI):
 
     # Start the recurring scheduler.  Jobs are registered with start_date
     # offsets so they don't pile on top of the startup scrape.
-    setup_scheduler()
-    scheduler.start()
-    logger.info(f"Scheduler started — {len(scheduler.get_jobs())} recurring jobs registered")
+    # ENABLE_SCHEDULER=0 lets extra replicas run API-only — the scheduler
+    # is in-process state; two replicas running it means duplicate scraping,
+    # duplicate writes, and racing queue claims.
+    import os as _os
+    _scheduler_enabled = _os.getenv("ENABLE_SCHEDULER", "1").lower() not in ("0", "false", "no")
+    if _scheduler_enabled:
+        setup_scheduler()
+        scheduler.start()
+        logger.info(f"Scheduler started — {len(scheduler.get_jobs())} recurring jobs registered")
+    else:
+        logger.info("Scheduler disabled via ENABLE_SCHEDULER — API-only instance")
 
     yield
 
     # Graceful shutdown: don't wait for running jobs to finish
-    scheduler.shutdown(wait=False)
-    logger.info("Scheduler stopped")
+    if _scheduler_enabled:
+        scheduler.shutdown(wait=False)
+        logger.info("Scheduler stopped")
     logger.info("Shutting down RankSpy...")
 
 
@@ -656,7 +660,7 @@ _PUBLIC_PREFIXES = (
 )
 
 _PUBLIC_EXACT = {
-    "/", "/health", "/api/v1/categories", "/api/v1/run-migrations", "/run-migrations",
+    "/", "/health", "/api/v1/categories",
 }
 
 
@@ -692,7 +696,7 @@ class _AuthGateMiddleware(BaseHTTPMiddleware):
             if path.startswith(prefix):
                 return await call_next(request)
 
-        # Require Authorization header
+        # Require a valid Bearer JWT
         auth = request.headers.get("authorization", "")
         if not auth.lower().startswith("bearer "):
             return StarletteJSON(
@@ -704,8 +708,17 @@ class _AuthGateMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-        # Token validity is verified downstream by deps.py / route dependencies.
-        # This middleware only ensures the header exists.
+        from app.services.auth_service import decode_access_token
+        if decode_access_token(auth[7:].strip()) is None:
+            return StarletteJSON(
+                status_code=401,
+                content={"detail": "Invalid or expired token"},
+                headers={
+                    "WWW-Authenticate": "Bearer",
+                    **self._cors_headers(request),
+                },
+            )
+
         return await call_next(request)
 
 
@@ -740,9 +753,10 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
     if origin and origin in allowed:
         headers["Access-Control-Allow-Origin"] = origin
         headers["Access-Control-Allow-Credentials"] = "true"
+    # Details are logged above — never leak exception internals to clients.
     return JSONResponse(
         status_code=500,
-        content={"detail": f"Internal server error: {type(exc).__name__}: {exc}"},
+        content={"detail": "Internal server error"},
         headers=headers,
     )
 
@@ -758,8 +772,13 @@ def root():
 
 @app.get("/run-migrations")
 @app.get("/api/v1/run-migrations")
-def run_migrations_endpoint():
-    """Manually trigger migrations (temporary)."""
+def run_migrations_endpoint(x_admin_token: Optional[str] = Header(None)):
+    """Manually trigger migrations. Requires ADMIN_TOKEN — fails closed."""
+    import secrets as _secrets
+    if not settings.admin_token or not x_admin_token or not _secrets.compare_digest(
+        x_admin_token, settings.admin_token
+    ):
+        raise HTTPException(status_code=403, detail="Admin token required")
     results = []
     with engine.connect() as conn:
         for sql in _MIGRATIONS:

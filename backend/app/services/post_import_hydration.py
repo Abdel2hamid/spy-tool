@@ -102,7 +102,7 @@ class PostImportHydrationService:
         try:
             from app.services.keyword_extraction_service import KeywordExtractionService
             svc = KeywordExtractionService(db)
-            svc.extract_for_app(app_id)
+            svc.extract_keywords_for_app(app_id)
             logger.info(f"[hydration] Keyword extraction done for app {app_id}")
         except Exception as exc:
             logger.warning(f"[hydration] Keyword extraction failed for app {app_id}: {exc}")

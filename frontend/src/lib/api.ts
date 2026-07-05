@@ -28,7 +28,7 @@ function _resolveApiBase(): string {
   return isServer ? 'http://localhost:8000/api/v1' : '/api/v1';
 }
 
-const API_BASE = _resolveApiBase();
+export const API_BASE = _resolveApiBase();
 
 /**
  * Read the JWT from localStorage and return an Authorization header.
@@ -664,6 +664,15 @@ function _handlePlanError(res: Response, body: Record<string, unknown>): void {
 
 // ---------------------------------------------------------------------------
 
+/** Expired/invalid session: clear the token and send the user to /login. */
+function _handleUnauthorized(): void {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem('auth_token');
+  if (!window.location.pathname.startsWith('/login')) {
+    window.location.href = '/login';
+  }
+}
+
 async function fetchApi<T>(endpoint: string): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
@@ -672,6 +681,10 @@ async function fetchApi<T>(endpoint: string): Promise<T> {
       signal: controller.signal,
       headers: _authHeaders(),
     });
+    if (res.status === 401) {
+      _handleUnauthorized();
+      throw new Error('Session expired');
+    }
     if (res.status === 402 || res.status === 403) {
       const body = await res.json().catch(() => ({}));
       _handlePlanError(res, body);
@@ -707,6 +720,10 @@ async function fetchApiAuth<T>(
         ...(extraHeaders as Record<string, string> ?? {}),
       },
     });
+    if (res.status === 401) {
+      _handleUnauthorized();
+      throw new Error('Session expired');
+    }
     if (res.status === 402) {
       const body = await res.json().catch(() => ({}));
       _handlePlanError(res, body);
@@ -723,6 +740,10 @@ async function fetchApiAuth<T>(
       if (detail?.code === 'PREMIUM_REQUIRED') {
         throw new PremiumRequiredError(detail as PremiumRequiredDetail);
       }
+      // Body already consumed — don't fall through to a second res.json()
+      throw new Error(
+        typeof detail === 'string' ? detail : detail?.message ?? 'Request failed (403)',
+      );
     }
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -1342,10 +1363,13 @@ export async function getExtractedKeywords(
 }
 
 export async function triggerKeywordExtraction(appId: number): Promise<void> {
-  await fetch(`${API_BASE}/apps/${appId}/keywords/intelligence/extract`, {
+  const res = await fetch(`${API_BASE}/apps/${appId}/keywords/intelligence/extract`, {
     method: 'POST',
     headers: _authHeaders(),
   });
+  // Without this check an HTTP error was treated as a successful trigger
+  // and the UI polled forever for an extraction that never started.
+  if (!res.ok) throw new Error(`Extraction trigger failed (${res.status})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -2058,11 +2082,24 @@ export async function authLogin(email: string, password: string): Promise<AuthRe
 }
 
 export async function authMe(token: string): Promise<MeResponse> {
-  const res = await fetch(`${API_BASE}/auth/me`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`Unauthorized (${res.status})`);
-  return res.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const res = await fetch(`${API_BASE}/auth/me`, {
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      // Expose status so callers can tell "token rejected" (401/403 → log
+      // out) apart from a transient backend/network failure (keep session).
+      const err = new Error(`Unauthorized (${res.status})`) as Error & { status?: number };
+      err.status = res.status;
+      throw err;
+    }
+    return res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ---------------------------------------------------------------------------

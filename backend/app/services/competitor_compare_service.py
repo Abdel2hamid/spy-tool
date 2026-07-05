@@ -247,10 +247,12 @@ class CompetitorCompareService:
         kw_list = list(all_keywords)
         batch_size = 500
         for i in range(0, len(kw_list), batch_size):
+            # batch terms are already lowercased; keywords.term is stored
+            # lowercase — avoid func.lower() so the term index can be used.
             batch = kw_list[i : i + batch_size]
             rows = (
                 self.db.query(Keyword.term, Keyword.volume_score, Keyword.difficulty_v2)
-                .filter(func.lower(Keyword.term).in_(batch))
+                .filter(Keyword.term.in_(batch))
                 .all()
             )
             for term, vs, dv in rows:

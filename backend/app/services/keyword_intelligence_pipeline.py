@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 from app.models.models import Keyword, KeywordStatus, AppKeyword, KeywordTrend, App
 from app.config import settings
-from app.utils.batch_utils import iter_batches, log_memory
+from app.utils.batch_utils import iter_batches_keyset, log_memory
 
 logger = logging.getLogger(__name__)
 
@@ -1104,12 +1104,28 @@ class KeywordIntelligencePipeline:
         """Quick job: only recompute scores (no external API calls)."""
         log_memory("keyword_scoring_only", "start")
         scored_total = 0
-        kw_query = self.db.query(Keyword).order_by(Keyword.id)
-        for batch in iter_batches(kw_query, 500):
+        kw_query = self.db.query(Keyword)
+        for batch in iter_batches_keyset(kw_query, Keyword.id, 500):
             scored_total += await asyncio.to_thread(self.recompute_scores, batch)
             self.db.expire_all()
         log_memory("keyword_scoring_only", "end")
         return scored_total
+
+    def enrich_app(self, app_id: int) -> int:
+        """
+        Per-app enrichment: recompute v2 scores for every keyword linked
+        to the app (no external API calls). Used by import/search/hydration
+        flows right after keyword extraction.
+        """
+        keywords = (
+            self.db.query(Keyword)
+            .join(AppKeyword, AppKeyword.keyword_id == Keyword.id)
+            .filter(AppKeyword.app_id == app_id)
+            .all()
+        )
+        if not keywords:
+            return 0
+        return self.recompute_scores(keywords)
 
     def get_trending_keywords(self, limit: int = 20) -> List[Keyword]:
         """

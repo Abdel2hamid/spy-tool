@@ -9,7 +9,7 @@ from app.models.models import App, Category, Ranking, Keyword, KeywordStatus, Ap
 from app.scrapers.appstore import AppStoreScraper
 from app.scrapers.app_details import AppStoreAppScraper
 from app.scoring.engine import ScoringEngine
-from app.utils.batch_utils import iter_batches, log_memory
+from app.utils.batch_utils import iter_batches, iter_batches_keyset, log_memory
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -747,8 +747,8 @@ class ScoringWorker:
             from app.services.keyword_intelligence_pipeline import KeywordIntelligencePipeline
             kw_pipeline = KeywordIntelligencePipeline(self.db)
             scored_total = 0
-            kw_query = self.db.query(Keyword).order_by(Keyword.id)
-            for batch in iter_batches(kw_query, 500):
+            kw_query = self.db.query(Keyword)
+            for batch in iter_batches_keyset(kw_query, Keyword.id, 500):
                 scored_total += kw_pipeline.recompute_scores(batch)
                 self.db.expire_all()
             logger.info(f"Keyword scores updated for {scored_total} keywords")

@@ -115,7 +115,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     event_type = event.get("type", "")
     data = event.get("data", {}).get("object", {})
 
-    try:
+    def _dispatch():
         if event_type == "checkout.session.completed":
             stripe_service.handle_checkout_completed(data, db)
         elif event_type == "customer.subscription.updated":
@@ -130,6 +130,11 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             stripe_service.handle_trial_will_end(data, db)
         else:
             logger.debug("Unhandled Stripe event: %s", event_type)
+
+    try:
+        # Handlers do sync Stripe/DB I/O — keep them off the event loop.
+        from starlette.concurrency import run_in_threadpool
+        await run_in_threadpool(_dispatch)
     except Exception as e:
         logger.error("Webhook handler failed for %s: %s", event_type, e)
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Webhook processing failed.")

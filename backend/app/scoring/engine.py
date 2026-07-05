@@ -285,7 +285,7 @@ class ScoringEngine:
                 app.name,
                 success_prob,
                 trend_score,
-                competition_score,
+                competition_score_for_calc,
                 ai_potential
             )
         }
@@ -1631,12 +1631,12 @@ class ScoringEngine:
         - <90 days = 0.65
         - older = 0.4
         """
-        if not keyword.last_enriched:
-            if not keyword.last_updated:
-                return SIGNAL_CONFIDENCE_CONFIG["freshness_stale"]
-            age = datetime.utcnow() - keyword.last_updated
-        else:
-            age = datetime.utcnow() - keyword.last_enriched
+        ts = keyword.last_enriched or keyword.last_updated
+        if not ts:
+            return SIGNAL_CONFIDENCE_CONFIG["freshness_stale"]
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        age = datetime.now(timezone.utc) - ts
         
         days_old = age.days
         _bands = SIGNAL_CONFIDENCE_CONFIG["freshness_bands_days"]

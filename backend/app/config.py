@@ -95,8 +95,8 @@ if not settings.admin_token:
         )
     else:
         _logger.warning(
-            "ADMIN_TOKEN not set! Admin endpoints are UNPROTECTED (dev mode). "
-            "Set ADMIN_TOKEN env var for production."
+            "ADMIN_TOKEN not set! Admin endpoints are DISABLED (fail closed, 503). "
+            "Set ADMIN_TOKEN env var to use them."
         )
 
 # Stripe webhook secret: warn in production

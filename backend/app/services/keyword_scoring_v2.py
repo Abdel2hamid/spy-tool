@@ -217,7 +217,9 @@ def compute_difficulty_score(
     brand_count = 0
     for app in top_apps:
         artist = (app.get("artistName", "") or "").lower().strip()
-        if artist in _BIG_BRAND_DEVS:
+        # Substring match: real artistName values are e.g. "Google LLC",
+        # "Spotify AB" — exact equality against "google"/"spotify" never hits.
+        if artist and any(brand in artist for brand in _BIG_BRAND_DEVS):
             brand_count += 1
     brand_dominance = (brand_count / 10.0) * 20.0
 

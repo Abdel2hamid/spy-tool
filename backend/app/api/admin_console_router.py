@@ -490,6 +490,11 @@ def create_user(
     except EmailAlreadyRegistered:
         raise HTTPException(status_code=409, detail="Email already registered")
 
+    # Admin-provisioned users never receive a verification email — without
+    # this flag they could never log in (login rejects unverified users).
+    user.email_verified = True
+    db.commit()
+
     if body.plan_code:
         sub = db.query(Subscription).filter(Subscription.workspace_id == workspace.id).first()
         if sub:
@@ -1236,7 +1241,7 @@ def force_rescrape(
     t = threading.Thread(target=_run_scrape, daemon=True)
     t.start()
 
-    _log_activity(db, admin, "app.rescrape", "app", app_id, {"name": app.name, "apple_id": app.apple_id})
+    _log_activity(db, admin, "app.rescrape", "app", app_id, {"name": app.name, "apple_id": app.app_id})
     return {"ok": True, "app_id": app_id, "name": app.name}
 
 
@@ -1350,7 +1355,7 @@ def bulk_backfill_apps(
     t = threading.Thread(target=_run_bulk_backfill, daemon=True)
     t.start()
 
-    _log_activity(db, admin, "apps.bulk_backfill", detail={"batch_size": batch_size, "total_incomplete": incomplete_count})
+    _log_activity(db, admin, "apps.bulk_backfill", details={"batch_size": batch_size, "total_incomplete": incomplete_count})
     return {
         "ok": True,
         "message": f"Bulk backfill started for up to {batch_size} apps",

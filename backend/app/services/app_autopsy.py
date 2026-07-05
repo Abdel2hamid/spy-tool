@@ -286,7 +286,7 @@ class AppAutopsyService:
             if not api_key:
                 return None
             import anthropic
-            client = anthropic.Anthropic(api_key=api_key)
+            client = anthropic.Anthropic(api_key=api_key, timeout=30.0)
 
             # Trim data for prompt (remove verbose fields)
             slim = {

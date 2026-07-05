@@ -47,7 +47,7 @@ def _find_ranks(keyword: str, app_store_id: str) -> Tuple[Optional[int], Optiona
     """
     Search iTunes for *keyword* and return (app_rank, competitor_rank).
 
-    app_rank       — 1-based position of our app; None if not in top-20.
+    app_rank       — 1-based position of our app; None if not in top-50.
     competitor_rank — best position of any OTHER app in top-10; None if empty.
     """
     data = apple_fetch_json(
@@ -56,7 +56,9 @@ def _find_ranks(keyword: str, app_store_id: str) -> Tuple[Optional[int], Optiona
             "term": keyword,
             "country": "us",
             "entity": "software",
-            "limit": 20,
+            # Gap rule flags apps ranked >30 — top-20 fetch made ranks 21-30
+            # indistinguishable from "not ranked" (false-positive gaps).
+            "limit": 50,
             "lang": "en_us",
         },
         timeout=_TIMEOUT,

@@ -34,7 +34,7 @@ def _get_anthropic_client():
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY not set")
-        return anthropic.Anthropic(api_key=api_key)
+        return anthropic.Anthropic(api_key=api_key, timeout=30.0)
     except ImportError:
         raise RuntimeError("anthropic package not installed. Run: pip install anthropic")
 
