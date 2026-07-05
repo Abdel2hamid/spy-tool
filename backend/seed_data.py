@@ -72,16 +72,11 @@ def print_stats(label: str = ""):
 
 def step_apply_migrations():
     logger.info("─── Step 1: Apply schema migrations ───────────────────────────────")
-    from app.database import engine
-    from app.main import _run_migrations
-    from app.models.models import Base
+    from app.main import _upgrade_database
 
-    # Create any tables added since last restart (idempotent)
-    Base.metadata.create_all(bind=engine)
-    logger.info("  create_all done")
-
-    _run_migrations(engine)
-    logger.info("  migrations done")
+    # Bring the schema to head via Alembic (builds a fresh DB; no-op otherwise).
+    _upgrade_database()
+    logger.info("  migrations done (alembic upgrade head)")
 
 
 # ---------------------------------------------------------------------------

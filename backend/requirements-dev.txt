@@ -17,6 +17,3 @@ lxml==5.1.0
 
 # Async PostgreSQL driver (not needed — sync SQLAlchemy + psycopg2 is used)
 asyncpg==0.29.0
-
-# Alembic — only needed if running manual schema migrations locally
-alembic==1.13.1
