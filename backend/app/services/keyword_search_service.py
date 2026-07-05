@@ -24,7 +24,6 @@ from app.services.apple_http_client import apple_fetch_json, ITUNES_SEARCH_URL
 
 logger = logging.getLogger(__name__)
 
-_REQUEST_DELAY = 0.1
 _TIMEOUT = 15
 
 
@@ -93,10 +92,10 @@ def _get_or_create_app(db: Session, item: Dict) -> tuple:
         subtitle=item.get("subtitle", ""),
         description=item.get("description", ""),
         developer=developer,
-        developer_id=item.get("artistId", ""),
+        developer_id=str(item.get("artistId", "") or ""),
         icon_url=icon_url,
         primary_category=primary_category,
-        secondary_category=item.get("genres", [{}])[-1].get("name") if item.get("genres") else None,
+        secondary_category=(item.get("genres") or [None])[-1],
         price=price,
         currency=item.get("currency", "USD"),
         is_free=is_free,
@@ -194,8 +193,6 @@ class KeywordSearchService:
                 "is_new": is_new,
             })
 
-            time.sleep(_REQUEST_DELAY)
-
         logger.info(
             f"[KeywordSearch] Found {len(results)} apps for '{keyword}', "
             f"{len(new_apps)} new"
@@ -224,7 +221,7 @@ class KeywordSearchService:
         for app_id in app_ids:
             try:
                 extractor = KeywordExtractionService(self.db)
-                extractor.extract_for_app(app_id)
+                extractor.extract_keywords_for_app(app_id)
                 logger.info(f"[KeywordSearch] Triggered extraction for app {app_id}")
             except Exception as e:
                 logger.warning(f"[KeywordSearch] Extraction failed for app {app_id}: {e}")

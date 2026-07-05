@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { AdminShell } from '@/components/AdminShell';
 import { useAuth } from '@/lib/auth';
+import { API_BASE } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import {
   CreditCard,
@@ -15,7 +16,9 @@ import {
   Loader2,
 } from 'lucide-react';
 
-const API = process.env.NEXT_PUBLIC_API_URL || '/api/v1';
+// Shared resolver — reading NEXT_PUBLIC_API_URL directly broke when the env
+// var is an origin without the /api/v1 suffix (every other page worked).
+const API = API_BASE;
 
 // ---------------------------------------------------------------------------
 // Types

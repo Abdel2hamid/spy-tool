@@ -85,9 +85,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(data.user);
         setWorkspace(data.workspace);
       })
-      .catch(() => {
-        localStorage.removeItem(TOKEN_KEY);
-        setToken(null);
+      .catch((err: Error & { status?: number }) => {
+        // Only discard the session when the token was actually rejected.
+        // A network blip / backend deploy must not silently log the user out.
+        if (err?.status === 401 || err?.status === 403) {
+          localStorage.removeItem(TOKEN_KEY);
+          setToken(null);
+        }
       })
       .finally(() => setIsLoading(false));
   }, []);

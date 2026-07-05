@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components';
 import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, DownloadEstimate, ASOScoreResponse, ASOBreakdownItem, KeywordSuggestionsResponse, KeywordSuggestionItem, DeveloperAppsResponse, AppListItem, getAppDetail, getAppReviews, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, getDownloadEstimate, getASOScore, getKeywordSuggestions, getDeveloperApps, RankHistory, getFavoriteIds, addFavorite, removeFavorite, getMyAppIds, addMyApp, removeMyApp, refreshApp } from '@/lib/api';
@@ -2011,28 +2011,47 @@ function ExtractedKeywordsTable({ appId }: { appId: number }) {
   const [sourceFilter, setSourceFilter] = useState<string>('all');
   const [visibleCount, setVisibleCount] = useState(10);
 
+  // Poll timer + liveness ref: without cleanup the recursive setTimeout
+  // kept polling (and setting state) after unmount / app change.
+  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const aliveRef = useRef(true);
+
   const load = async (refresh = false) => {
     setLoading(true);
     try {
       const res = await getExtractedKeywords(appId, refresh);
+      if (!aliveRef.current) return;
       setData(res);
       if (res.extracting && res.total === 0) {
         // Poll until data arrives
-        setTimeout(() => load(false), 6000);
+        if (pollTimer.current) clearTimeout(pollTimer.current);
+        pollTimer.current = setTimeout(() => load(false), 6000);
       }
     } catch {}
-    setLoading(false);
+    if (aliveRef.current) setLoading(false);
   };
 
-  useEffect(() => { load(); }, [appId]);
+  useEffect(() => {
+    aliveRef.current = true;
+    load();
+    return () => {
+      aliveRef.current = false;
+      if (pollTimer.current) clearTimeout(pollTimer.current);
+    };
+  }, [appId]);
 
   const handleExtract = async () => {
     setExtracting(true);
-    await triggerKeywordExtraction(appId);
-    // Poll for results
-    await new Promise(r => setTimeout(r, 4000));
-    await load(false);
-    setExtracting(false);
+    try {
+      await triggerKeywordExtraction(appId);
+      // Poll for results
+      await new Promise(r => setTimeout(r, 4000));
+      await load(false);
+    } catch {
+      // failed trigger must not leave the button spinning forever
+    } finally {
+      if (aliveRef.current) setExtracting(false);
+    }
   };
 
   const toggleSort = (key: keyof ExtractedKeyword) => {
@@ -3272,25 +3291,35 @@ export default function AppDetailPage() {
   }
 
   useEffect(() => {
+    // Same-route navigation (e.g. developer's other apps) keeps this
+    // component mounted — reset per-app state and ignore stale responses
+    // so a slow fetch for the previous app can't overwrite the new one.
+    let ignore = false;
+    setLoading(true);
+    setApp(null);
+    setReviewsLoaded(false);
+    setReviews([]);
     async function fetchData() {
       try {
         const appData = await getAppDetail(appId);
+        if (ignore) return;
         setApp(appData);
         setVersions(appData.versions ?? []);
         setAnalytics(appData.analytics ?? null);
       } catch (error) {
-        console.error('Failed to fetch app data:', error);
+        if (!ignore) console.error('Failed to fetch app data:', error);
       } finally {
-        setLoading(false);
+        if (!ignore) setLoading(false);
       }
     }
     fetchData();
     getFavoriteIds()
-      .then((ids) => setIsFavorited(ids.includes(appId)))
+      .then((ids) => { if (!ignore) setIsFavorited(ids.includes(appId)); })
       .catch(() => {});
     getMyAppIds()
-      .then((ids) => setIsMyApp(ids.includes(appId)))
+      .then((ids) => { if (!ignore) setIsMyApp(ids.includes(appId)); })
       .catch(() => {});
+    return () => { ignore = true; };
   }, [appId]);
 
   async function toggleFavorite() {

@@ -1062,7 +1062,7 @@ class Alert(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     alert_type = Column(String(50), nullable=False)  # app_trending, keyword_rising, new_opportunity, rank_drop
     name = Column(String(200), nullable=False)
-    config = Column(JSON, nullable=False, default={})
+    config = Column(JSON, nullable=False, default=dict)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

@@ -18,7 +18,9 @@ Usage:
 
 import json
 import logging
+import random
 import socket
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -46,29 +48,35 @@ APPLE_HEADERS: Dict[str, str] = {
 _consecutive_403s = 0
 _CIRCUIT_BREAKER_THRESHOLD = 5  # trip after 5 consecutive 403s
 _circuit_open_until = 0.0  # timestamp when circuit re-closes
+_breaker_lock = threading.Lock()  # state is mutated from threadpool + worker threads
 
 
 def _is_circuit_open() -> bool:
-    if _consecutive_403s >= _CIRCUIT_BREAKER_THRESHOLD:
-        if time.monotonic() < _circuit_open_until:
-            return True
-    return False
+    with _breaker_lock:
+        return (
+            _consecutive_403s >= _CIRCUIT_BREAKER_THRESHOLD
+            and time.monotonic() < _circuit_open_until
+        )
 
 
 def _record_success():
     global _consecutive_403s
-    _consecutive_403s = 0
+    with _breaker_lock:
+        _consecutive_403s = 0
 
 
 def _record_403():
     global _consecutive_403s, _circuit_open_until
-    _consecutive_403s += 1
-    if _consecutive_403s >= _CIRCUIT_BREAKER_THRESHOLD:
-        _circuit_open_until = time.monotonic() + 120  # back off 2 minutes
+    with _breaker_lock:
+        _consecutive_403s += 1
+        tripped = _consecutive_403s >= _CIRCUIT_BREAKER_THRESHOLD
+        if tripped:
+            _circuit_open_until = time.monotonic() + 120  # back off 2 minutes
+    if tripped:
         logger.warning(
             "[AppleHTTP] Circuit breaker OPEN — %d consecutive 403s. "
             "Pausing Apple requests for 120s.",
-            _consecutive_403s,
+            _CIRCUIT_BREAKER_THRESHOLD,
         )
 
 
@@ -124,7 +132,11 @@ def apple_fetch(
                 return None  # don't retry 403 — Apple is blocking us
 
             if status == 429:
-                retry_after = int(e.headers.get("Retry-After", 2 ** attempt))
+                # Retry-After may be seconds or an HTTP-date — never let it raise
+                try:
+                    retry_after = int(e.headers.get("Retry-After", ""))
+                except (ValueError, TypeError):
+                    retry_after = 2 ** attempt
                 logger.warning(
                     "[AppleHTTP] 429 Rate-limited on %s — sleeping %ds",
                     url, retry_after,
@@ -134,7 +146,7 @@ def apple_fetch(
                 continue
 
             if status >= 500:
-                delay = 2 ** attempt
+                delay = 2 ** attempt + random.uniform(0, 0.5)
                 logger.warning(
                     "[AppleHTTP] %d on %s — retrying in %ds (attempt %d/%d)",
                     status, url, delay, attempt, max_retries + 1,

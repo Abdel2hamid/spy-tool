@@ -104,7 +104,7 @@ class NicheRadarEngine:
                 ),
                 "keywords": [kw.term],
                 "app_count": app_count,
-                "trend": kw.trend or 0,
+                "trend": kw.trend_score or kw.trend or 0,
                 "search_volume": kw.search_volume,
                 "difficulty": kw.difficulty,
                 "detected_at": datetime.now(timezone.utc).isoformat(),

@@ -1451,7 +1451,7 @@ async def job_bootstrap_data():
 async def job_evaluate_alerts():
     """Evaluate user-defined alert rules and create events for matches."""
     job_id = "evaluate_alerts"
-    _log_start(job_id)
+    t0 = _log_start(job_id)
     try:
         from app.database import SessionLocal
         from app.models import models
@@ -1464,7 +1464,7 @@ async def job_evaluate_alerts():
                 .all()
             )
             if not alerts:
-                _log_done(job_id, 0, "no active alerts")
+                _log_done(job_id, t0, "no active alerts")
                 return
 
             created = 0
@@ -1476,7 +1476,7 @@ async def job_evaluate_alerts():
                     logger.warning(f"[{job_id}] Alert {alert.id} ({alert.alert_type}) failed: {exc}")
 
             db.commit()
-            _log_done(job_id, created, f"evaluated {len(alerts)} alerts, created {created} events")
+            _log_done(job_id, t0, f"evaluated {len(alerts)} alerts, created {created} events")
         finally:
             db.close()
     except Exception as exc:

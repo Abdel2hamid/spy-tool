@@ -21,7 +21,7 @@ Per-app averages are rolled up into AppAnalytics.
 
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
 
 from sqlalchemy import func, text
@@ -155,7 +155,7 @@ class ReviewSentimentService:
         Recompute sentiment + growth metrics for *app_id* and upsert into
         app_analytics using SQL aggregation (no ORM object loading).
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         cutoff_30d = now - timedelta(days=30)
         cutoff_90d = now - timedelta(days=90)
 

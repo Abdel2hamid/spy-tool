@@ -32,14 +32,19 @@ class _SlidingWindowLimiter:
         self._lock = threading.Lock()
         self._last_gc: float = 0.0
 
+    # Longest window used anywhere; GC must not evict keys belonging to
+    # windows longer than the calling endpoint's own window.
+    _MAX_WINDOW = 600
+
     def is_allowed(self, key: str, max_requests: int, window: int) -> bool:
         now = time.monotonic()
         cutoff = now - window
 
         with self._lock:
-            # Periodic GC: prune dead keys every 60s
+            # Periodic GC: prune dead keys every 60s (conservative cutoff)
             if now - self._last_gc > 60:
-                dead = [k for k, v in self._store.items() if not v or v[-1] < cutoff]
+                gc_cutoff = now - self._MAX_WINDOW
+                dead = [k for k, v in self._store.items() if not v or v[-1] < gc_cutoff]
                 for k in dead:
                     del self._store[k]
                 self._last_gc = now
@@ -77,7 +82,14 @@ def rate_limit(max_requests: int, window_seconds: int = 60) -> Callable:
     """
 
     def _dependency(request: Request) -> None:
-        client_ip = request.client.host if request.client else "unknown"
+        # Behind the Next.js proxy / Railway edge, request.client.host is the
+        # proxy's IP for every user — use the original client from
+        # X-Forwarded-For (first hop) so limits are per-user, not global.
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            client_ip = forwarded.split(",")[0].strip()
+        else:
+            client_ip = request.client.host if request.client else "unknown"
         key = f"{request.url.path}:{client_ip}"
         if not _limiter.is_allowed(key, max_requests, window_seconds):
             raise HTTPException(

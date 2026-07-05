@@ -233,38 +233,34 @@ class DiscoveryEngine:
         if not app_ids:
             return 0
 
-        # Single-query dedup against both tables
+        # Dedup against apps table; the queue itself is handled by
+        # ON CONFLICT DO NOTHING (app_id is unique) so a concurrent
+        # discovery job can't poison the whole batch with IntegrityError.
         existing_apps: set = {
             row[0]
             for row in self.db.query(App.app_id).filter(App.app_id.in_(app_ids)).all()
         }
-        existing_queue: set = {
-            row[0]
-            for row in self.db.query(DiscoveryQueue.app_id)
-            .filter(DiscoveryQueue.app_id.in_(app_ids))
-            .all()
-        }
+        new_ids = [aid for aid in app_ids if aid not in existing_apps]
+        if not new_ids:
+            return 0
 
-        new_ids = [
-            aid for aid in app_ids
-            if aid not in existing_apps and aid not in existing_queue
-        ]
-
-        count = 0
-        for aid in new_ids:
-            self.db.add(DiscoveryQueue(
-                app_id=aid,
-                source=source,
-                priority=priority,
-                status="pending",
-                enrich_mode=enrich_mode,
-            ))
-            count += 1
-
-        if count:
-            self.db.commit()
-
-        return count
+        stmt = (
+            pg_insert(DiscoveryQueue.__table__)
+            .values([
+                {
+                    "app_id": aid,
+                    "source": source,
+                    "priority": priority,
+                    "status": "pending",
+                    "enrich_mode": enrich_mode,
+                }
+                for aid in new_ids
+            ])
+            .on_conflict_do_nothing(index_elements=["app_id"])
+        )
+        result = self.db.execute(stmt)
+        self.db.commit()
+        return result.rowcount or 0
 
     def _get_progress(self, key: str) -> Optional[DiscoveryProgress]:
         return (
@@ -825,9 +821,34 @@ class DiscoveryEngine:
         from app.workers.tasks import ScraperWorker
         from app.database import SessionLocal
 
+        # Reap stale claims: rows stuck in 'scraping' (job timed out or the
+        # container restarted mid-batch) would otherwise never be retried.
+        # processed_at doubles as the claim timestamp (set below).
+        from sqlalchemy import or_
+        stale_cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+        self.db.query(DiscoveryQueue).filter(
+            DiscoveryQueue.status == "scraping",
+            or_(
+                DiscoveryQueue.processed_at.is_(None),  # claimed before claim-stamping existed
+                DiscoveryQueue.processed_at < stale_cutoff,
+            ),
+        ).update({"status": "pending"}, synchronize_session=False)
+        self.db.commit()
+
         query = self.db.query(DiscoveryQueue).filter(DiscoveryQueue.status == "pending")
         if tier:
             query = query.filter(DiscoveryQueue.source.like(f"%tier_enrich:{tier}%"))
+        else:
+            # Generic processor must not drain tier-enrichment rows — the
+            # enrich_hot/warm/cold jobs own those (prevents double-scraping).
+            # NULL-safe: legacy rows with no source must still be processed
+            # (SQL `NULL NOT LIKE …` is NULL, which would wrongly exclude them).
+            query = query.filter(
+                or_(
+                    DiscoveryQueue.source.is_(None),
+                    ~DiscoveryQueue.source.like("%tier_enrich:%"),
+                )
+            )
 
         pending = (
             query
@@ -836,18 +857,24 @@ class DiscoveryEngine:
                 DiscoveryQueue.added_at.desc(),
             )
             .limit(batch_size)
+            .with_for_update(skip_locked=True)
             .all()
         )
 
         if not pending:
             logger.info("[DISC] Queue empty — nothing to process")
+            self.db.commit()
             return 0
 
-        # Atomically claim items
+        # Atomically claim items (rows are locked by the SELECT above until
+        # this commit, and concurrent claimers skip locked rows).
         ids_to_claim = [q.id for q in pending]
         self.db.query(DiscoveryQueue).filter(
             DiscoveryQueue.id.in_(ids_to_claim)
-        ).update({"status": "scraping"}, synchronize_session=False)
+        ).update(
+            {"status": "scraping", "processed_at": datetime.now(timezone.utc)},
+            synchronize_session=False,
+        )
         self.db.commit()
 
         # Cap concurrency to avoid pool exhaustion — each worker needs 1

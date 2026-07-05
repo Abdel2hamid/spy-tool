@@ -8,7 +8,7 @@ extracts feature names, normalizes them, and aggregates by mention count.
 import re
 import logging
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional
 
 from sqlalchemy.orm import Session
@@ -472,7 +472,7 @@ class FeatureGapAnalyzer:
                 app_id=app_id,
                 feature_name=gap["feature"],
                 mentions=gap["mentions"],
-                detected_at=datetime.utcnow(),
+                detected_at=datetime.now(timezone.utc),
             )
             self.db.add(row)
 
