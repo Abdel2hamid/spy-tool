@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { AppShell } from '@/components';
+import { useState, useEffect, useRef } from 'react';
+import { AppShell, CountrySelect } from '@/components';
 import { TrendingAppCard } from '@/components/TrendingAppCard';
 import { TrendingApp, getTrendingApps } from '@/lib/api';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -10,14 +10,20 @@ import { TrendingUp, Search } from 'lucide-react';
 export default function TrendingClient() {
   const [apps, setApps] = useState<TrendingApp[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [country, setCountry] = useState('us');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const reqRef = useRef(0);
 
   useEffect(() => {
-    getTrendingApps(20)
-      .then((data) => setApps(Array.isArray(data) ? data : []))
-      .catch(() => setApps([]))
-      .finally(() => setLoading(false));
-  }, []);
+    const id = ++reqRef.current;
+    setLoading(true);
+    setError(false);
+    getTrendingApps(20, country)
+      .then((data) => { if (id === reqRef.current) setApps(Array.isArray(data) ? data : []); })
+      .catch(() => { if (id === reqRef.current) { setError(true); setApps([]); } })
+      .finally(() => { if (id === reqRef.current) setLoading(false); });
+  }, [country]);
 
   const filteredApps = apps.filter((app) =>
     (app.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -36,11 +42,14 @@ export default function TrendingClient() {
               Apps with the highest rank velocity and growth
             </p>
           </div>
-          {!loading && apps.length > 0 && (
-            <span className="pill bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 self-start sm:self-auto">
-              {filteredApps.length} app{filteredApps.length !== 1 ? 's' : ''}
-            </span>
-          )}
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <CountrySelect value={country} onChange={setCountry} />
+            {!loading && apps.length > 0 && (
+              <span className="pill bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400">
+                {filteredApps.length} app{filteredApps.length !== 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Search */}
@@ -61,6 +70,11 @@ export default function TrendingClient() {
             {[...Array(5)].map((_, i) => (
               <div key={i} className="h-20 animate-pulse rounded-xl bg-gray-200 dark:bg-gray-800" />
             ))}
+          </div>
+        ) : error ? (
+          <div className="card p-10 text-center">
+            <TrendingUp className="mx-auto mb-3 h-10 w-10 text-gray-300 dark:text-gray-700" />
+            <p className="font-medium text-red-500">Couldn’t load trending apps. Please try again.</p>
           </div>
         ) : filteredApps.length > 0 ? (
           <div className="space-y-2.5">

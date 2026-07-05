@@ -848,6 +848,7 @@ class AppBlowingUpScore(Base):
     __tablename__ = "app_blowing_up_scores"
 
     app_id              = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), primary_key=True)
+    country             = Column(String(2), primary_key=True, server_default="us")  # storefront scope
     blowing_up_score    = Column(Float, nullable=False, default=0.0)  # 0-100 composite
     # Component scores (each 0-100)
     rank_velocity_score    = Column(Float, default=0.0)
@@ -1025,6 +1026,7 @@ class AppTrendingScore(Base):
     __tablename__ = "app_trending_scores"
 
     app_id = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), primary_key=True)
+    country = Column(String(2), primary_key=True, server_default="us")  # storefront scope
     trend_score = Column(Float, nullable=False, default=0.0)
     momentum_score = Column(Float, default=0.0)   # weighted momentum (3d/7d/14d)
     momentum_3d = Column(Float, default=0.0)       # raw 3-day momentum

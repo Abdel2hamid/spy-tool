@@ -255,12 +255,18 @@ def get_apps(
     # ── sorting ──────────────────────────────────────────────────────────
     sort_by: Optional[str] = None,
     sort_order: str = Query("desc"),
+    # ── storefront ────────────────────────────────────────────────────────
+    country: Optional[str] = Query(None, description="Only apps that chart in this storefront (ISO code)"),
     db: Session = Depends(get_db),
 ):
     """
     Return a paginated, filtered list of tracked apps.
     All filters are optional and composable.
     Supports page/limit (1-based) or legacy skip/limit.
+
+    When `country` is given, results are limited to apps that appear in that
+    storefront's rankings (reuses existing ranking data). Omitting it preserves
+    the default behaviour of listing all tracked apps.
     """
     # page param takes precedence over raw skip when page > 1
     effective_skip = (page - 1) * limit if page > 1 else skip
@@ -296,6 +302,16 @@ def get_apps(
         )
     if category_id:
         query = query.filter(models.App.category_id == category_id)
+
+    # ── storefront: apps that chart in the selected country ──────────────
+    if country:
+        cc = country.lower()
+        query = query.filter(
+            exists().where(
+                (models.Ranking.app_id == models.App.id)
+                & (models.Ranking.country == cc)
+            )
+        )
 
     # ── developer ────────────────────────────────────────────────────────
     if developer:
@@ -550,6 +566,7 @@ def get_blowing_up_apps(
     category: Optional[str] = Query(None, description="Filter by primary_category (partial match)"),
     chart_type: Optional[str] = Query(None, description="topfree|toppaid|topgrossing"),
     timeframe: str = Query("7d", description="24h|3d|7d — window used for score computation"),
+    country: str = Query("us", description="Storefront (ISO code, e.g. us, jp)"),
     autocompute: bool = Query(False, description="Run scoring synchronously before returning"),
     db: Session = Depends(get_db),
 ):
@@ -564,6 +581,7 @@ def get_blowing_up_apps(
     from app.models.models import AppBlowingUpScore, Ranking
 
     t0 = _time.monotonic()
+    cc = (country or "us").lower()
     svc = BlowingUpService(db)
 
     # autocompute triggers a background recompute — never blocks the request
@@ -574,7 +592,7 @@ def get_blowing_up_apps(
         def _bg_compute():
             _db = _SessionLocal()
             try:
-                BlowingUpService(_db).compute_for_all_apps(timeframe_days=7, max_apps=500)
+                BlowingUpService(_db).compute_for_all_apps(timeframe_days=7, max_apps=500, country=cc)
             except Exception as _exc:
                 logger.warning("[blowing-up] background autocompute error: %s", _exc)
             finally:
@@ -583,8 +601,12 @@ def get_blowing_up_apps(
         _threading.Thread(target=_bg_compute, daemon=True).start()
 
     try:
-        # Check if the table has any data at all
-        total_computed = db.query(func.count(AppBlowingUpScore.app_id)).scalar() or 0
+        # Check if the table has any data for this storefront
+        total_computed = (
+            db.query(func.count(AppBlowingUpScore.app_id))
+            .filter(AppBlowingUpScore.country == cc)
+            .scalar()
+        ) or 0
 
         if total_computed == 0:
             # Gather diagnostic counts to explain WHY it's empty
@@ -627,6 +649,7 @@ def get_blowing_up_apps(
             min_reviews_velocity=min_reviews_velocity,
             category=category,
             chart_type=chart_type,
+            country=cc,
         )
 
         if total == 0:
@@ -1032,20 +1055,26 @@ def _read_precomputed_trending(
     db: Session,
     limit: int,
     category_id: Optional[int],
+    country: str = "us",
 ) -> list:
     """
-    Read trending items from the precomputed app_trending_scores table.
+    Read trending items from the precomputed app_trending_scores table for a
+    single storefront (`country`, default 'us').
     Excludes big-brand apps (Google, Meta, PayPal, etc.) so the list
     surfaces indie/smaller apps that users can actually compete with.
     Returns a list of dicts matching TrendingAppV2Response fields, or [] if
     the table is empty / no scores exist yet.
     """
+    cc = (country or "us").lower()
     # Fetch extra rows to compensate for brand filtering
     fetch_limit = limit * 4
     query = (
         db.query(models.AppTrendingScore, models.App)
         .join(models.App, models.App.id == models.AppTrendingScore.app_id)
-        .filter(models.AppTrendingScore.trend_score > 0)
+        .filter(
+            models.AppTrendingScore.trend_score > 0,
+            models.AppTrendingScore.country == cc,
+        )
     )
     if category_id is not None:
         query = query.filter(
@@ -1097,6 +1126,7 @@ def _read_precomputed_trending(
 def get_trending_apps(
     limit: int = Query(10, ge=1, le=50),
     category_id: Optional[int] = Query(None, description="Filter by category ID"),
+    country: str = Query("us", description="Storefront (ISO code, e.g. us, jp)"),
     db: Session = Depends(get_db)
 ):
     """
@@ -1114,7 +1144,7 @@ def get_trending_apps(
     Returns:
         TrendingAppsResponse with status field indicating success/insufficient_data/empty
     """
-    trending = _read_precomputed_trending(db, limit, category_id)
+    trending = _read_precomputed_trending(db, limit, category_id, country)
 
     if trending:
         return {
@@ -1157,6 +1187,7 @@ def get_trending_apps(
 def get_trending_apps_v2(
     limit: int = Query(10, ge=1, le=50),
     category_id: Optional[int] = Query(None, description="Filter by category ID"),
+    country: str = Query("us", description="Storefront (ISO code, e.g. us, jp)"),
     db: Session = Depends(get_db)
 ):
     """
@@ -1173,7 +1204,7 @@ def get_trending_apps_v2(
     Returns:
         TrendingAppsResponse with status field indicating success/insufficient_data/empty
     """
-    trending = _read_precomputed_trending(db, limit, category_id)
+    trending = _read_precomputed_trending(db, limit, category_id, country)
 
     if trending:
         return {

@@ -31,7 +31,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -290,11 +290,13 @@ class BlowingUpService:
         self,
         app_id: int,
         timeframe_days: int = 7,
+        country: str = "us",
     ) -> Optional[Dict]:
         """
         Compute blowing_up_score for one app over *timeframe_days*.
         Returns None if there is insufficient data.
         """
+        country = (country or "us").lower()
         now    = datetime.now(timezone.utc)
         cutoff = now - timedelta(days=timeframe_days)
 
@@ -303,6 +305,7 @@ class BlowingUpService:
             self.db.query(Ranking)
             .filter(
                 Ranking.app_id == app_id,
+                Ranking.country == country,
                 Ranking.recorded_at >= cutoff,
                 Ranking.rank.isnot(None),
             )
@@ -323,6 +326,7 @@ class BlowingUpService:
             self.db.query(func.count(Ranking.id))
             .filter(
                 Ranking.app_id == app_id,
+                Ranking.country == country,
                 Ranking.recorded_at < cutoff,
                 Ranking.rank.isnot(None),
             )
@@ -512,7 +516,12 @@ class BlowingUpService:
     # Batch computation + persistence
     # ------------------------------------------------------------------
 
-    def compute_for_all_apps(self, timeframe_days: int = 7, max_apps: int = 500) -> int:
+    def compute_for_all_apps(
+        self,
+        timeframe_days: int = 7,
+        max_apps: int = 500,
+        country: str = "us",
+    ) -> int:
         """
         Compute and persist blowing_up_score for all eligible apps.
 
@@ -522,6 +531,7 @@ class BlowingUpService:
 
         Returns the number of apps scored (inserted/updated).
         """
+        country = (country or "us").lower()
         t0 = time.monotonic()
         log_memory("blowing_up", "start")
         now    = datetime.now(timezone.utc)
@@ -538,7 +548,11 @@ class BlowingUpService:
                 func.count(Ranking.id).label("cnt"),
                 rank_improvement_expr,
             )
-            .filter(Ranking.recorded_at >= cutoff, Ranking.rank.isnot(None))
+            .filter(
+                Ranking.country == country,
+                Ranking.recorded_at >= cutoff,
+                Ranking.rank.isnot(None),
+            )
             .group_by(Ranking.app_id)
             .having(func.count(Ranking.id) >= 2)
             .order_by(rank_improvement_expr.desc())
@@ -550,12 +564,15 @@ class BlowingUpService:
 
         logger.info(
             "[BlowingUp] starting compute: %d candidate apps "
-            "(timeframe=%dd, max_apps=%d, cutoff=%s)",
-            candidates, timeframe_days, max_apps, cutoff.date(),
+            "(country=%s, timeframe=%dd, max_apps=%d, cutoff=%s)",
+            candidates, country, timeframe_days, max_apps, cutoff.date(),
         )
 
         if not app_ids:
-            logger.info("[BlowingUp] no candidates — done in %.2fs", time.monotonic() - t0)
+            logger.info(
+                "[BlowingUp] no candidates for country=%s — done in %.2fs",
+                country, time.monotonic() - t0,
+            )
             return 0
 
         # ── Process in batches of 50 to bound memory ──
@@ -572,6 +589,7 @@ class BlowingUpService:
                 self.db.query(Ranking)
                 .filter(
                     Ranking.app_id.in_(batch_ids),
+                    Ranking.country == country,
                     Ranking.recorded_at >= cutoff,
                     Ranking.rank.isnot(None),
                 )
@@ -596,6 +614,7 @@ class BlowingUpService:
                     self.db.query(Ranking.app_id)
                     .filter(
                         Ranking.app_id.in_(batch_ids),
+                        Ranking.country == country,
                         Ranking.recorded_at < cutoff,
                         Ranking.rank.isnot(None),
                     )
@@ -633,6 +652,7 @@ class BlowingUpService:
                         pg_insert(AppBlowingUpScore)
                         .values(
                             app_id=result["app_id"],
+                            country=country,
                             blowing_up_score=result["blowing_up_score"],
                             rank_velocity_score=result["rank_velocity_score"],
                             rank_change_score=result["rank_change_score"],
@@ -651,7 +671,7 @@ class BlowingUpService:
                             computed_at=now,
                         )
                         .on_conflict_do_update(
-                            index_elements=["app_id"],
+                            index_elements=["app_id", "country"],
                             set_={
                                 "blowing_up_score":       result["blowing_up_score"],
                                 "rank_velocity_score":    result["rank_velocity_score"],
@@ -689,11 +709,57 @@ class BlowingUpService:
         log_memory("blowing_up", "end")
         elapsed = time.monotonic() - t0
         logger.info(
-            "[BlowingUp] done in %.2fs: candidates=%d scored=%d "
+            "[BlowingUp] done in %.2fs: country=%s candidates=%d scored=%d "
             "skipped=%d failed=%d",
-            elapsed, candidates, scored, skipped_no_data, failed,
+            elapsed, country, candidates, scored, skipped_no_data, failed,
         )
         return scored
+
+    # ------------------------------------------------------------------
+    # Multi-country batch computation
+    # ------------------------------------------------------------------
+
+    def compute_for_all_countries(
+        self,
+        timeframe_days: int = 7,
+        max_apps: int = 500,
+    ) -> int:
+        """
+        Compute and persist blowing_up_score for every storefront (country)
+        that has recent ranking data, plus 'us' as a baseline.
+
+        Returns the total number of (app, country) scores written across all
+        countries.
+        """
+        now    = datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=timeframe_days)
+
+        rows = self.db.execute(
+            text("SELECT DISTINCT country FROM rankings WHERE recorded_at >= :cutoff"),
+            {"cutoff": cutoff},
+        ).all()
+        countries = sorted(
+            {(row[0] or "us").lower() for row in rows if row[0]} | {"us"}
+        )
+
+        logger.info(
+            "[BlowingUp] computing across %d countries: %s",
+            len(countries), countries,
+        )
+
+        total = 0
+        for cc in countries:
+            total += self.compute_for_all_apps(
+                timeframe_days=timeframe_days,
+                max_apps=max_apps,
+                country=cc,
+            )
+
+        logger.info(
+            "[BlowingUp] all countries done: %d countries, %d total scores",
+            len(countries), total,
+        )
+        return total
 
     # ------------------------------------------------------------------
     # Query precomputed results
@@ -709,15 +775,18 @@ class BlowingUpService:
         min_reviews_velocity: float = 0.0,
         category: Optional[str] = None,
         chart_type: Optional[str] = None,
+        country: str = "us",
     ) -> Tuple[List, int]:
         """
         Query the precomputed scores table with optional filters.
         Returns (rows, total) where each row is (AppBlowingUpScore, App).
         """
+        country = (country or "us").lower()
         query = (
             self.db.query(AppBlowingUpScore, App)
             .join(App, App.id == AppBlowingUpScore.app_id)
             .filter(
+                AppBlowingUpScore.country == country,
                 AppBlowingUpScore.blowing_up_score > 0,
                 AppBlowingUpScore.confidence_score >= min_confidence * 100,
             )

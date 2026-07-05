@@ -788,9 +788,9 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   return fetchApi<DashboardStats>('/dashboard/stats');
 }
 
-export async function getTrendingApps(limit: number = 10): Promise<TrendingApp[]> {
+export async function getTrendingApps(limit: number = 10, country: string = 'us'): Promise<TrendingApp[]> {
   const response = await fetchApi<{ status: string; items: TrendingApp[] } | TrendingApp[]>(
-    `/trending?limit=${limit}`
+    `/trending?limit=${limit}&country=${encodeURIComponent(country)}`
   );
   // The endpoint returns a wrapped { status, items } object. Guard against both
   // the new shape and any legacy path that might return a plain array.
@@ -1804,6 +1804,7 @@ export interface BlowingUpFilters {
   category?: string;
   chart_type?: string;
   timeframe?: '24h' | '3d' | '7d';
+  country?: string;
 }
 
 export async function getBlowingUpApps(filters: BlowingUpFilters = {}): Promise<BlowingUpResponse> {
@@ -1817,6 +1818,7 @@ export async function getBlowingUpApps(filters: BlowingUpFilters = {}): Promise<
   if (filters.category)                params.set('category',  filters.category);
   if (filters.chart_type)              params.set('chart_type', filters.chart_type);
   if (filters.timeframe)               params.set('timeframe', filters.timeframe);
+  if (filters.country)                 params.set('country',   filters.country);
 
   const qs = params.toString();
   const url = `${API_BASE}/apps/blowing-up${qs ? `?${qs}` : ''}`;

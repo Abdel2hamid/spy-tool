@@ -350,7 +350,7 @@ async def job_blowing_up_compute():
 
     try:
         count = await _run_in_thread_with_session(
-            lambda db: BlowingUpService(db).compute_for_all_apps(timeframe_days=7)
+            lambda db: BlowingUpService(db).compute_for_all_countries(timeframe_days=7)
         )
         _log_done(job_id, t0, f"{count} apps scored")
     except Exception as exc:
@@ -365,11 +365,11 @@ async def job_trending_compute():
     """
     job_id = "trending_compute"
     t0 = _log_start(job_id)
-    from app.services.trending_compute_service import compute_trending_scores
+    from app.services.trending_compute_service import compute_trending_scores_all_countries
 
     try:
-        count = await _run_in_thread_with_session(compute_trending_scores)
-        _log_done(job_id, t0, f"{count} apps scored")
+        count = await _run_in_thread_with_session(compute_trending_scores_all_countries)
+        _log_done(job_id, t0, f"{count} scores across storefronts")
     except Exception as exc:
         _log_fail(job_id, exc)
 
