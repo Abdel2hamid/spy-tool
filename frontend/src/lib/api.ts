@@ -867,6 +867,48 @@ export async function getApps(limit: number = 50): Promise<AppListItem[]> {
   return result.apps ?? [];
 }
 
+// ── Per-country top charts ────────────────────────────────────────────────
+export interface CountryOption {
+  code: string;
+  name: string;
+  tier: number;
+}
+
+export async function getCountries(): Promise<CountryOption[]> {
+  return fetchApi<CountryOption[]>('/countries');
+}
+
+export interface ChartRow {
+  rank: number;
+  previous_rank: number | null;
+  rank_velocity: number | null;
+  id: number;
+  app_id: string;
+  name: string;
+  developer: string | null;
+  icon_url: string | null;
+  current_rating: number | null;
+  current_reviews: number | null;
+  primary_category: string | null;
+}
+
+export interface CountryChartsResponse {
+  country: string;
+  chart_type: string;
+  total: number;
+  results: ChartRow[];
+}
+
+export async function getCountryCharts(
+  country: string,
+  chartType: string,
+  limit: number = 100,
+): Promise<CountryChartsResponse> {
+  return fetchApi<CountryChartsResponse>(
+    `/charts?country=${encodeURIComponent(country)}&chart_type=${encodeURIComponent(chartType)}&limit=${limit}`,
+  );
+}
+
 export async function getApp(appId: number): Promise<App> {
   return fetchApi<App>(`/apps/${appId}`);
 }

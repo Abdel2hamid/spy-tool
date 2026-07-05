@@ -110,22 +110,23 @@ class AppStoreScraper:
     async def get_search_results(self, keyword: str, limit: int = 200) -> List[Dict]:
         return await asyncio.to_thread(self._search_sync, keyword, limit)
 
-    def _get_top_charts_sync(self, chart_type: str, genre_id: str, limit: int) -> List[Dict]:
+    def _get_top_charts_sync(self, chart_type: str, genre_id: str, limit: int, country: str = "us") -> List[Dict]:
         """
         Fetch top charts via the iTunes RSS feed (JSON format, no Playwright required).
 
-        URL pattern:
-          https://itunes.apple.com/us/rss/{chart}/limit={limit}/genre={genreId}/json
-          https://itunes.apple.com/us/rss/{chart}/limit={limit}/json   (all genres)
+        URL pattern (per storefront):
+          https://itunes.apple.com/{cc}/rss/{chart}/limit={limit}/genre={genreId}/json
+          https://itunes.apple.com/{cc}/rss/{chart}/limit={limit}/json   (all genres)
         """
+        cc = (country or "us").lower()
         chart_slug = _CHART_SLUG.get(chart_type, "topfreeapplications")
         if genre_id and genre_id != "all":
             url = (
-                f"https://itunes.apple.com/us/rss/{chart_slug}"
+                f"https://itunes.apple.com/{cc}/rss/{chart_slug}"
                 f"/limit={limit}/genre={genre_id}/json"
             )
         else:
-            url = f"https://itunes.apple.com/us/rss/{chart_slug}/limit={limit}/json"
+            url = f"https://itunes.apple.com/{cc}/rss/{chart_slug}/limit={limit}/json"
 
         results = []
         try:
@@ -164,9 +165,9 @@ class AppStoreScraper:
             logger.error(f"Error fetching top charts ({chart_type}/{genre_id}): {e}")
         return results
 
-    async def get_top_charts(self, chart_type: str = "topfree", category: str = None, limit: int = 200) -> List[Dict]:
+    async def get_top_charts(self, chart_type: str = "topfree", category: str = None, limit: int = 200, country: str = "us") -> List[Dict]:
         genre_id = _category_to_genre_id(category)
-        return await asyncio.to_thread(self._get_top_charts_sync, chart_type, genre_id, limit)
+        return await asyncio.to_thread(self._get_top_charts_sync, chart_type, genre_id, limit, country)
 
 
 async def run_scraper_demo():

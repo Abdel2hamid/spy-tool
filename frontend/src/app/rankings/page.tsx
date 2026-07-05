@@ -2,11 +2,157 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { AppShell } from '@/components';
-import { getRankHistory, RankHistory, getApps, AppListItem } from '@/lib/api';
-import { BarChart3, TrendingUp, Search } from 'lucide-react';
+import {
+  getRankHistory, RankHistory, getApps, AppListItem,
+  getCountries, getCountryCharts, CountryOption, ChartRow,
+} from '@/lib/api';
+import { BarChart3, TrendingUp, Search, Trophy, ChevronUp, ChevronDown, Minus, Globe } from 'lucide-react';
 import { RankHistoryChart } from '@/components/Charts';
+
+const CHART_TYPES: { value: string; label: string }[] = [
+  { value: 'topfree', label: 'Free' },
+  { value: 'topgrossing', label: 'Grossing' },
+];
+
+function RankDelta({ rank, previous }: { rank: number; previous: number | null }) {
+  if (previous == null) return <span className="text-gray-400"><Minus className="inline h-3.5 w-3.5" /></span>;
+  const delta = previous - rank; // positive = moved up
+  if (delta === 0) return <span className="text-gray-400"><Minus className="inline h-3.5 w-3.5" /></span>;
+  if (delta > 0) return <span className="inline-flex items-center text-emerald-600 dark:text-emerald-400"><ChevronUp className="h-3.5 w-3.5" />{delta}</span>;
+  return <span className="inline-flex items-center text-red-500"><ChevronDown className="h-3.5 w-3.5" />{-delta}</span>;
+}
+
+function CountryCharts() {
+  const [countries, setCountries] = useState<CountryOption[]>([]);
+  const [country, setCountry] = useState('us');
+  const [chartType, setChartType] = useState('topfree');
+  const [rows, setRows] = useState<ChartRow[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const reqRef = useRef(0);
+
+  useEffect(() => {
+    getCountries().then(setCountries).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const id = ++reqRef.current;
+    setLoading(true);
+    setError(false);
+    getCountryCharts(country, chartType, 100)
+      .then((res) => {
+        if (id !== reqRef.current) return; // stale response guard
+        setRows(res.results);
+      })
+      .catch(() => {
+        if (id !== reqRef.current) return;
+        setError(true);
+        setRows(null);
+      })
+      .finally(() => {
+        if (id === reqRef.current) setLoading(false);
+      });
+  }, [country, chartType]);
+
+  const countryName = countries.find((c) => c.code === country)?.name ?? country.toUpperCase();
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2">
+          <Trophy className="h-5 w-5 text-amber-500" />
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Top Charts</h3>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Globe className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <select
+              value={country}
+              onChange={(e) => setCountry(e.target.value)}
+              className="rounded-lg border border-gray-200 bg-white py-1.5 pl-8 pr-3 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none dark:border-gray-800 dark:bg-gray-900 dark:text-white"
+            >
+              {countries.length === 0 && <option value="us">United States</option>}
+              {countries.map((c) => (
+                <option key={c.code} value={c.code}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="inline-flex rounded-lg border border-gray-200 p-0.5 dark:border-gray-800">
+            {CHART_TYPES.map((ct) => (
+              <button
+                key={ct.value}
+                onClick={() => setChartType(ct.value)}
+                className={
+                  'rounded-md px-3 py-1 text-sm font-medium transition ' +
+                  (chartType === ct.value
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800')
+                }
+              >
+                {ct.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="h-80 animate-pulse rounded-lg bg-gray-100 dark:bg-gray-800" />
+      ) : error ? (
+        <div className="py-10 text-center text-sm text-red-500">Couldn’t load charts. Please try again.</div>
+      ) : rows && rows.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-gray-200 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                <th className="pb-3 pr-2 w-12">#</th>
+                <th className="pb-3 pr-2 w-14">Δ</th>
+                <th className="pb-3">App</th>
+                <th className="pb-3 text-right">Category</th>
+                <th className="pb-3 text-right">Rating</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+              {rows.map((r) => (
+                <tr key={`${r.id}-${r.rank}`} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                  <td className="py-2.5 pr-2 font-semibold tabular-nums text-gray-900 dark:text-white">{r.rank}</td>
+                  <td className="py-2.5 pr-2 text-xs tabular-nums"><RankDelta rank={r.rank} previous={r.previous_rank} /></td>
+                  <td className="py-2.5">
+                    <Link href={`/apps/${r.id}`} className="flex items-center gap-3 group">
+                      <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800">
+                        {r.icon_url ? (
+                          <img src={r.icon_url} alt={r.name} className="h-full w-full object-cover" loading="lazy" />
+                        ) : (
+                          <span className="text-xs font-bold text-gray-400">{r.name?.[0] ?? '?'}</span>
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-gray-900 group-hover:text-indigo-600 dark:text-white">{r.name}</p>
+                        <p className="truncate text-xs text-gray-500 dark:text-gray-400">{r.developer}</p>
+                      </div>
+                    </Link>
+                  </td>
+                  <td className="py-2.5 text-right text-sm text-gray-600 dark:text-gray-300">{r.primary_category ?? '—'}</td>
+                  <td className="py-2.5 text-right text-sm text-gray-600 dark:text-gray-300">{r.current_rating ? r.current_rating.toFixed(1) : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="py-10 text-center">
+          <Trophy className="mx-auto mb-3 h-10 w-10 text-gray-300 dark:text-gray-600" />
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            No chart data for {countryName} yet — this storefront is still being collected.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function RankingsContent() {
   const [apps, setApps] = useState<AppListItem[]>([]);
@@ -66,8 +212,16 @@ function RankingsContent() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Rankings</h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Track app ranking movements over time
+            Browse top charts by country and track ranking movements over time
           </p>
+        </div>
+
+        {/* Flagship: per-country top charts */}
+        <CountryCharts />
+
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Rank history</h2>
+          <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">Track a tracked app’s rank over time</p>
         </div>
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
