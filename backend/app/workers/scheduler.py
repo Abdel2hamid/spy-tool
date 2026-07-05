@@ -194,6 +194,47 @@ def _log_fail(job_id: str, exc: Exception):
 
 
 # ---------------------------------------------------------------------------
+# Thread-owned DB session
+# ---------------------------------------------------------------------------
+
+def _run_in_thread_with_session(fn, *args, **kwargs):
+    """Run ``fn(session, *args, **kwargs)`` in a worker thread with a
+    SQLAlchemy Session that the thread creates, exclusively owns, and closes.
+
+    Creating the Session *inside* the thread (never in the calling coroutine)
+    guarantees two invariants for every scheduler job that offloads DB work:
+
+      * A Session is never shared across threads.
+      * A coroutine timeout/cancellation (via ``_with_timeout`` →
+        ``asyncio.wait_for``) can never close a Session while the worker
+        thread is still using it — the coroutine holds no reference to it, so
+        the thread always creates, owns and disposes its own Session.
+
+    Transaction handling mirrors the previous ``finally: db.close()`` contract:
+    the invoked services commit their own work internally, so no commit is
+    added here; on any exception the pending transaction is explicitly rolled
+    back before the Session is closed (``close()`` alone already discards an
+    open transaction, but the explicit rollback makes intent unambiguous).
+
+    Returns the ``asyncio.to_thread`` awaitable — ``await`` it like
+    ``asyncio.to_thread(...)``.
+    """
+    from app.database import SessionLocal
+
+    def _runner():
+        db = SessionLocal()
+        try:
+            return fn(db, *args, **kwargs)
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    return asyncio.to_thread(_runner)
+
+
+# ---------------------------------------------------------------------------
 # Job: every 1 h — quick reviews & ratings refresh
 # ---------------------------------------------------------------------------
 
@@ -260,13 +301,12 @@ async def job_opportunity_compute():
     """
     job_id = "opportunity_compute"
     t0 = _log_start(job_id)
-    from app.database import SessionLocal
     from app.services.opportunity_of_day_service import OpportunityOfDayService
 
-    db = SessionLocal()
     try:
-        svc = OpportunityOfDayService(db)
-        result = await asyncio.to_thread(svc.get_or_generate)
+        result = await _run_in_thread_with_session(
+            lambda db: OpportunityOfDayService(db).get_or_generate()
+        )
         if result:
             today = result.get("app_name", "unknown")
             _log_done(job_id, t0, f"opportunity computed (app={today})")
@@ -274,8 +314,6 @@ async def job_opportunity_compute():
             _log_done(job_id, t0, "no qualifying opportunity (insufficient data)")
     except Exception as exc:
         _log_fail(job_id, exc)
-    finally:
-        db.close()
 
 
 @_with_timeout("weekly_opportunities_compute")
@@ -287,18 +325,15 @@ async def job_weekly_opportunities_compute():
     """
     job_id = "weekly_opportunities_compute"
     t0 = _log_start(job_id)
-    from app.database import SessionLocal
     from app.services.weekly_opportunities_service import WeeklyOpportunitiesService
 
-    db = SessionLocal()
     try:
-        svc = WeeklyOpportunitiesService(db)
-        items = await asyncio.to_thread(svc.get_or_generate)
+        items = await _run_in_thread_with_session(
+            lambda db: WeeklyOpportunitiesService(db).get_or_generate()
+        )
         _log_done(job_id, t0, f"weekly opportunities: {len(items)} items")
     except Exception as exc:
         _log_fail(job_id, exc)
-    finally:
-        db.close()
 
 
 @_with_timeout("blowing_up_compute")
@@ -310,19 +345,15 @@ async def job_blowing_up_compute():
     """
     job_id = "blowing_up_compute"
     t0 = _log_start(job_id)
-    from app.database import SessionLocal
     from app.services.blowing_up_service import BlowingUpService
 
-    db = SessionLocal()
     try:
-        count = await asyncio.to_thread(
-            lambda: BlowingUpService(db).compute_for_all_apps(timeframe_days=7)
+        count = await _run_in_thread_with_session(
+            lambda db: BlowingUpService(db).compute_for_all_apps(timeframe_days=7)
         )
         _log_done(job_id, t0, f"{count} apps scored")
     except Exception as exc:
         _log_fail(job_id, exc)
-    finally:
-        db.close()
 
 
 @_with_timeout("trending_compute")
@@ -333,17 +364,13 @@ async def job_trending_compute():
     """
     job_id = "trending_compute"
     t0 = _log_start(job_id)
-    from app.database import SessionLocal  # local import avoids circular
     from app.services.trending_compute_service import compute_trending_scores
 
-    db = SessionLocal()
     try:
-        count = await asyncio.to_thread(compute_trending_scores, db)
+        count = await _run_in_thread_with_session(compute_trending_scores)
         _log_done(job_id, t0, f"{count} apps scored")
     except Exception as exc:
         _log_fail(job_id, exc)
-    finally:
-        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -713,13 +740,10 @@ async def job_tier_reclassify():
     t0 = _log_start(job_id)
     try:
         from app.services.app_tiering_service import AppTieringService
-        from app.database import SessionLocal
-        db = SessionLocal()
-        try:
-            updated = await asyncio.to_thread(AppTieringService(db).reclassify_all)
-            _log_done(job_id, t0, f"{updated} rows reclassified")
-        finally:
-            db.close()
+        updated = await _run_in_thread_with_session(
+            lambda db: AppTieringService(db).reclassify_all()
+        )
+        _log_done(job_id, t0, f"{updated} rows reclassified")
     except Exception as exc:
         _log_fail(job_id, exc)
 
@@ -735,15 +759,10 @@ async def job_enrich_hot():
     try:
         from app.workers.discovery_engine import DiscoveryEngine
         from app.database import SessionLocal
-        # Phase 1: enqueue (quick DB operation) — release session before scraping
-        db = SessionLocal()
-        try:
-            engine = DiscoveryEngine(db)
-            enqueued = await asyncio.to_thread(
-                engine._enqueue_light_apps_for_tier, "hot", 200
-            )
-        finally:
-            db.close()
+        # Phase 1: enqueue (quick DB operation) — thread owns its own session
+        enqueued = await _run_in_thread_with_session(
+            lambda db: DiscoveryEngine(db)._enqueue_light_apps_for_tier("hot", 200)
+        )
         # Phase 2: scrape (long HTTP I/O) — fresh session for queue reads
         db2 = SessionLocal()
         try:
@@ -767,14 +786,9 @@ async def job_enrich_warm():
     try:
         from app.workers.discovery_engine import DiscoveryEngine
         from app.database import SessionLocal
-        db = SessionLocal()
-        try:
-            engine = DiscoveryEngine(db)
-            enqueued = await asyncio.to_thread(
-                engine._enqueue_light_apps_for_tier, "warm", 500
-            )
-        finally:
-            db.close()
+        enqueued = await _run_in_thread_with_session(
+            lambda db: DiscoveryEngine(db)._enqueue_light_apps_for_tier("warm", 500)
+        )
         db2 = SessionLocal()
         try:
             engine2 = DiscoveryEngine(db2)
@@ -797,14 +811,9 @@ async def job_enrich_cold():
     try:
         from app.workers.discovery_engine import DiscoveryEngine
         from app.database import SessionLocal
-        db = SessionLocal()
-        try:
-            engine = DiscoveryEngine(db)
-            enqueued = await asyncio.to_thread(
-                engine._enqueue_light_apps_for_tier, "cold", 1000
-            )
-        finally:
-            db.close()
+        enqueued = await _run_in_thread_with_session(
+            lambda db: DiscoveryEngine(db)._enqueue_light_apps_for_tier("cold", 1000)
+        )
         db2 = SessionLocal()
         try:
             engine2 = DiscoveryEngine(db2)
@@ -1014,15 +1023,13 @@ async def job_keyword_discovery_daily():
 
             batch = app_ids[i: i + BATCH]
             for app_id in batch:
-                batch_db = SessionLocal()
                 try:
-                    svc = KeywordDiscoveryService(batch_db)
-                    count = await asyncio.to_thread(svc.discover_for_app, app_id)
+                    count = await _run_in_thread_with_session(
+                        lambda db, aid=app_id: KeywordDiscoveryService(db).discover_for_app(aid)
+                    )
                     total_discovered += count
                 except Exception as exc:
                     logger.warning(f"[{job_id}] app {app_id} failed: {exc}")
-                finally:
-                    batch_db.close()
                 processed += 1
                 last_id = app_id
             await asyncio.sleep(2)
@@ -1106,6 +1113,15 @@ async def job_keyword_discovery_phase1_daily():
         last_id = _kw_discovery_phase1_cursor
         wall_start = time.monotonic()
 
+        def _run_phase1(db, aid):
+            # All four steps share ONE thread-owned session (same semantics as
+            # the previous single per-app session), run sequentially in-thread.
+            a = AlphabetMiningService(db).mine_for_app(aid)
+            c = CompetitorKeywordService(db).mine_for_app(aid)
+            g = KeywordGapService(db).analyze_for_app(aid)
+            OpportunityScoreService(db).score_for_app(aid)
+            return a, c, g
+
         for i in range(0, len(app_ids), BATCH):
             if time.monotonic() - wall_start > WALL_TIME_BUDGET:
                 logger.warning(
@@ -1116,26 +1132,15 @@ async def job_keyword_discovery_phase1_daily():
 
             batch = app_ids[i: i + BATCH]
             for app_id in batch:
-                batch_db = SessionLocal()
                 try:
-                    alpha_svc = AlphabetMiningService(batch_db)
-                    alpha_count = await asyncio.to_thread(alpha_svc.mine_for_app, app_id)
+                    alpha_count, comp_count, gap_count = await _run_in_thread_with_session(
+                        _run_phase1, app_id
+                    )
                     total_alpha += alpha_count
-
-                    comp_svc = CompetitorKeywordService(batch_db)
-                    comp_count = await asyncio.to_thread(comp_svc.mine_for_app, app_id)
                     total_comp += comp_count
-
-                    gap_svc = KeywordGapService(batch_db)
-                    gap_count = await asyncio.to_thread(gap_svc.analyze_for_app, app_id)
                     total_gaps += gap_count
-
-                    opp_svc = OpportunityScoreService(batch_db)
-                    await asyncio.to_thread(opp_svc.score_for_app, app_id)
                 except Exception as exc:
                     logger.warning(f"[{job_id}] app {app_id} failed: {exc}")
-                finally:
-                    batch_db.close()
                 processed += 1
                 last_id = app_id
             await asyncio.sleep(3)
@@ -1267,16 +1272,16 @@ async def job_sentiment_analysis():
     t0 = _log_start(job_id)
     try:
         from app.services.review_sentiment_service import ReviewSentimentService
-        from app.database import SessionLocal
 
-        db = SessionLocal()
-        try:
+        def _run_sentiment(db):
+            # Both steps share ONE thread-owned session (same as before).
             svc = ReviewSentimentService(db)
-            classified = await asyncio.to_thread(svc.classify_pending_reviews)
-            updated = await asyncio.to_thread(svc.update_all_app_analytics)
-            _log_done(job_id, t0, f"classified={classified}, analytics_updated={updated}")
-        finally:
-            db.close()
+            classified = svc.classify_pending_reviews()
+            updated = svc.update_all_app_analytics()
+            return classified, updated
+
+        classified, updated = await _run_in_thread_with_session(_run_sentiment)
+        _log_done(job_id, t0, f"classified={classified}, analytics_updated={updated}")
     except Exception as exc:
         _log_fail(job_id, exc)
 
@@ -1295,15 +1300,11 @@ async def job_feature_gap():
     t0 = _log_start(job_id)
     try:
         from app.services.feature_gap_service import FeatureGapService
-        from app.database import SessionLocal
 
-        db = SessionLocal()
-        try:
-            svc = FeatureGapService(db)
-            processed = await asyncio.to_thread(svc.compute_for_all_apps)
-            _log_done(job_id, t0, f"{processed} apps processed")
-        finally:
-            db.close()
+        processed = await _run_in_thread_with_session(
+            lambda db: FeatureGapService(db).compute_for_all_apps()
+        )
+        _log_done(job_id, t0, f"{processed} apps processed")
     except Exception as exc:
         _log_fail(job_id, exc)
 
@@ -1327,18 +1328,13 @@ async def job_keyword_quality_pruning():
     t0 = _log_start(job_id)
     try:
         from app.workers.tasks import prune_keywords_job
-        from app.database import SessionLocal
 
-        db = SessionLocal()
-        try:
-            stats = await asyncio.to_thread(prune_keywords_job, db)
-            _log_done(
-                job_id, t0,
-                f"total_deleted={stats['total_deleted']}, "
-                f"remaining={stats['remaining_keywords']}"
-            )
-        finally:
-            db.close()
+        stats = await _run_in_thread_with_session(prune_keywords_job)
+        _log_done(
+            job_id, t0,
+            f"total_deleted={stats['total_deleted']}, "
+            f"remaining={stats['remaining_keywords']}"
+        )
     except Exception as exc:
         _log_fail(job_id, exc)
 
@@ -1357,21 +1353,17 @@ async def job_ad_intelligence():
     """
     job_id = "ad_intelligence"
     t0 = _log_start(job_id)
-    from app.database import SessionLocal
     from app.services.ad_intelligence_service import AdIntelligenceService
     import os
 
-    db = SessionLocal()
+    meta_token = os.environ.get("FACEBOOK_ACCESS_TOKEN")
     try:
-        meta_token = os.environ.get("FACEBOOK_ACCESS_TOKEN")
-        result = await asyncio.to_thread(
-            lambda: AdIntelligenceService(db, meta_access_token=meta_token).run_for_candidates()
+        result = await _run_in_thread_with_session(
+            lambda db: AdIntelligenceService(db, meta_access_token=meta_token).run_for_candidates()
         )
         _log_done(job_id, t0, f"{result['candidates']} candidates, {result['creatives_upserted']} creatives")
     except Exception as exc:
         _log_fail(job_id, exc)
-    finally:
-        db.close()
 
 
 @_with_timeout("campaign_detection")
@@ -1384,19 +1376,15 @@ async def job_campaign_detection():
     """
     job_id = "campaign_detection"
     t0 = _log_start(job_id)
-    from app.database import SessionLocal
     from app.services.campaign_tracking_service import CampaignTrackingService
 
-    db = SessionLocal()
     try:
-        result = await asyncio.to_thread(
-            lambda: CampaignTrackingService(db).run_for_all()
+        result = await _run_in_thread_with_session(
+            lambda db: CampaignTrackingService(db).run_for_all()
         )
         _log_done(job_id, t0, f"{result['events_created']} events created")
     except Exception as exc:
         _log_fail(job_id, exc)
-    finally:
-        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1412,34 +1400,34 @@ async def job_bootstrap_data():
     job_id = "bootstrap_data"
     t0 = _log_start(job_id)
     try:
-        from app.database import SessionLocal
         from sqlalchemy import func as sqla_func
         from app.models.models import Ranking as RankingModel, App as AppModel
+        from app.services.bootstrap_data_service import run_full_bootstrap
 
-        db = SessionLocal()
-        try:
-            # Check if rankings already exist
+        def _bootstrap(db):
+            # Pre-checks + bootstrap all run in one thread-owned session.
+            # Returns (status, payload) so the coroutine can log without
+            # touching the session.
             ranking_count = db.query(sqla_func.count(RankingModel.id)).scalar() or 0
             if ranking_count > 0:
-                _log_done(job_id, t0, f"Rankings already exist ({ranking_count} rows) — skipping bootstrap")
-                return
-
-            # Check if there are apps with current_rank
+                return ("skip_existing", ranking_count)
             rankable = (
                 db.query(sqla_func.count(AppModel.id))
                 .filter(AppModel.current_rank.isnot(None), AppModel.current_rank > 0)
                 .scalar() or 0
             )
             if rankable == 0:
-                _log_done(job_id, t0, "No apps with current_rank — bootstrap skipped (run /admin/bootstrap first)")
-                return
-
+                return ("skip_norank", 0)
             logger.info(f"[{job_id}] Rankings empty but {rankable} apps have current_rank — bootstrapping...")
-            from app.services.bootstrap_data_service import run_full_bootstrap
-            result = await asyncio.to_thread(lambda: run_full_bootstrap(db))
-            _log_done(job_id, t0, f"Bootstrap complete: {result}")
-        finally:
-            db.close()
+            return ("done", run_full_bootstrap(db))
+
+        status, payload = await _run_in_thread_with_session(_bootstrap)
+        if status == "skip_existing":
+            _log_done(job_id, t0, f"Rankings already exist ({payload} rows) — skipping bootstrap")
+        elif status == "skip_norank":
+            _log_done(job_id, t0, "No apps with current_rank — bootstrap skipped (run /admin/bootstrap first)")
+        else:
+            _log_done(job_id, t0, f"Bootstrap complete: {payload}")
     except Exception as exc:
         _log_fail(job_id, exc)
 
