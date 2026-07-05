@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from app.config import settings
 from app.database import Base
-from app.models.models import Category, App, Ranking, Review, Keyword, AppKeyword, Opportunity, DailyReport
+import app.models.models  # noqa: F401 — importing registers every table on Base.metadata
 
 config = context.config
 

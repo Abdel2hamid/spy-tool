@@ -289,6 +289,29 @@ class DiscoveryEngine:
             return False
         return prog.last_run.date() >= datetime.now(timezone.utc).date()
 
+    # Persistent rotation cursor for chart discovery (reuses discovery_progress;
+    # the apps_found column stores the flattened-combo index). Kept in the DB so
+    # it survives restarts, preventing the scan from always restarting at combo 0.
+    _CHART_CURSOR_KEY = "chart:_cursor"
+
+    def _get_chart_cursor(self) -> int:
+        prog = self._get_progress(self._CHART_CURSOR_KEY)
+        return prog.apps_found if prog else 0
+
+    def _set_chart_cursor(self, pos: int) -> None:
+        prog = self._get_progress(self._CHART_CURSOR_KEY)
+        if prog:
+            prog.apps_found = pos
+            prog.last_run = datetime.now(timezone.utc)
+        else:
+            prog = DiscoveryProgress(
+                source_key=self._CHART_CURSOR_KEY,
+                apps_found=pos,
+                last_run=datetime.now(timezone.utc),
+            )
+            self.db.add(prog)
+        self.db.commit()
+
     # -----------------------------------------------------------------------
     # Sync fetch helpers (always run via asyncio.to_thread)
     # -----------------------------------------------------------------------
@@ -659,37 +682,47 @@ class DiscoveryEngine:
         Fetch the next `batch_size` (chart × genre × country) combinations
         not yet run today, enqueue discovered app IDs.
         Returns total new IDs enqueued.
+
+        Combinations are visited in a fixed order but from a persistent
+        rotating cursor (stored in discovery_progress), so each run continues
+        where the previous one stopped and wraps around. This guarantees every
+        combination is eventually reached instead of always restarting at the
+        first combo each day — fixing chart-discovery starvation. The per-run
+        `batch_size` cap and `_ran_today` gating are unchanged, so the request
+        budget stays the same.
         """
+        # Flattened combos, SAME order as the previous nested loops:
+        # chart → country → (all-genres, then each genre).
+        combos = [
+            (chart, genre_id, country)
+            for chart in ALL_CHART_SLUGS
+            for country in DISCOVERY_COUNTRIES
+            for genre_id in (None, *ALL_GENRE_IDS.values())
+        ]
+        n = len(combos)
+        if n == 0:
+            return 0
+
         total_new = 0
         processed = 0
+        start = self._get_chart_cursor() % n
+        scanned = 0
 
-        for chart in ALL_CHART_SLUGS:
-            for country in DISCOVERY_COUNTRIES:
-                # All-genres chart for this country
-                key, found, new, did_work = await asyncio.to_thread(
-                    self._process_chart_sync, chart, None, country
-                )
-                if did_work:
-                    total_new += new
-                    processed += 1
-                    logger.info(f"[DISC] {key}: {found} found, {new} queued")
-                    await asyncio.sleep(0.3)
-                    if processed >= batch_size:
-                        return total_new
+        while scanned < n and processed < batch_size:
+            chart, genre_id, country = combos[(start + scanned) % n]
+            key, found, new, did_work = await asyncio.to_thread(
+                self._process_chart_sync, chart, genre_id, country
+            )
+            scanned += 1
+            if did_work:
+                total_new += new
+                processed += 1
+                logger.info(f"[DISC] {key}: {found} found, {new} queued")
+                await asyncio.sleep(0.3)
 
-                # Per-genre charts
-                for slug, genre_id in ALL_GENRE_IDS.items():
-                    key, found, new, did_work = await asyncio.to_thread(
-                        self._process_chart_sync, chart, genre_id, country
-                    )
-                    if did_work:
-                        total_new += new
-                        processed += 1
-                        logger.info(f"[DISC] {key}: {found} found, {new} queued")
-                        await asyncio.sleep(0.3)
-                        if processed >= batch_size:
-                            return total_new
-
+        # Advance the cursor past everything scanned this run (skipped combos
+        # already ran today, so we don't want to re-scan them next run).
+        self._set_chart_cursor((start + scanned) % n)
         return total_new
 
     def _process_keyword_sync(self, kw: str) -> int:

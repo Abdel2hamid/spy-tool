@@ -398,36 +398,33 @@ async def job_ranking_refresh():
     job_id = "ranking_refresh"
     t0 = _log_start(job_id)
 
-    from app.database import SessionLocal
     from app.models.models import Ranking
     from sqlalchemy import func as sqla_func
 
-    db = SessionLocal()
-    try:
-        # --- Freshness check: skip if recent rankings exist ---
-        newest = db.query(sqla_func.max(Ranking.recorded_at)).scalar()
-        if newest is not None:
-            from datetime import timezone as _tz
-            if newest.tzinfo is None:
-                newest = newest.replace(tzinfo=_tz.utc)
-            age_hours = (
-                datetime.now(_tz.utc) - newest
-            ).total_seconds() / 3600
-            if age_hours < _RANKING_FRESHNESS_HOURS:
-                _log_done(
-                    job_id, t0,
-                    f"SKIPPED — rankings are fresh ({age_hours:.1f}h old, "
-                    f"threshold={_RANKING_FRESHNESS_HOURS}h)"
-                )
-                return
-            logger.info(
-                f"[{job_id}] Rankings are {age_hours:.1f}h old "
-                f"(threshold={_RANKING_FRESHNESS_HOURS}h) — refreshing"
+    # --- Freshness check: skip if recent rankings exist (query off-loop) ---
+    newest = await _run_in_thread_with_session(
+        lambda db: db.query(sqla_func.max(Ranking.recorded_at)).scalar()
+    )
+    if newest is not None:
+        from datetime import timezone as _tz
+        if newest.tzinfo is None:
+            newest = newest.replace(tzinfo=_tz.utc)
+        age_hours = (
+            datetime.now(_tz.utc) - newest
+        ).total_seconds() / 3600
+        if age_hours < _RANKING_FRESHNESS_HOURS:
+            _log_done(
+                job_id, t0,
+                f"SKIPPED — rankings are fresh ({age_hours:.1f}h old, "
+                f"threshold={_RANKING_FRESHNESS_HOURS}h)"
             )
-        else:
-            logger.info(f"[{job_id}] No rankings in DB — refreshing")
-    finally:
-        db.close()
+            return
+        logger.info(
+            f"[{job_id}] Rankings are {age_hours:.1f}h old "
+            f"(threshold={_RANKING_FRESHNESS_HOURS}h) — refreshing"
+        )
+    else:
+        logger.info(f"[{job_id}] No rankings in DB — refreshing")
 
     # --- Scrape charts (ranking rows only, no full metadata) ---
     from app.workers.tasks import ScraperWorker
@@ -440,18 +437,16 @@ async def job_ranking_refresh():
             categories=[None],  # all-genres only — lightweight
         )
 
-        # Count what we just created
-        db2 = SessionLocal()
-        try:
-            from app.models.models import Ranking as R2
-            recent_count = (
-                db2.query(sqla_func.count(R2.id))
+        # Count what we just created (query off-loop)
+        from app.models.models import Ranking as R2
+        recent_count = await _run_in_thread_with_session(
+            lambda db: (
+                db.query(sqla_func.count(R2.id))
                 .filter(R2.recorded_at >= datetime.utcnow() - timedelta(minutes=10))
                 .scalar() or 0
             )
-            _log_done(job_id, t0, f"{recent_count} ranking rows created")
-        finally:
-            db2.close()
+        )
+        _log_done(job_id, t0, f"{recent_count} ranking rows created")
 
     except Exception as exc:
         _log_fail(job_id, exc)
@@ -508,11 +503,12 @@ async def job_backfill_incomplete():
     import urllib.request
     import json as _json
     from app.models.models import App
-    from app.database import SessionLocal
 
-    db = SessionLocal()
-    total_updated = 0
-    try:
+    def _backfill(db):
+        # Entire batch loop — including the blocking urlopen(timeout=30) — runs
+        # in a worker thread so the event loop is never blocked. Per-batch
+        # commits and behaviour are preserved exactly.
+        total_updated = 0
         max_apps = 1000
         while total_updated < max_apps:
             rows = (
@@ -585,12 +581,13 @@ async def job_backfill_incomplete():
             total_updated += batch_updated
             logger.info(f"[SCHEDULER]    {job_id}: batch {batch_updated} updated, {total_updated} total")
 
+        return total_updated
+
+    try:
+        total_updated = await _run_in_thread_with_session(_backfill)
         _log_done(job_id, t0, f"{total_updated} apps backfilled via iTunes batch lookup")
     except Exception as exc:
-        db.rollback()
         _log_fail(job_id, exc)
-    finally:
-        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1175,13 +1172,11 @@ async def job_keyword_cleanup_daily():
     job_id = "keyword_cleanup_daily"
     t0 = _log_start(job_id)
     try:
-        from app.database import SessionLocal
-        from app.models.models import Keyword, AppDiscoveredKeyword
         from sqlalchemy import text
 
-        db = SessionLocal()
-        try:
-            # ── 1. Prune global keywords ──────────────────────────────────
+        def _cleanup(db):
+            # Bulk DELETEs (potentially seconds on a large keywords table) +
+            # commit run in a worker thread so the event loop is not blocked.
             result_kw = db.execute(
                 text(
                     "DELETE FROM keywords "
@@ -1191,7 +1186,6 @@ async def job_keyword_cleanup_daily():
             )
             deleted_kw = result_kw.rowcount or 0
 
-            # ── 2. Prune app discovered keywords ──────────────────────────
             result_adk = db.execute(
                 text(
                     "DELETE FROM app_discovered_keywords "
@@ -1202,22 +1196,19 @@ async def job_keyword_cleanup_daily():
             deleted_adk = result_adk.rowcount or 0
 
             db.commit()
+            return deleted_kw, deleted_adk
 
-            _log_done(
-                job_id, t0,
-                f"removed {deleted_kw} stale keywords, "
-                f"{deleted_adk} low-value discovered keywords"
+        deleted_kw, deleted_adk = await _run_in_thread_with_session(_cleanup)
+        _log_done(
+            job_id, t0,
+            f"removed {deleted_kw} stale keywords, "
+            f"{deleted_adk} low-value discovered keywords"
+        )
+        if deleted_kw or deleted_adk:
+            logger.info(
+                f"[KeywordCleanup] removed {deleted_kw} old keywords, "
+                f"{deleted_adk} low-value app keywords"
             )
-            if deleted_kw or deleted_adk:
-                logger.info(
-                    f"[KeywordCleanup] removed {deleted_kw} old keywords, "
-                    f"{deleted_adk} low-value app keywords"
-                )
-        except Exception as exc:
-            db.rollback()
-            raise exc
-        finally:
-            db.close()
     except Exception as exc:
         _log_fail(job_id, exc)
 
@@ -1441,32 +1432,33 @@ async def job_evaluate_alerts():
     job_id = "evaluate_alerts"
     t0 = _log_start(job_id)
     try:
-        from app.database import SessionLocal
         from app.models import models
 
-        db = SessionLocal()
-        try:
+        def _evaluate_all(db):
+            # Whole per-alert evaluation (N+1 queries + inserts) runs in a
+            # worker thread so the event loop is not blocked. Returns
+            # (num_alerts, events_created) for logging in the coroutine.
             alerts = (
                 db.query(models.Alert)
                 .filter(models.Alert.is_active == True)
                 .all()
             )
             if not alerts:
-                _log_done(job_id, t0, "no active alerts")
-                return
-
+                return (0, 0)
             created = 0
             for alert in alerts:
                 try:
-                    events = _evaluate_single_alert(db, alert)
-                    created += events
+                    created += _evaluate_single_alert(db, alert)
                 except Exception as exc:
                     logger.warning(f"[{job_id}] Alert {alert.id} ({alert.alert_type}) failed: {exc}")
-
             db.commit()
-            _log_done(job_id, t0, f"evaluated {len(alerts)} alerts, created {created} events")
-        finally:
-            db.close()
+            return (len(alerts), created)
+
+        num_alerts, created = await _run_in_thread_with_session(_evaluate_all)
+        if num_alerts == 0:
+            _log_done(job_id, t0, "no active alerts")
+        else:
+            _log_done(job_id, t0, f"evaluated {num_alerts} alerts, created {created} events")
     except Exception as exc:
         _log_fail(job_id, exc)
 
