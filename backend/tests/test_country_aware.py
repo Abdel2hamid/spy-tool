@@ -201,3 +201,50 @@ def test_blowing_up_isolated_per_country(db):
     assert (a_jp.id, "jp") in keys
     assert (a_us.id, "jp") not in keys
     assert (a_jp.id, "us") not in keys
+
+
+# ── reviews per storefront ──────────────────────────────────────────────────
+
+def _make_review(db, app_pk, storefront, rating, review_id):
+    from app.models.models import Review
+    db.add(Review(
+        app_id=app_pk, review_id=review_id, storefront=storefront,
+        rating=rating, title="t", content="c",
+        date=datetime.now(timezone.utc),
+    ))
+    db.commit()
+
+
+def test_reviews_filtered_by_country(db):
+    """Reviews endpoint filters by storefront; default returns all."""
+    from app.api.routes import get_app_reviews
+    a = _make_app(db, "6001", "Review App")
+    _make_review(db, a.id, "US", 5, "r-us-1")
+    _make_review(db, a.id, "US", 4, "r-us-2")
+    _make_review(db, a.id, "JP", 3, "r-jp-1")
+
+    all_rv = get_app_reviews(a.id, rating=None, country=None, skip=0, limit=50, db=db)
+    assert len(all_rv) == 3
+
+    us_rv = get_app_reviews(a.id, rating=None, country="us", skip=0, limit=50, db=db)
+    assert len(us_rv) == 2 and all(r.storefront == "US" for r in us_rv)
+
+    jp_rv = get_app_reviews(a.id, rating=None, country="jp", skip=0, limit=50, db=db)
+    assert len(jp_rv) == 1 and jp_rv[0].storefront == "JP"
+
+    # invalid / unknown storefront → empty, not an error
+    assert get_app_reviews(a.id, rating=None, country="xx", skip=0, limit=50, db=db) == []
+
+
+def test_review_countries_endpoint(db):
+    """review-countries lists storefronts with counts, most reviews first."""
+    from app.api.routes import get_app_review_countries
+    a = _make_app(db, "6002", "Review App 2")
+    _make_review(db, a.id, "US", 5, "r2-us-1")
+    _make_review(db, a.id, "JP", 4, "r2-jp-1")
+    _make_review(db, a.id, "JP", 3, "r2-jp-2")
+
+    res = get_app_review_countries(a.id, db=db)
+    counts = {r["country"]: r["count"] for r in res}
+    assert counts == {"jp": 2, "us": 1}
+    assert res[0]["country"] == "jp"  # ordered by count desc

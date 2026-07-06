@@ -1308,27 +1308,52 @@ async def job_keyword_cleanup_daily():
 # Job: every 6 h — deep review ingestion (up to 500 reviews per app)
 # ---------------------------------------------------------------------------
 
+# Review coverage is request-heavy on a single egress IP, so keep the scheduled
+# sweep conservative and tier-gated. Tune up once a proxy pool is available.
+_REVIEW_APP_LIMIT = 300          # top US apps
+_REVIEW_INTL_APP_LIMIT = 40      # top apps per non-US storefront
+_REVIEW_INTL_COUNTRIES_MAX = 4   # extra Tier-1 storefronts per run
+
+
 @_with_timeout("review_scraper")
 async def job_review_scraper():
     """
-    Fetch up to 500 reviews for the top 300 ranked apps (iTunes RSS pagination).
-    New reviews are persisted; existing reviews (by review_id) are skipped.
+    Fetch reviews for the top ranked apps: deep for the US, plus a bounded set
+    of Tier-1 storefronts. New reviews are persisted tagged with their
+    storefront; existing reviews (by review_id) are skipped.
     """
     job_id = "review_scraper"
     t0 = _log_start(job_id)
     try:
         from app.services.review_scraper_service import ReviewScraperService
         from app.database import SessionLocal
+        from app.models.models import Country
 
         db = SessionLocal()
         try:
             svc = ReviewScraperService(db)
-            stats = await svc.scrape_reviews_for_top_apps(limit=300)
+            # US: deep coverage (preserves prior behaviour).
+            us = await svc.scrape_reviews_for_top_apps(limit=_REVIEW_APP_LIMIT, countries=["us"])
+            # Non-US Tier-1: bounded coverage.
+            intl_codes = [
+                r[0] for r in (
+                    db.query(Country.code)
+                    .filter(Country.enabled.is_(True), Country.tier <= 1, Country.code != "us")
+                    .order_by(Country.code)
+                    .limit(_REVIEW_INTL_COUNTRIES_MAX)
+                    .all()
+                )
+            ]
+            intl = {"new_reviews": 0, "apps_processed": 0, "errors": 0}
+            if intl_codes:
+                intl = await svc.scrape_reviews_for_top_apps(
+                    limit=_REVIEW_INTL_APP_LIMIT, countries=intl_codes,
+                )
             _log_done(
                 job_id, t0,
-                f"apps={stats['apps_processed']}, "
-                f"+reviews={stats['new_reviews']}, "
-                f"errors={stats['errors']}",
+                f"us_apps={us['apps_processed']}, intl_storefronts={len(intl_codes)}, "
+                f"+reviews={us['new_reviews'] + intl['new_reviews']}, "
+                f"errors={us['errors'] + intl['errors']}",
             )
         finally:
             db.close()

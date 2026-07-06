@@ -1236,11 +1236,22 @@ export async function getKeywordSuggestions(appId: number): Promise<KeywordSugge
 export async function getAppReviews(
   appId: number,
   rating?: number,
-  limit: number = 50
+  limit: number = 50,
+  country?: string,
 ): Promise<Review[]> {
   let url = `/apps/${appId}/reviews?limit=${limit}`;
   if (rating) url += `&rating=${rating}`;
+  if (country) url += `&country=${encodeURIComponent(country)}`;
   return fetchApi<Review[]>(url);
+}
+
+export interface ReviewCountry {
+  country: string;
+  count: number;
+}
+
+export async function getReviewCountries(appId: number): Promise<ReviewCountry[]> {
+  return fetchApi<ReviewCountry[]>(`/apps/${appId}/review-countries`);
 }
 
 export async function getAppAnalytics(appId: number): Promise<AppAnalytics> {

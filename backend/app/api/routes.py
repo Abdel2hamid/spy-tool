@@ -2433,6 +2433,7 @@ def get_app_versions(app_id: int, db: Session = Depends(get_db)):
 def get_app_reviews(
     app_id: int,
     rating: Optional[int] = None,
+    country: Optional[str] = Query(None, description="Storefront (ISO code); omit for all"),
     skip: int = 0,
     limit: int = Query(50, ge=1, le=100),
     db: Session = Depends(get_db)
@@ -2440,13 +2441,46 @@ def get_app_reviews(
     app = db.query(models.App).filter(models.App.id == app_id).first()
     if not app:
         raise HTTPException(status_code=404, detail="App not found")
-    
+
     query = db.query(models.Review).filter(models.Review.app_id == app_id)
-    
+
     if rating:
         query = query.filter(models.Review.rating == rating)
-    
+    if country:
+        # storefront is stored uppercase (e.g. 'US', 'JP')
+        query = query.filter(models.Review.storefront == country.upper())
+
     return query.order_by(models.Review.date.desc()).offset(skip).limit(limit).all()
+
+
+@router.get("/apps/{app_id}/review-countries")
+def get_app_review_countries(app_id: int, db: Session = Depends(get_db)):
+    """Storefronts that have reviews for this app, with counts (for the selector)."""
+    rows = (
+        db.query(models.Review.storefront, func.count(models.Review.id))
+        .filter(models.Review.app_id == app_id, models.Review.storefront.isnot(None))
+        .group_by(models.Review.storefront)
+        .order_by(func.count(models.Review.id).desc())
+        .all()
+    )
+    return [{"country": (sf or "").lower(), "count": cnt} for sf, cnt in rows if sf]
+
+
+@router.post("/apps/{app_id}/scrape-reviews", dependencies=[Depends(rate_limit(10, 60))])
+async def scrape_app_reviews(
+    app_id: int,
+    country: str = Query("us"),
+    _user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Fetch this app's reviews for a storefront on demand."""
+    from app.services.review_scraper_service import ReviewScraperService
+    app = db.query(models.App).filter(models.App.id == app_id).first()
+    if not app:
+        raise HTTPException(status_code=404, detail="App not found")
+    svc = ReviewScraperService(db)
+    new_count = await svc.scrape_reviews_for_app(app_id, country=(country or "us").lower())
+    return {"status": "completed", "country": (country or "us").lower(), "new_reviews": new_count}
 
 
 @router.get("/apps/{app_id}/analytics", response_model=AppAnalyticsResponse)
