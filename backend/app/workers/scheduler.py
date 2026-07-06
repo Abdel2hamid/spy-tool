@@ -350,7 +350,7 @@ async def job_blowing_up_compute():
 
     try:
         count = await _run_in_thread_with_session(
-            lambda db: BlowingUpService(db).compute_for_all_apps(timeframe_days=7)
+            lambda db: BlowingUpService(db).compute_for_all_countries(timeframe_days=7)
         )
         _log_done(job_id, t0, f"{count} apps scored")
     except Exception as exc:
@@ -365,11 +365,11 @@ async def job_trending_compute():
     """
     job_id = "trending_compute"
     t0 = _log_start(job_id)
-    from app.services.trending_compute_service import compute_trending_scores
+    from app.services.trending_compute_service import compute_trending_scores_all_countries
 
     try:
-        count = await _run_in_thread_with_session(compute_trending_scores)
-        _log_done(job_id, t0, f"{count} apps scored")
+        count = await _run_in_thread_with_session(compute_trending_scores_all_countries)
+        _log_done(job_id, t0, f"{count} scores across storefronts")
     except Exception as exc:
         _log_fail(job_id, exc)
 
@@ -459,46 +459,82 @@ async def job_ranking_refresh():
 # Job: every 6 h — per-country top charts (Tier-1 storefronts)
 # ---------------------------------------------------------------------------
 
+_COUNTRY_CHART_BATCH = 25  # max storefronts refreshed per run (bounds request cost)
+
+# Genre depth by country tier (overall is always fetched; these add genre charts).
+# Higher tiers get more genre depth; T3/T4 get overall only.
+_GENRES_FOR_TIER = {
+    1: ["games", "productivity", "social-networking", "photo-video", "finance", "health-fitness"],
+    2: ["games", "productivity", "social-networking"],
+}
+
+
 @_with_timeout("country_charts")
 async def job_country_charts():
     """
-    Fetch top charts (free + grossing, all-genres) for enabled Tier-1
-    storefronts and write per-country ranking rows. Extends ranking coverage
-    beyond the US (which ranking_refresh / full_metadata already cover).
+    Fetch top charts (free + grossing) for the most-overdue storefronts and
+    write per-country ranking rows. Each country gets the overall chart plus a
+    tier-gated set of genre charts (_GENRES_FOR_TIER).
+
+    SLA-weighted rotation over ALL enabled storefronts: a country is "due" once
+    it hasn't been covered within its tier's sla_hours; each run picks up to
+    _COUNTRY_CHART_BATCH of the most-overdue (by staleness ratio =
+    hours_since_covered / sla_hours). High tiers (short SLA) refresh often; a
+    never-covered / long-overdue country has an ever-growing ratio and is always
+    eventually picked, so no country starves. US is covered by ranking_refresh.
     """
     job_id = "country_charts"
     t0 = _log_start(job_id)
     try:
-        from app.models.models import Country
+        from sqlalchemy import text as _sa_text
 
-        def _tier1_codes(db):
-            rows = (
-                db.query(Country.code)
-                .filter(Country.enabled.is_(True), Country.tier <= 1, Country.code != "us")
-                .order_by(Country.code)
-                .all()
-            )
-            return [r[0] for r in rows]
+        def _due_countries(db):
+            rows = db.execute(
+                _sa_text(
+                    """
+                    SELECT code, tier FROM countries
+                    WHERE enabled AND code <> 'us'
+                      AND (charts_last_covered_at IS NULL
+                           OR now() - charts_last_covered_at > make_interval(hours => sla_hours))
+                    ORDER BY
+                      EXTRACT(EPOCH FROM (now() - COALESCE(charts_last_covered_at, 'epoch'::timestamptz)))
+                      / GREATEST(sla_hours, 1) DESC
+                    LIMIT :lim
+                    """
+                ),
+                {"lim": _COUNTRY_CHART_BATCH},
+            ).all()
+            return [(r[0], r[1]) for r in rows]
 
-        codes = await _run_in_thread_with_session(_tier1_codes)
-        if not codes:
-            _log_done(job_id, t0, "no non-US tier-1 countries configured")
+        due = await _run_in_thread_with_session(_due_countries)
+        if not due:
+            _log_done(job_id, t0, "no storefronts due for refresh")
             return
+
+        def _mark_covered(db, cc):
+            db.execute(
+                _sa_text("UPDATE countries SET charts_last_covered_at = now() WHERE code = :c"),
+                {"c": cc},
+            )
+            db.commit()
 
         from app.workers.tasks import ScraperWorker
         worker = ScraperWorker()
         await worker.initialize()
         try:
             done = 0
-            for cc in codes:
+            for cc, tier in due:
+                categories = [None] + _GENRES_FOR_TIER.get(tier, [])  # overall + genre charts
                 await worker.scrape_top_charts(
                     chart_types=["topfree", "topgrossing"],
-                    categories=[None],
+                    categories=categories,
                     country=cc,
                 )
+                # Mark covered per-country so a mid-run timeout is resumable.
+                await _run_in_thread_with_session(_mark_covered, cc)
                 done += 1
                 await asyncio.sleep(0.5)  # gentle pacing between storefronts
-            _log_done(job_id, t0, f"top charts fetched for {done} storefronts: {codes}")
+            _log_done(job_id, t0, f"top charts fetched for {done}/{len(due)} due storefronts: {[c for c, _ in due]}")
         finally:
             await worker.cleanup()
     except Exception as exc:
@@ -1272,27 +1308,52 @@ async def job_keyword_cleanup_daily():
 # Job: every 6 h — deep review ingestion (up to 500 reviews per app)
 # ---------------------------------------------------------------------------
 
+# Review coverage is request-heavy on a single egress IP, so keep the scheduled
+# sweep conservative and tier-gated. Tune up once a proxy pool is available.
+_REVIEW_APP_LIMIT = 300          # top US apps
+_REVIEW_INTL_APP_LIMIT = 40      # top apps per non-US storefront
+_REVIEW_INTL_COUNTRIES_MAX = 4   # extra Tier-1 storefronts per run
+
+
 @_with_timeout("review_scraper")
 async def job_review_scraper():
     """
-    Fetch up to 500 reviews for the top 300 ranked apps (iTunes RSS pagination).
-    New reviews are persisted; existing reviews (by review_id) are skipped.
+    Fetch reviews for the top ranked apps: deep for the US, plus a bounded set
+    of Tier-1 storefronts. New reviews are persisted tagged with their
+    storefront; existing reviews (by review_id) are skipped.
     """
     job_id = "review_scraper"
     t0 = _log_start(job_id)
     try:
         from app.services.review_scraper_service import ReviewScraperService
         from app.database import SessionLocal
+        from app.models.models import Country
 
         db = SessionLocal()
         try:
             svc = ReviewScraperService(db)
-            stats = await svc.scrape_reviews_for_top_apps(limit=300)
+            # US: deep coverage (preserves prior behaviour).
+            us = await svc.scrape_reviews_for_top_apps(limit=_REVIEW_APP_LIMIT, countries=["us"])
+            # Non-US Tier-1: bounded coverage.
+            intl_codes = [
+                r[0] for r in (
+                    db.query(Country.code)
+                    .filter(Country.enabled.is_(True), Country.tier <= 1, Country.code != "us")
+                    .order_by(Country.code)
+                    .limit(_REVIEW_INTL_COUNTRIES_MAX)
+                    .all()
+                )
+            ]
+            intl = {"new_reviews": 0, "apps_processed": 0, "errors": 0}
+            if intl_codes:
+                intl = await svc.scrape_reviews_for_top_apps(
+                    limit=_REVIEW_INTL_APP_LIMIT, countries=intl_codes,
+                )
             _log_done(
                 job_id, t0,
-                f"apps={stats['apps_processed']}, "
-                f"+reviews={stats['new_reviews']}, "
-                f"errors={stats['errors']}",
+                f"us_apps={us['apps_processed']}, intl_storefronts={len(intl_codes)}, "
+                f"+reviews={us['new_reviews'] + intl['new_reviews']}, "
+                f"errors={us['errors'] + intl['errors']}",
             )
         finally:
             db.close()

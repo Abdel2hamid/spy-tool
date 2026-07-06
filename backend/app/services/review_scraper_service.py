@@ -105,12 +105,16 @@ class ReviewScraperService:
     # Batch ingestion — top apps
     # ------------------------------------------------------------------
 
-    async def scrape_reviews_for_top_apps(self, limit: int = 300) -> Dict:
+    async def scrape_reviews_for_top_apps(self, limit: int = 300, countries=("us",)) -> Dict:
         """
-        Fetch reviews for the top *limit* ranked apps in parallel batches.
+        Fetch reviews for the top *limit* ranked apps across one or more
+        storefronts (`countries`), in parallel. Reviews are stored tagged with
+        their storefront, so the same app can hold reviews from multiple markets.
         Returns {"apps_processed": N, "new_reviews": M, "errors": K}.
         """
         from app.database import SessionLocal
+
+        ccs = [c.lower() for c in (countries or ("us",))]
 
         app_ids = [
             row[0]
@@ -127,28 +131,29 @@ class ReviewScraperService:
         total_new = 0
         errors = 0
 
-        async def _scrape_one(aid: int):
+        async def _scrape_one(aid: int, cc: str):
             nonlocal total_new, errors
             async with semaphore:
                 db = SessionLocal()
                 try:
                     svc = ReviewScraperService(db)
-                    n = await svc.scrape_reviews_for_app(aid)
+                    n = await svc.scrape_reviews_for_app(aid, country=cc)
                     total_new += n
                 except Exception as exc:
-                    logger.warning(f"[ReviewScraper] app {aid} failed: {exc}")
+                    logger.warning(f"[ReviewScraper] app {aid} [{cc}] failed: {exc}")
                     errors += 1
                 finally:
                     db.close()
 
-        await asyncio.gather(*[_scrape_one(aid) for aid in app_ids])
+        tasks = [_scrape_one(aid, cc) for cc in ccs for aid in app_ids]
+        await asyncio.gather(*tasks)
 
         logger.info(
-            f"[ReviewScraper] batch complete: {len(app_ids)} apps, "
-            f"+{total_new} new reviews, {errors} errors"
+            f"[ReviewScraper] batch complete: {len(app_ids)} apps × {len(ccs)} storefronts "
+            f"({','.join(ccs)}), +{total_new} new reviews, {errors} errors"
         )
         return {
-            "apps_processed": len(app_ids),
+            "apps_processed": len(app_ids) * len(ccs),
             "new_reviews": total_new,
             "errors": errors,
         }

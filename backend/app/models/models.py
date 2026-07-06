@@ -190,6 +190,7 @@ class Country(Base):
     weight = Column(Float, nullable=False, server_default=text("0.1"))      # relative acquisition weight
     sla_hours = Column(Integer, nullable=False, server_default=text("720")) # max staleness (h) before boost
     enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    charts_last_covered_at = Column(DateTime(timezone=True))  # last top-charts fetch; drives rotation
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -287,6 +288,7 @@ class Ranking(Base):
     category_id = Column(Integer, ForeignKey("categories.id"))
     chart_type = Column(String(50), nullable=False)
     country = Column(String(2), nullable=False, server_default="us")  # storefront; 'us' for legacy rows
+    genre = Column(String(40), nullable=False, server_default="all")  # chart scope: 'all' or a genre slug
     rank = Column(Integer, nullable=False)
     previous_rank = Column(Integer)
     rank_velocity = Column(Float, default=0)
@@ -300,6 +302,7 @@ class Ranking(Base):
         Index("idx_ranking_chart_date", "chart_type", "recorded_at"),
         Index("idx_ranking_category_date", "category_id", "recorded_at"),
         Index("idx_ranking_country_chart_date", "country", "chart_type", "recorded_at"),
+        Index("idx_ranking_cc_chart_genre_date", "country", "chart_type", "genre", "recorded_at"),
     )
 
 
@@ -845,6 +848,7 @@ class AppBlowingUpScore(Base):
     __tablename__ = "app_blowing_up_scores"
 
     app_id              = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), primary_key=True)
+    country             = Column(String(2), primary_key=True, server_default="us")  # storefront scope
     blowing_up_score    = Column(Float, nullable=False, default=0.0)  # 0-100 composite
     # Component scores (each 0-100)
     rank_velocity_score    = Column(Float, default=0.0)
@@ -1022,6 +1026,7 @@ class AppTrendingScore(Base):
     __tablename__ = "app_trending_scores"
 
     app_id = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), primary_key=True)
+    country = Column(String(2), primary_key=True, server_default="us")  # storefront scope
     trend_score = Column(Float, nullable=False, default=0.0)
     momentum_score = Column(Float, default=0.0)   # weighted momentum (3d/7d/14d)
     momentum_3d = Column(Float, default=0.0)       # raw 3-day momentum

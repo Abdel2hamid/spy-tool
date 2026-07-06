@@ -4,12 +4,13 @@ export const dynamic = 'force-dynamic';
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { AppShell } from '@/components';
+import { AppShell, CountrySelect } from '@/components';
 import {
   getRankHistory, RankHistory, getApps, AppListItem,
-  getCountries, getCountryCharts, CountryOption, ChartRow,
+  getCountryCharts, ChartRow,
+  getChartGenres, ChartGenre,
 } from '@/lib/api';
-import { BarChart3, TrendingUp, Search, Trophy, ChevronUp, ChevronDown, Minus, Globe } from 'lucide-react';
+import { BarChart3, TrendingUp, Search, Trophy, ChevronUp, ChevronDown, Minus } from 'lucide-react';
 import { RankHistoryChart } from '@/components/Charts';
 
 const CHART_TYPES: { value: string; label: string }[] = [
@@ -26,23 +27,24 @@ function RankDelta({ rank, previous }: { rank: number; previous: number | null }
 }
 
 function CountryCharts() {
-  const [countries, setCountries] = useState<CountryOption[]>([]);
+  const [genres, setGenres] = useState<ChartGenre[]>([]);
   const [country, setCountry] = useState('us');
   const [chartType, setChartType] = useState('topfree');
+  const [genre, setGenre] = useState('all');
   const [rows, setRows] = useState<ChartRow[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const reqRef = useRef(0);
 
   useEffect(() => {
-    getCountries().then(setCountries).catch(() => {});
+    getChartGenres().then(setGenres).catch(() => {});
   }, []);
 
   useEffect(() => {
     const id = ++reqRef.current;
     setLoading(true);
     setError(false);
-    getCountryCharts(country, chartType, 100)
+    getCountryCharts(country, chartType, genre, 100)
       .then((res) => {
         if (id !== reqRef.current) return; // stale response guard
         setRows(res.results);
@@ -55,9 +57,9 @@ function CountryCharts() {
       .finally(() => {
         if (id === reqRef.current) setLoading(false);
       });
-  }, [country, chartType]);
+  }, [country, chartType, genre]);
 
-  const countryName = countries.find((c) => c.code === country)?.name ?? country.toUpperCase();
+  const countryName = country.toUpperCase();
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
@@ -67,19 +69,17 @@ function CountryCharts() {
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Top Charts</h3>
         </div>
         <div className="flex items-center gap-2">
-          <div className="relative">
-            <Globe className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-            <select
-              value={country}
-              onChange={(e) => setCountry(e.target.value)}
-              className="rounded-lg border border-gray-200 bg-white py-1.5 pl-8 pr-3 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none dark:border-gray-800 dark:bg-gray-900 dark:text-white"
-            >
-              {countries.length === 0 && <option value="us">United States</option>}
-              {countries.map((c) => (
-                <option key={c.code} value={c.code}>{c.name}</option>
-              ))}
-            </select>
-          </div>
+          <CountrySelect value={country} onChange={setCountry} />
+          <select
+            value={genre}
+            onChange={(e) => setGenre(e.target.value)}
+            className="rounded-lg border border-gray-200 bg-white py-1.5 px-3 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none dark:border-gray-800 dark:bg-gray-900 dark:text-white"
+          >
+            {genres.length === 0 && <option value="all">Overall</option>}
+            {genres.map((g) => (
+              <option key={g.slug} value={g.slug}>{g.name}</option>
+            ))}
+          </select>
           <div className="inline-flex rounded-lg border border-gray-200 p-0.5 dark:border-gray-800">
             {CHART_TYPES.map((ct) => (
               <button

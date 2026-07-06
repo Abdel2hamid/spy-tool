@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { AppShell } from '@/components';
+import { AppShell, CountrySelect } from '@/components';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import {
   getBlowingUpApps,
@@ -367,6 +367,7 @@ const DEFAULT_FILTERS: BlowingUpFilters = {
   min_confidence:      0.3,
   min_reviews_velocity: 0,
   timeframe:           '7d',
+  country:             'us',
 };
 
 export default function BlowingUpClient() {
@@ -423,14 +424,20 @@ export default function BlowingUpClient() {
                 Apps showing unusual momentum across rankings and reviews right now
               </p>
             </div>
-            <button
-              onClick={() => fetchData(filters, true)}
-              disabled={refreshing}
-              className="flex items-center gap-2 self-start rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
-            >
-              <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
-              {refreshing ? 'Refreshing…' : 'Refresh'}
-            </button>
+            <div className="flex items-center gap-2 self-start">
+              <CountrySelect
+                value={filters.country ?? 'us'}
+                onChange={(code) => applyFilter('country', code)}
+              />
+              <button
+                onClick={() => fetchData(filters, true)}
+                disabled={refreshing}
+                className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+              >
+                <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
+                {refreshing ? 'Refreshing…' : 'Refresh'}
+              </button>
+            </div>
           </div>
 
           {/* ── Summary stats ──────────────────────────────────────────── */}

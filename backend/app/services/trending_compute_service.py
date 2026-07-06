@@ -20,7 +20,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.models.models import AppTrendingScore, Ranking
+from app.models.models import AppTrendingScore
 from app.utils.batch_utils import log_memory
 
 logger = logging.getLogger(__name__)
@@ -28,14 +28,18 @@ logger = logging.getLogger(__name__)
 _COMMIT_BATCH = 200  # commit every N apps to bound ORM identity map
 
 
-def compute_trending_scores(db: Session) -> int:
+def compute_trending_scores(db: Session, country: str = "us") -> int:
     """
     Compute and upsert trending scores for every app with ranking data in the
-    last 14 days.
+    last 14 days, for a single storefront (`country`).
+
+    Scores are isolated per country: only rankings for `country` feed the
+    computation, and results are upserted keyed on (app_id, country).
 
     Returns the number of apps successfully scored.
     """
     t0 = time.monotonic()
+    cc = (country or "us").lower()
     log_memory("trending_compute", "start")
 
     from app.scoring.engine import ScoringEngine  # noqa: PLC0415
@@ -45,18 +49,17 @@ def compute_trending_scores(db: Session) -> int:
     cutoff = datetime.utcnow() - timedelta(days=14)
 
     # ── Batch prefetch: 4 queries total ─────────────────────────────────
-    # 1. All rankings in the last 14 days → group by app_id in Python.
-    #    This replaces BOTH the initial GROUP BY query AND all per-app
-    #    _get_ranking_history() calls (5 per app).
+    # 1. All rankings for this storefront in the last 14 days → group by app_id.
+    #    Country filter keeps storefronts isolated (never mixes ranks).
     rankings_by_app = defaultdict(list)  # {app_id: [ranking_dicts]}
     for row in db.execute(
         text(
             "SELECT app_id, rank, previous_rank, recorded_at "
             "FROM rankings "
-            "WHERE recorded_at >= :cutoff "
+            "WHERE recorded_at >= :cutoff AND country = :country "
             "ORDER BY app_id, recorded_at"
         ),
-        {"cutoff": cutoff},
+        {"cutoff": cutoff, "country": cc},
     ):
         rankings_by_app[row.app_id].append(
             {
@@ -133,11 +136,19 @@ def compute_trending_scores(db: Session) -> int:
             app_info = app_data_map.get(app_id, {})
             cat_id = app_info.get("category_id")
 
+            # Use this storefront's latest rank (from its own history) as the
+            # current rank, so the absolute-rank component is country-accurate.
+            # For 'us' fall back to apps.current_rank to preserve prior scores.
+            if cc == "us":
+                current_rank = app_info.get("current_rank")
+            else:
+                current_rank = history[-1]["rank"] if history else None
+
             trend_data = engine.compute_trend_score_from_prefetch(
                 app_id=app_id,
                 ranking_history=history,
                 current_reviews=app_info.get("current_reviews"),
-                current_rank=app_info.get("current_rank"),
+                current_rank=current_rank,
                 category_id=cat_id,
                 review_count_7d=review_count_map.get(app_id, 0),
                 category_ranks=category_ranks_map.get(cat_id) if cat_id else None,
@@ -150,6 +161,7 @@ def compute_trending_scores(db: Session) -> int:
                 pg_insert(AppTrendingScore)
                 .values(
                     app_id=app_id,
+                    country=cc,
                     trend_score=trend_data["final_score"],
                     momentum_score=trend_data["momentum_weighted"],
                     momentum_3d=trend_data["momentum_3d"],
@@ -161,7 +173,7 @@ def compute_trending_scores(db: Session) -> int:
                     computed_at=datetime.utcnow(),
                 )
                 .on_conflict_do_update(
-                    index_elements=["app_id"],
+                    index_elements=["app_id", "country"],
                     set_={
                         "trend_score": trend_data["final_score"],
                         "momentum_score": trend_data["momentum_weighted"],
@@ -197,7 +209,26 @@ def compute_trending_scores(db: Session) -> int:
     log_memory("trending_compute", "end")
     elapsed = time.monotonic() - t0
     logger.info(
-        f"[TRENDING_COMPUTE] Scored {scored}/{len(app_ids)} apps in {elapsed:.1f}s "
+        f"[TRENDING_COMPUTE] [{cc}] Scored {scored}/{len(app_ids)} apps in {elapsed:.1f}s "
         f"(4 prefetch queries, 0 per-app queries)"
     )
     return scored
+
+
+def compute_trending_scores_all_countries(db: Session) -> int:
+    """
+    Recompute trending for every storefront that has recent rankings (always
+    including 'us'). Each country is scored in isolation from its own rankings.
+    Returns the total number of (app, country) scores written.
+    """
+    cutoff = datetime.utcnow() - timedelta(days=14)
+    rows = db.execute(
+        text("SELECT DISTINCT country FROM rankings WHERE recorded_at >= :cutoff"),
+        {"cutoff": cutoff},
+    ).scalars().all()
+    countries = sorted(set(c for c in rows if c) | {"us"})
+    total = 0
+    for cc in countries:
+        total += compute_trending_scores(db, country=cc)
+    logger.info(f"[TRENDING_COMPUTE] Done: {total} scores across {len(countries)} storefronts")
+    return total

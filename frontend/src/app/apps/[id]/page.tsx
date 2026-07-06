@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components';
-import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, DownloadEstimate, ASOScoreResponse, ASOBreakdownItem, KeywordSuggestionsResponse, KeywordSuggestionItem, DeveloperAppsResponse, AppListItem, getAppDetail, getAppReviews, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, getDownloadEstimate, getASOScore, getKeywordSuggestions, getDeveloperApps, RankHistory, getFavoriteIds, addFavorite, removeFavorite, getMyAppIds, addMyApp, removeMyApp, refreshApp } from '@/lib/api';
+import { AppDetail, AppVersion, Review, AppAnalytics, MarketWeakness, FeatureGapResponse, KeywordIntelligence, AppAutopsy, KeywordHistory, ExtractedKeyword, KeywordExtractionResponse, DiscoveredKeyword, DiscoveredKeywordsResponse, KeywordOpportunityItem, KeywordOpportunitiesResponse, DownloadEstimate, ASOScoreResponse, ASOBreakdownItem, KeywordSuggestionsResponse, KeywordSuggestionItem, DeveloperAppsResponse, AppListItem, ReviewCountry, getAppDetail, getAppReviews, getReviewCountries, getRankHistory, getMarketWeakness, getFeatureGaps, analyzeFeatureGaps, getKeywordIntelligence, runKeywordSearch, getAppAutopsy, getKeywordHistory, getAppKeywords, getExtractedKeywords, triggerKeywordExtraction, getDiscoveredKeywords, triggerKeywordDiscovery, getKeywordOpportunitiesForApp, triggerPhase1Discovery, getDownloadEstimate, getASOScore, getKeywordSuggestions, getDeveloperApps, RankHistory, getFavoriteIds, addFavorite, removeFavorite, getMyAppIds, addMyApp, removeMyApp, refreshApp } from '@/lib/api';
 import { fmtNum, fmtRev, fmtRange, fmtRevRange, confidenceLabel, CONFIDENCE_BADGE } from '@/lib/estimate-format';
 import {
   ArrowLeft, Star, Download, Calendar, Globe, MessageSquare,
@@ -891,28 +891,67 @@ function RatingDistribution({ reviews }: { reviews: Review[] }) {
 function ReviewsTab({ reviews, appId }: { reviews: Review[], appId: number }) {
   const [filterRating, setFilterRating] = useState<number | null>(null);
   const [filterSentiment, setFilterSentiment] = useState<'all' | 'positive' | 'negative'>('all');
+  const [country, setCountry] = useState('');            // '' = all storefronts
+  const [rows, setRows] = useState<Review[]>(reviews);
+  const [reviewCountries, setReviewCountries] = useState<ReviewCountry[]>([]);
+  const reviewReqRef = useRef(0);
 
-  const filteredReviews = reviews.filter(r => {
+  useEffect(() => { getReviewCountries(appId).then(setReviewCountries).catch(() => {}); }, [appId]);
+  // Resync to the parent-loaded (all-storefront) reviews when the app changes.
+  useEffect(() => { setRows(reviews); setCountry(''); }, [reviews]);
+
+  const changeCountry = (cc: string) => {
+    setCountry(cc);
+    const id = ++reviewReqRef.current;
+    getAppReviews(appId, undefined, 20, cc || undefined)
+      .then((r) => { if (id === reviewReqRef.current) setRows(r); })
+      .catch(() => { if (id === reviewReqRef.current) setRows([]); });
+  };
+
+  const storefrontBar = reviewCountries.length > 0 ? (
+    <div className="flex items-center gap-2">
+      <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Storefront</span>
+      <select
+        value={country}
+        onChange={(e) => changeCountry(e.target.value)}
+        className="rounded-lg border border-gray-200 bg-white py-1 px-2 text-sm text-gray-900 focus:border-indigo-500 focus:outline-none dark:border-gray-800 dark:bg-gray-900 dark:text-white"
+        aria-label="Review storefront"
+      >
+        <option value="">All</option>
+        {reviewCountries.map((c) => (
+          <option key={c.country} value={c.country}>{c.country.toUpperCase()} ({c.count})</option>
+        ))}
+      </select>
+    </div>
+  ) : null;
+
+  const filteredReviews = rows.filter(r => {
     if (filterRating !== null && r.rating !== filterRating) return false;
     if (filterSentiment === 'positive' && (r.rating ?? 0) < 4) return false;
     if (filterSentiment === 'negative' && (r.rating ?? 0) > 2) return false;
     return true;
   });
 
-  if (reviews.length === 0) {
+  if (rows.length === 0) {
     return (
-      <div className="rounded-xl border border-gray-200 bg-white p-10 text-center dark:border-gray-800 dark:bg-gray-900">
-        <MessageSquare className="mx-auto h-10 w-10 text-gray-300 dark:text-gray-600 mb-3" />
-        <p className="font-medium text-gray-500 dark:text-gray-400">No reviews available</p>
-        <p className="mt-1 text-sm text-gray-400">Reviews appear after the first scrape cycle.</p>
+      <div className="space-y-4">
+        {storefrontBar}
+        <div className="rounded-xl border border-gray-200 bg-white p-10 text-center dark:border-gray-800 dark:bg-gray-900">
+          <MessageSquare className="mx-auto h-10 w-10 text-gray-300 dark:text-gray-600 mb-3" />
+          <p className="font-medium text-gray-500 dark:text-gray-400">
+            {country ? `No reviews for ${country.toUpperCase()} yet` : 'No reviews available'}
+          </p>
+          <p className="mt-1 text-sm text-gray-400">Reviews appear after the first scrape cycle.</p>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      {/* Rating distribution */}
-      <RatingDistribution reviews={reviews} />
+      {storefrontBar}
+      {/* Rating distribution (for the selected storefront) */}
+      <RatingDistribution reviews={rows} />
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2">
@@ -956,7 +995,7 @@ function ReviewsTab({ reviews, appId }: { reviews: Review[], appId: number }) {
 
       {/* Review count summary */}
       <p className="text-xs text-gray-400">
-        Showing {filteredReviews.length} of {reviews.length} reviews
+        Showing {filteredReviews.length} of {rows.length} reviews
       </p>
 
       {/* Review cards */}

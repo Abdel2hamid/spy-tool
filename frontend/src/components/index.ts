@@ -6,6 +6,7 @@ export { AppShell } from './AppShell';
 export { AdminShell } from './AdminShell';
 export { Providers } from './Providers';
 export { StatsCard } from './StatsCard';
+export { CountrySelect } from './CountrySelect';
 export { TrendingAppCard } from './TrendingAppCard';
 export { OpportunityOfDayCard } from './OpportunityOfDayCard';
 export { SimpleChart, RankHistoryChart } from './Charts';

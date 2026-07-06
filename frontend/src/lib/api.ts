@@ -788,9 +788,9 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   return fetchApi<DashboardStats>('/dashboard/stats');
 }
 
-export async function getTrendingApps(limit: number = 10): Promise<TrendingApp[]> {
+export async function getTrendingApps(limit: number = 10, country: string = 'us'): Promise<TrendingApp[]> {
   const response = await fetchApi<{ status: string; items: TrendingApp[] } | TrendingApp[]>(
-    `/trending?limit=${limit}`
+    `/trending?limit=${limit}&country=${encodeURIComponent(country)}`
   );
   // The endpoint returns a wrapped { status, items } object. Guard against both
   // the new shape and any legacy path that might return a plain array.
@@ -895,6 +895,7 @@ export interface ChartRow {
 export interface CountryChartsResponse {
   country: string;
   chart_type: string;
+  genre: string;
   total: number;
   results: ChartRow[];
 }
@@ -902,11 +903,22 @@ export interface CountryChartsResponse {
 export async function getCountryCharts(
   country: string,
   chartType: string,
+  genre: string = 'all',
   limit: number = 100,
 ): Promise<CountryChartsResponse> {
   return fetchApi<CountryChartsResponse>(
-    `/charts?country=${encodeURIComponent(country)}&chart_type=${encodeURIComponent(chartType)}&limit=${limit}`,
+    `/charts?country=${encodeURIComponent(country)}&chart_type=${encodeURIComponent(chartType)}` +
+    `&genre=${encodeURIComponent(genre)}&limit=${limit}`,
   );
+}
+
+export interface ChartGenre {
+  slug: string;
+  name: string;
+}
+
+export async function getChartGenres(): Promise<ChartGenre[]> {
+  return fetchApi<ChartGenre[]>('/chart-genres');
 }
 
 export async function getApp(appId: number): Promise<App> {
@@ -1224,11 +1236,22 @@ export async function getKeywordSuggestions(appId: number): Promise<KeywordSugge
 export async function getAppReviews(
   appId: number,
   rating?: number,
-  limit: number = 50
+  limit: number = 50,
+  country?: string,
 ): Promise<Review[]> {
   let url = `/apps/${appId}/reviews?limit=${limit}`;
   if (rating) url += `&rating=${rating}`;
+  if (country) url += `&country=${encodeURIComponent(country)}`;
   return fetchApi<Review[]>(url);
+}
+
+export interface ReviewCountry {
+  country: string;
+  count: number;
+}
+
+export async function getReviewCountries(appId: number): Promise<ReviewCountry[]> {
+  return fetchApi<ReviewCountry[]>(`/apps/${appId}/review-countries`);
 }
 
 export async function getAppAnalytics(appId: number): Promise<AppAnalytics> {
@@ -1792,6 +1815,7 @@ export interface BlowingUpFilters {
   category?: string;
   chart_type?: string;
   timeframe?: '24h' | '3d' | '7d';
+  country?: string;
 }
 
 export async function getBlowingUpApps(filters: BlowingUpFilters = {}): Promise<BlowingUpResponse> {
@@ -1805,6 +1829,7 @@ export async function getBlowingUpApps(filters: BlowingUpFilters = {}): Promise<
   if (filters.category)                params.set('category',  filters.category);
   if (filters.chart_type)              params.set('chart_type', filters.chart_type);
   if (filters.timeframe)               params.set('timeframe', filters.timeframe);
+  if (filters.country)                 params.set('country',   filters.country);
 
   const qs = params.toString();
   const url = `${API_BASE}/apps/blowing-up${qs ? `?${qs}` : ''}`;
