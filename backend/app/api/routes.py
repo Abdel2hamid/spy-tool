@@ -454,9 +454,11 @@ def get_apps(
         apps = query.offset(effective_skip).limit(limit).all()
         logger.info(f"[GET /apps] done  total={total} returned={len(apps)} {(_time.monotonic()-_t0)*1000:.0f}ms")
         return {"apps": apps, "total": total, "skip": effective_skip, "limit": limit}
-    except Exception as exc:
-        logger.error(f"[GET /apps] FAILED after {(_time.monotonic()-_t0)*1000:.0f}ms: {exc}")
-        return {"apps": [], "total": 0, "skip": effective_skip, "limit": limit}
+    except Exception:
+        # Surface a real error instead of masquerading a failure as an empty
+        # catalog — the client must be able to tell "broken" from "no results".
+        logger.exception(f"[GET /apps] FAILED after {(_time.monotonic()-_t0)*1000:.0f}ms")
+        raise HTTPException(status_code=500, detail="Failed to load apps. Please try again.")
 
 
 @router.get("/apps/latest-60-days", response_model=AppListResponse)

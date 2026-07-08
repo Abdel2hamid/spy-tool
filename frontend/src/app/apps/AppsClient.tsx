@@ -285,7 +285,9 @@ export default function AppsClient() {
   const [total, setTotal] = useState(0);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const fetchReqRef = useRef(0);
 
   // appliedFilters drives API calls; draftFilters lives in the drawer until Apply
   // Both are initialized from URL search params so state survives back navigation.
@@ -310,16 +312,21 @@ export default function AppsClient() {
 
   // Fetch whenever applied filters change
   const fetchApps = useCallback(async (filters: AppFilters) => {
+    const reqId = ++fetchReqRef.current;
     setLoading(true);
+    setError(false);
     try {
       const result = await getFilteredApps(filters);
+      if (reqId !== fetchReqRef.current) return; // stale response — ignore
       setApps(result.apps ?? []);
       setTotal(result.total ?? 0);
     } catch {
+      if (reqId !== fetchReqRef.current) return;
+      setError(true);          // a real failure — NOT an empty catalog
       setApps([]);
       setTotal(0);
     } finally {
-      setLoading(false);
+      if (reqId === fetchReqRef.current) setLoading(false);
     }
   }, []);
 
@@ -507,6 +514,18 @@ export default function AppsClient() {
         {loading ? (
           <div className="flex items-center justify-center py-24">
             <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
+          </div>
+        ) : error ? (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-12 text-center dark:border-red-900/50 dark:bg-red-950/30">
+            <AppWindow className="mx-auto mb-4 h-12 w-12 text-red-300 dark:text-red-700" />
+            <p className="text-base font-medium text-red-700 dark:text-red-400">Couldn’t load apps</p>
+            <p className="mt-1 text-sm text-red-500 dark:text-red-400/80">Something went wrong on our end — this isn’t an empty result.</p>
+            <button
+              onClick={() => fetchApps(appliedFilters)}
+              className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+            >
+              Retry
+            </button>
           </div>
         ) : apps.length > 0 ? (
           <>

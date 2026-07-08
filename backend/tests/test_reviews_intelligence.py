@@ -10,10 +10,7 @@ Tests for:
 
 import sys
 import os
-from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch, PropertyMock
-
-import pytest
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -81,20 +78,36 @@ class TestSentimentClassification:
 # ---------------------------------------------------------------------------
 
 class TestReviewSentimentService:
-    """Mock DB interactions to test service logic."""
+    """Mock DB interactions to test service logic.
 
-    def _make_review(self, rating, content="test review content", sentiment=None, days_ago=None):
-        rv = MagicMock()
-        rv.rating = rating
-        rv.content = content
-        rv.sentiment = sentiment
-        if days_ago is not None:
-            rv.date = datetime.utcnow() - timedelta(days=days_ago)
-        else:
-            rv.date = None
-        return rv
+    The service queries lightweight tuples ``(Review.id, Review.rating,
+    Review.content)`` and writes sentiment via a batched raw-SQL ``UPDATE``
+    (``db.execute(text(...), params)``); the per-app roll-up reads a single
+    aggregate row from ``db.execute(text(...)).first()``. The mocks below
+    faithfully emulate those exact return shapes.
+    """
 
-    def _make_service(self, pending_reviews=None, classified_reviews=None):
+    def _make_pending_rows(self, specs):
+        """specs: list of (rating, content) → tuple rows (id, rating, content)."""
+        return [(i + 1, rating, content) for i, (rating, content) in enumerate(specs)]
+
+    def _collect_sentiment_updates(self, db):
+        """Reconstruct the {review_id: label} map written by the batched UPDATEs."""
+        sentiments = {}
+        for call in db.execute.call_args_list:
+            # self.db.execute(text(...), params) — params is the 2nd positional arg
+            if len(call.args) < 2:
+                continue
+            params = call.args[1]
+            if not isinstance(params, dict):
+                continue
+            j = 0
+            while f"id_{j}" in params:
+                sentiments[params[f"id_{j}"]] = params[f"label_{j}"]
+                j += 1
+        return sentiments
+
+    def _make_service(self, pending_reviews=None):
         db = MagicMock()
         svc_class = __import__(
             "app.services.review_sentiment_service",
@@ -104,27 +117,51 @@ class TestReviewSentimentService:
         svc = svc_class(db)
 
         if pending_reviews is not None:
+            # db.query(...).filter(...).limit(...).all()
             db.query.return_value.filter.return_value.limit.return_value.all.return_value = pending_reviews
-        if classified_reviews is not None:
-            db.query.return_value.filter.return_value.all.return_value = classified_reviews
         return svc, db
 
+    def _make_agg_row(self, total, positives, negatives, new_30d=0, new_90d=0,
+                      avg_recent_30=None, avg_older_30=None,
+                      avg_recent_90=None, avg_older_90=None):
+        """Emulate the aggregate row returned by db.execute(...).first()."""
+        row = MagicMock()
+        row.total = total
+        row.positives = positives
+        row.negatives = negatives
+        row.new_30d = new_30d
+        row.new_90d = new_90d
+        row.avg_rating_recent_30 = avg_recent_30
+        row.avg_rating_older_30 = avg_older_30
+        row.avg_rating_recent_90 = avg_recent_90
+        row.avg_rating_older_90 = avg_older_90
+        return row
+
+    def _wire_analytics(self, db, agg_row, existing_analytics=None):
+        # Aggregate SELECT: db.execute(text(...), {...}).first()
+        db.execute.return_value.first.return_value = agg_row
+        # AppAnalytics upsert lookup: db.query(AppAnalytics).filter(...).first()
+        db.query.return_value.filter.return_value.first.return_value = existing_analytics
+
     def test_classify_pending_sets_sentiment(self):
-        reviews = [
-            self._make_review(5, "Love this app!"),
-            self._make_review(1, "Terrible crash"),
-        ]
-        svc, db = self._make_service(pending_reviews=reviews)
-        svc.classify_pending_reviews()
-        # Sentiment should have been set on each review
-        assert reviews[0].sentiment == "positive"
-        assert reviews[1].sentiment == "negative"
+        rows = self._make_pending_rows([
+            (5, "Love this app!"),
+            (1, "Terrible crash"),
+        ])
+        svc, db = self._make_service(pending_reviews=rows)
+        count = svc.classify_pending_reviews()
+        assert count == 2
+        # The batched UPDATE should carry the correct label per review id.
+        sentiments = self._collect_sentiment_updates(db)
+        assert sentiments[1] == "positive"
+        assert sentiments[2] == "negative"
 
     def test_classify_pending_returns_count(self):
-        reviews = [self._make_review(4)] * 7
-        svc, db = self._make_service(pending_reviews=reviews)
+        rows = self._make_pending_rows([(4, "good")] * 7)
+        svc, db = self._make_service(pending_reviews=rows)
         count = svc.classify_pending_reviews()
         assert count == 7
+        db.commit.assert_called_once()
 
     def test_classify_empty_reviews_returns_zero(self):
         svc, db = self._make_service(pending_reviews=[])
@@ -133,39 +170,44 @@ class TestReviewSentimentService:
         db.commit.assert_not_called()
 
     def test_update_app_analytics_no_reviews_returns_none(self):
-        svc, db = self._make_service(classified_reviews=[])
+        svc, db = self._make_service()
+        self._wire_analytics(db, self._make_agg_row(total=0, positives=0, negatives=0))
         result = svc.update_app_analytics(app_id=1)
         assert result is None
 
     def test_update_app_analytics_populates_sentiment(self):
-        reviews = [
-            self._make_review(5, sentiment="positive"),
-            self._make_review(5, sentiment="positive"),
-            self._make_review(1, sentiment="negative"),
-        ]
-        svc, db = self._make_service(classified_reviews=reviews)
-        # Simulate AppAnalytics query returning None (new record)
-        db.query.return_value.filter.return_value.all.return_value = reviews
-        db.query.return_value.filter.return_value.first.return_value = None
+        # 2 positive (5★) + 1 negative (1★)
+        agg = self._make_agg_row(total=3, positives=2, negatives=1)
+        svc, db = self._make_service()
+        self._wire_analytics(db, agg, existing_analytics=None)
 
         result = svc.update_app_analytics(app_id=1)
         assert result is not None
         assert "sentiment_score" in result
         assert "sentiment_label" in result
+        # (2*1.0 + 0*0.5) / 3 = 0.6667; positives(2) >= negatives(1)*2 → "positive"
+        assert result["sentiment_label"] == "positive"
+        assert result["sentiment_score"] == round(2 / 3, 4)
 
     def test_update_app_analytics_returns_dict_with_all_keys(self):
-        reviews = [self._make_review(4, sentiment="positive", days_ago=10)] * 5
-        svc, db = self._make_service(classified_reviews=reviews)
-        db.query.return_value.filter.return_value.first.return_value = None
+        # 5 positive 4★ reviews, all within the last 30 days
+        agg = self._make_agg_row(
+            total=5, positives=5, negatives=0,
+            new_30d=5, new_90d=5,
+            avg_recent_30=4.0, avg_older_30=None,
+            avg_recent_90=4.0, avg_older_90=None,
+        )
+        svc, db = self._make_service()
+        self._wire_analytics(db, agg, existing_analytics=None)
 
         result = svc.update_app_analytics(app_id=1)
-        if result:
-            expected_keys = {
-                "app_id", "sentiment_score", "sentiment_label",
-                "review_growth_30d", "review_growth_90d",
-                "rating_change_30d", "rating_change_90d",
-            }
-            assert expected_keys.issubset(result.keys())
+        assert result is not None
+        expected_keys = {
+            "app_id", "sentiment_score", "sentiment_label",
+            "review_growth_30d", "review_growth_90d",
+            "rating_change_30d", "rating_change_90d",
+        }
+        assert expected_keys.issubset(result.keys())
 
 
 # ---------------------------------------------------------------------------

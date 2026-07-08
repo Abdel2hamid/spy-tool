@@ -23,6 +23,8 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import HTTPException, status
+from sqlalchemy import update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.config.plans import (
@@ -194,26 +196,121 @@ class PlanEnforcer:
                 },
             )
 
+    # ------------------------------------------------------------------
+    # Atomic usage accounting
+    #
+    # These run on a DEDICATED short-lived session (never the request session)
+    # so a usage write/rollback can't discard the handler's other pending work,
+    # and the increment is done at the SQL level (UPSERT / conditional UPDATE)
+    # so concurrent requests can't lose updates and slip past a plan limit.
+    # ------------------------------------------------------------------
+
+    def _atomic_add(self, action: str, delta: int = 1) -> None:
+        """Atomically upsert the month's usage row and add `delta` to `action`.
+
+        `action` is always drawn from the fixed `_TRACKED_ACTIONS` whitelist, so
+        using it as a column name is safe.
+        """
+        from app.database import SessionLocal  # noqa: PLC0415
+
+        col = getattr(WorkspaceUsage, action)
+        session = SessionLocal()
+        try:
+            stmt = (
+                pg_insert(WorkspaceUsage)
+                .values(workspace_id=self.workspace_id, month=self._month, **{action: delta})
+                .on_conflict_do_update(
+                    index_elements=["workspace_id", "month"],
+                    set_={action: col + delta},
+                )
+            )
+            session.execute(stmt)
+            session.commit()
+        except Exception as exc:  # infra error — log, don't penalise the user
+            session.rollback()
+            logger.warning("plan_enforcement._atomic_add(%s) failed: %s", action, exc)
+        finally:
+            session.close()
+
+    def _atomic_add_if_below(self, action: str, limit: int) -> bool:
+        """Atomically increment `action` only if it is currently `< limit`.
+
+        Returns True if the increment happened (was under limit), False if the
+        limit was already reached. Race-free: the guard and the write are one
+        SQL statement, so two concurrent requests at the boundary can't both win.
+        """
+        from app.database import SessionLocal  # noqa: PLC0415
+
+        col = getattr(WorkspaceUsage, action)
+        session = SessionLocal()
+        try:
+            # Ensure the row exists (no-op if it already does).
+            session.execute(
+                pg_insert(WorkspaceUsage)
+                .values(workspace_id=self.workspace_id, month=self._month)
+                .on_conflict_do_nothing(index_elements=["workspace_id", "month"])
+            )
+            res = session.execute(
+                update(WorkspaceUsage)
+                .where(
+                    WorkspaceUsage.workspace_id == self.workspace_id,
+                    WorkspaceUsage.month == self._month,
+                    col < limit,
+                )
+                .values({action: col + 1})
+            )
+            session.commit()
+            return res.rowcount > 0
+        except Exception as exc:  # infra error — fail open (don't block a paying user)
+            session.rollback()
+            logger.warning("plan_enforcement._atomic_add_if_below(%s) failed: %s", action, exc)
+            return True
+        finally:
+            session.close()
+
     def increment(self, action: str) -> None:
         """
-        Increment the usage counter for action by 1 and commit.
-        Safe to call even if action is not tracked.
+        Increment the usage counter for `action` by 1 (atomic, own session).
+        Safe to call even if `action` is not tracked.
+
+        Prefer `check_and_increment` for metered actions — it is race-free
+        against the plan limit. Plain `increment` is for the
+        check()-do-work-increment() pattern where a small over-count is
+        tolerable.
         """
         if action not in _TRACKED_ACTIONS:
             return
-        try:
-            usage = self._get_or_create_usage()
-            current = getattr(usage, action, 0) or 0
-            setattr(usage, action, current + 1)
-            self.db.commit()
-        except Exception as exc:
-            logger.warning("plan_enforcement.increment failed: %s", exc)
-            self.db.rollback()
+        self._atomic_add(action, 1)
 
     def check_and_increment(self, action: str) -> None:
-        """Check limit then immediately increment. Use for single-step operations."""
-        self.check(action)
-        self.increment(action)
+        """Atomically enforce the limit and increment. Race-free — use this for
+        single-step metered operations."""
+        if self.is_superadmin:
+            return
+        self._require_active_subscription()
+        if action not in _TRACKED_ACTIONS:
+            return
+        limit = get_limit(self.plan_code, action)
+        if limit is None:
+            self._atomic_add(action, 1)  # unlimited plan — just count
+            return
+        if not self._atomic_add_if_below(action, limit):
+            label = _ACTION_LABELS.get(action, action.replace("_", " "))
+            upgrade_msg = _UPGRADE_MESSAGES.get(
+                self.plan_code, "Upgrade to unlock higher limits."
+            )
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail={
+                    "code": "PLAN_LIMIT_EXCEEDED",
+                    "action": action,
+                    "message": f"You've reached your monthly {label} limit ({limit}/{limit}).",
+                    "current_usage": limit,
+                    "limit": limit,
+                    "plan": self.plan_code,
+                    "upgrade_message": upgrade_msg,
+                },
+            )
 
     def get_summary(self) -> dict:
         """

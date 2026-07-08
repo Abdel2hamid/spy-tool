@@ -90,12 +90,38 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down RankSpy...")
 
 
+# Interactive API docs (/docs, /redoc) and the OpenAPI schema expose the full
+# surface publicly, so they are enabled only in debug/dev and disabled in prod.
+_docs_enabled = bool(getattr(settings, "debug", False))
+
 app = FastAPI(
     title=settings.app_name,
     description="AI-powered App Store intelligence and opportunity detection",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
 )
+
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    """Attach baseline security headers to every response."""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # HSTS is safe behind Railway's TLS terminator; ignored on plain HTTP.
+    response.headers.setdefault(
+        "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+    )
+    # This process serves a JSON API (the frontend is a separate origin), so a
+    # deny-by-default CSP is appropriate and blocks framing/embedding.
+    response.headers.setdefault(
+        "Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"
+    )
+    return response
 
 app.add_middleware(
     CORSMiddleware,
