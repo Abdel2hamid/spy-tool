@@ -21,3 +21,6 @@ anthropic>=0.84.0
 pytrends==4.9.2
 stripe>=8.0.0
 resend>=2.0.0
+
+# Error monitoring (no-op unless SENTRY_DSN is set)
+sentry-sdk>=2.0.0

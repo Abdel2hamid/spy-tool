@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import asyncio
 import logging
+import os
 import time
 from sqlalchemy import text
 
@@ -19,6 +20,24 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 _APP_START_TIME = time.monotonic()
+
+# ── Error monitoring (Sentry) ──────────────────────────────────────────────
+# Enabled only when SENTRY_DSN is set. Wrapped so a missing package or bad DSN
+# can never block startup. FastAPI/Starlette are auto-instrumented by the SDK.
+_SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+if _SENTRY_DSN:
+    try:
+        import sentry_sdk
+
+        sentry_sdk.init(
+            dsn=_SENTRY_DSN,
+            environment=os.getenv("RAILWAY_ENVIRONMENT", "production"),
+            traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0")),
+            send_default_pii=False,
+        )
+        logger.info("Sentry error monitoring initialised")
+    except Exception as _exc:  # pragma: no cover
+        logger.warning("Sentry init skipped: %s", _exc)
 
 
 

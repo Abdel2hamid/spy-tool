@@ -47,9 +47,10 @@ def db(engine):
     from sqlalchemy import text
     Session = sessionmaker(bind=engine)
     s = Session()
-    # Clean only the tables these tests touch.
+    # Clean only the tables these tests touch (workspaces CASCADE also clears
+    # workspace_usage / subscriptions used by the usage-counter tests).
     s.execute(text(
-        "TRUNCATE app_trending_scores, app_blowing_up_scores, rankings, apps "
+        "TRUNCATE app_trending_scores, app_blowing_up_scores, rankings, apps, workspaces "
         "RESTART IDENTITY CASCADE"
     ))
     s.commit()
@@ -248,3 +249,68 @@ def test_review_countries_endpoint(db):
     counts = {r["country"]: r["count"] for r in res}
     assert counts == {"jp": 2, "us": 1}
     assert res[0]["country"] == "jp"  # ordered by count desc
+
+
+# ── usage counter: atomic + race-safe (covers the plan_enforcement rewrite) ──
+#
+# The atomic counter uses a dedicated app.database.SessionLocal(), so these need
+# a real DB *and* DATABASE_URL pointing at it (set alongside TEST_DATABASE_URL
+# in CI). They skip if DATABASE_URL is absent.
+
+_HAS_DB_URL = bool(os.environ.get("DATABASE_URL"))
+_needs_db_url = pytest.mark.skipif(
+    not _HAS_DB_URL,
+    reason="DATABASE_URL not set (atomic counter uses the app's SessionLocal)",
+)
+
+
+def _make_workspace(db, slug):
+    from app.models.models import Workspace
+    ws = Workspace(name="Test WS", slug=slug)
+    db.add(ws)
+    db.commit()
+    db.refresh(ws)
+    return ws
+
+
+@_needs_db_url
+def test_usage_counter_atomic_increment(db):
+    """increment() upserts the month row and adds atomically (own session)."""
+    from app.services.plan_enforcement import PlanEnforcer
+    from app.models.models import WorkspaceUsage
+
+    ws = _make_workspace(db, "ws-counter-inc")
+    enf = PlanEnforcer(db, workspace_id=ws.id, subscription=None)
+    enf.increment("app_imports")
+    enf.increment("app_imports")
+    enf.increment("keyword_refreshes")
+
+    row = (
+        db.query(WorkspaceUsage)
+        .filter_by(workspace_id=ws.id, month=enf._month)
+        .first()
+    )
+    assert row is not None
+    assert row.app_imports == 2
+    assert row.keyword_refreshes == 1
+
+
+@_needs_db_url
+def test_usage_counter_enforces_limit_race_safe(db):
+    """_atomic_add_if_below increments only while under the limit; never exceeds it."""
+    from app.services.plan_enforcement import PlanEnforcer
+    from app.models.models import WorkspaceUsage
+
+    ws = _make_workspace(db, "ws-counter-limit")
+    enf = PlanEnforcer(db, workspace_id=ws.id, subscription=None)
+    assert enf._atomic_add_if_below("app_imports", 3) is True
+    assert enf._atomic_add_if_below("app_imports", 3) is True
+    assert enf._atomic_add_if_below("app_imports", 3) is True
+    assert enf._atomic_add_if_below("app_imports", 3) is False  # at limit → blocked
+
+    row = (
+        db.query(WorkspaceUsage)
+        .filter_by(workspace_id=ws.id, month=enf._month)
+        .first()
+    )
+    assert row.app_imports == 3  # never exceeded the limit
