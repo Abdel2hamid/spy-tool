@@ -2097,6 +2097,23 @@ def setup_scheduler() -> AsyncIOScheduler:
     # analytics_update: REMOVED — 100% redundant with sentiment_analysis
     # (both call ReviewSentimentService.update_all_app_analytics)
 
+    # ── every 24 h: data retention pruning ───────────────────────────────────
+    @_with_timeout("data_retention_prune", timeout=3600)
+    async def job_data_retention_prune():
+        """
+        Prune old rankings and reviews to prevent unbounded storage growth.
+        Runs daily during off-peak hours (first run 6h after startup).
+        """
+        job_id = "data_retention_prune"
+        t0 = _log_start(job_id)
+        from app.services.data_retention import prune_all
+
+        try:
+            rankings, reviews = await _run_in_thread_with_session(prune_all)
+            _log_done(job_id, t0, f"rankings={rankings}, reviews={reviews}")
+        except Exception as exc:
+            _log_fail(job_id, exc)
+
     # ── GROWTH INTELLIGENCE PIPELINE ──────────────────────────────────────────
     # Phase 3: Ad Intelligence — runs AFTER metric snapshots are fresh.
     # First run: 70 min (after hourly_scoring at 65 min).
@@ -2205,6 +2222,19 @@ def setup_scheduler() -> AsyncIOScheduler:
         ),
         id="evaluate_alerts",
         name="Every 1h: Evaluate User Alert Rules",
+        **_JOB_DEFAULTS,
+    )
+
+    # ── every 24 h: prune old rankings/reviews ─────────────────────────────
+    scheduler.add_job(
+        job_data_retention_prune,
+        trigger=IntervalTrigger(
+            hours=24,
+            start_date=now + timedelta(hours=6),
+            timezone="UTC",
+        ),
+        id="data_retention_prune",
+        name="Every 24h: Data Retention Pruning",
         **_JOB_DEFAULTS,
     )
 

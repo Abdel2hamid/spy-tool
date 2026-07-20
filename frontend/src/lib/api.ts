@@ -2501,6 +2501,42 @@ export interface AdminSystemHealth {
   uptime_info: string;
 }
 
+export interface DataQualityApps {
+  total: number;
+  by_source: { source: string; count: number }[];
+  enriched_last_24h: number;
+  enriched_last_7d: number;
+  oldest_enriched_hours: number | null;
+}
+
+export interface DataQualityRankingCountry {
+  country: string;
+  distinct_apps: number;
+  latest_recorded_at: string | null;
+  age_hours: number | null;
+}
+
+export interface DataQualityRankings {
+  total_last_24h: number;
+  newest_recorded_at: string | null;
+  age_hours: number | null;
+  countries: DataQualityRankingCountry[];
+}
+
+export interface DataQualityReviews {
+  total: number;
+  by_storefront: { storefront: string; count: number }[];
+  apps_by_storefront: { storefront: string; count: number }[];
+}
+
+export interface DataQualityMetrics {
+  generated_at: string;
+  apps: DataQualityApps;
+  rankings: DataQualityRankings;
+  reviews: DataQualityReviews;
+  countries: { enabled: number };
+}
+
 async function _adminFetch<T>(endpoint: string): Promise<T> {
   const res = await fetch(`${API_BASE}${endpoint}`, {
     headers: _authHeaders(),
@@ -2630,6 +2666,10 @@ export async function adminBulkBackfill(batchSize = 1000): Promise<{ ok: boolean
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
+}
+
+export async function adminGetDataQuality(): Promise<DataQualityMetrics> {
+  return _adminFetch<DataQualityMetrics>('/admin-console/data-quality');
 }
 
 export async function adminResetPassword(userId: number, newPassword: string): Promise<{ ok: boolean }> {

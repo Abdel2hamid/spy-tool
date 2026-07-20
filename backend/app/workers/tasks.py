@@ -9,6 +9,7 @@ from app.models.models import App, Category, Ranking, Keyword, KeywordStatus, Ap
 from app.scrapers.appstore import AppStoreScraper
 from app.scrapers.app_details import AppStoreAppScraper
 from app.scoring.engine import ScoringEngine
+from app.services.ranking_storage import record_ranking
 from app.utils.batch_utils import iter_batches, iter_batches_keyset, log_memory
 
 logging.basicConfig(level=logging.INFO)
@@ -99,23 +100,15 @@ class ScraperWorker:
     def save_rankings(self, app: App, rankings_data: List[dict], chart_type: str):
         for rank_data in rankings_data:
             app = self.get_or_create_app(rank_data)
-            
-            previous_rank = rank_data.get("previous_rank")
-            rank_velocity = 0
-            if previous_rank and rank_data.get("rank"):
-                rank_velocity = previous_rank - rank_data["rank"]
-            
-            ranking = Ranking(
+            record_ranking(
+                self.db,
                 app_id=app.id,
                 chart_type=chart_type,
                 rank=rank_data.get("rank", 0),
-                previous_rank=previous_rank,
-                rank_velocity=rank_velocity
             )
-            self.db.add(ranking)
-        
+
         self.db.commit()
-    
+
     async def scrape_search_results(self, keywords: List[str]):
         from app.services.global_keyword_sink import GlobalKeywordSink
 
@@ -213,28 +206,15 @@ class ScraperWorker:
                             if app.category_id is None:
                                 app.category_id = category_id
 
-                        previous_rank = None
-                        existing_ranking = self.db.query(Ranking).filter(
-                            Ranking.app_id == app.id,
-                            Ranking.chart_type == chart_type,
-                            Ranking.country == cc,
-                            Ranking.genre == chart_genre,
-                        ).order_by(Ranking.recorded_at.desc()).first()
-
-                        if existing_ranking:
-                            previous_rank = existing_ranking.rank
-
-                        ranking = Ranking(
+                        record_ranking(
+                            self.db,
                             app_id=app.id,
                             chart_type=chart_type,
-                            category_id=category_id,   # the app's own category (metadata)
-                            country=cc,
-                            genre=chart_genre,          # the chart's scope
                             rank=result.get("rank", 0),
-                            previous_rank=previous_rank,
-                            rank_velocity=(previous_rank - result.get("rank", 0)) if previous_rank else 0
+                            country=cc,
+                            genre=chart_genre,
+                            category_id=category_id,   # the app's own category (metadata)
                         )
-                        self.db.add(ranking)
 
                     self.db.commit()
                     logger.info(

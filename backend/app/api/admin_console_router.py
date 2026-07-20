@@ -28,6 +28,7 @@ from app.models.models import (
     App, User, Workspace, Membership, Subscription, WorkspaceUsage,
     Favorite, MyApp, AdminActivityLog, AdminSetting, Announcement, UserActivityLog,
 )
+from app.services.data_quality_metrics import get_data_quality_metrics
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin-console", tags=["admin-console"])
@@ -1755,3 +1756,16 @@ def update_plans_config(
 
     _log_activity(db, admin, "settings.plans.update", "settings", None, {"plan_codes": list(body.plans.keys())})
     return {"ok": True}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Data quality / coverage metrics
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/data-quality")
+def get_data_quality(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_superadmin),
+):
+    """Coverage and freshness metrics used to monitor data pipeline health."""
+    return get_data_quality_metrics(db)
