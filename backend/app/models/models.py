@@ -291,7 +291,7 @@ class Ranking(Base):
     __tablename__ = "rankings"
 
     id = Column(Integer, primary_key=True, index=True)
-    app_id = Column(Integer, ForeignKey("apps.id"), nullable=False)
+    app_id = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
     category_id = Column(Integer, ForeignKey("categories.id"))
     chart_type = Column(String(50), nullable=False)
     country = Column(String(2), nullable=False, server_default="us")  # storefront; 'us' for legacy rows
@@ -301,7 +301,7 @@ class Ranking(Base):
     rank_velocity = Column(Float, default=0)
     recorded_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    app = relationship("App", back_populates="rankings")
+    app = relationship("App", back_populates="rankings", passive_deletes=True)
     category = relationship("Category", back_populates="rankings")
 
     __table_args__ = (
@@ -317,7 +317,7 @@ class Review(Base):
     __tablename__ = "reviews"
 
     id = Column(Integer, primary_key=True, index=True)
-    app_id = Column(Integer, ForeignKey("apps.id"), nullable=False)
+    app_id = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
     review_id = Column(String(100), unique=True)
     user_name = Column(String(255))
     user_url = Column(String(512))
@@ -334,7 +334,7 @@ class Review(Base):
     sentiment = Column(String(20))  # positive / neutral / negative
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    app = relationship("App", back_populates="reviews")
+    app = relationship("App", back_populates="reviews", passive_deletes=True)
 
     __table_args__ = (
         Index("idx_review_app_date", "app_id", "date"),
@@ -347,14 +347,14 @@ class AppVersion(Base):
     __tablename__ = "app_versions"
 
     id = Column(Integer, primary_key=True, index=True)
-    app_id = Column(Integer, ForeignKey("apps.id"), nullable=False)
+    app_id = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
     version = Column(String(50), nullable=False)
     release_date = Column(DateTime(timezone=True))
     release_notes = Column(Text)
     is_latest = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    app = relationship("App", back_populates="versions")
+    app = relationship("App", back_populates="versions", passive_deletes=True)
 
     __table_args__ = (
         Index("idx_app_version", "app_id", "version"),
@@ -366,7 +366,7 @@ class AppAnalytics(Base):
     __tablename__ = "app_analytics"
 
     id = Column(Integer, primary_key=True, index=True)
-    app_id = Column(Integer, ForeignKey("apps.id"), nullable=False)
+    app_id = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
     review_growth_30d = Column(Float, default=0)
     review_growth_90d = Column(Float, default=0)
     rating_change_30d = Column(Float, default=0)
@@ -383,7 +383,7 @@ class AppAnalytics(Base):
     opportunity_score = Column(Float, default=0)
     computed_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    app = relationship("App", back_populates="analytics")
+    app = relationship("App", back_populates="analytics", passive_deletes=True)
 
     __table_args__ = (
         Index("idx_analytics_app_computed", "app_id", "computed_at"),
@@ -444,7 +444,7 @@ class Keyword(Base):
     last_seen_at     = Column(DateTime(timezone=True), nullable=True)  # last time generated
     times_seen       = Column(Integer, default=1)       # how many times discovered
 
-    apps = relationship("AppKeyword", back_populates="keyword")
+    apps = relationship("AppKeyword", back_populates="keyword", cascade="all, delete-orphan")
     metrics = relationship("KeywordMetrics", back_populates="keyword", uselist=False, cascade="all, delete-orphan")
     trends = relationship("KeywordTrend", back_populates="keyword", cascade="all, delete-orphan")
 
@@ -499,8 +499,8 @@ class AppKeyword(Base):
     __tablename__ = "app_keywords"
 
     id = Column(Integer, primary_key=True, index=True)
-    app_id = Column(Integer, ForeignKey("apps.id"), nullable=False)
-    keyword_id = Column(Integer, ForeignKey("keywords.id"), nullable=False)
+    app_id = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
+    keyword_id = Column(Integer, ForeignKey("keywords.id", ondelete="CASCADE"), nullable=False)
     # Legacy columns (keyword search tracker)
     position = Column(Integer)
     relevance = Column(Float, default=0)
@@ -515,8 +515,8 @@ class AppKeyword(Base):
     kei = Column(Float, default=0.0)             # Keyword Efficiency Index
     estimated_installs = Column(Float, default=0.0)  # estimated daily installs from this keyword
 
-    app = relationship("App", back_populates="keywords")
-    keyword = relationship("Keyword", back_populates="apps")
+    app = relationship("App", back_populates="keywords", passive_deletes=True)
+    keyword = relationship("Keyword", back_populates="apps", passive_deletes=True)
 
     __table_args__ = (
         Index("idx_app_keyword", "app_id", "keyword_id", unique=True),
@@ -530,7 +530,7 @@ class Opportunity(Base):
     __tablename__ = "opportunities"
 
     id = Column(Integer, primary_key=True, index=True)
-    app_id = Column(Integer, ForeignKey("apps.id"))
+    app_id = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"))
     opportunity_type = Column(String(50), nullable=False)
     primary_keyword = Column(String(255))
     competition_score = Column(Float, default=0)
@@ -540,7 +540,7 @@ class Opportunity(Base):
     recommendation = Column(Text)
     generated_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    app = relationship("App", back_populates="opportunities")
+    app = relationship("App", back_populates="opportunities", passive_deletes=True)
 
     __table_args__ = (
         Index("idx_opportunity_app_id", "app_id"),
@@ -553,7 +553,7 @@ class AppMarketWeakness(Base):
     __tablename__ = "app_market_weakness"
 
     id = Column(Integer, primary_key=True, index=True)
-    app_id = Column(Integer, ForeignKey("apps.id"), nullable=False)
+    app_id = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
     country = Column(String(10), nullable=False)
     total_reviews = Column(Integer, default=0)
     negative_reviews = Column(Integer, default=0)
@@ -561,7 +561,7 @@ class AppMarketWeakness(Base):
     negative_ratio = Column(Float, default=0)
     computed_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    app = relationship("App", back_populates="market_weakness")
+    app = relationship("App", back_populates="market_weakness", passive_deletes=True)
 
     __table_args__ = (
         Index("idx_market_weakness_app", "app_id"),
@@ -574,12 +574,12 @@ class FeatureGap(Base):
     __tablename__ = "feature_gaps"
 
     id = Column(Integer, primary_key=True, index=True)
-    app_id = Column(Integer, ForeignKey("apps.id"), nullable=False)
+    app_id = Column(Integer, ForeignKey("apps.id", ondelete="CASCADE"), nullable=False)
     feature_name = Column(String(255), nullable=False)
     mentions = Column(Integer, default=1)
     detected_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    app = relationship("App", back_populates="feature_gaps")
+    app = relationship("App", back_populates="feature_gaps", passive_deletes=True)
 
     __table_args__ = (
         Index("idx_feature_gap_app", "app_id"),
@@ -831,12 +831,12 @@ class KeywordTrend(Base):
     __tablename__ = "keyword_trends"
 
     id = Column(Integer, primary_key=True, index=True)
-    keyword_id = Column(Integer, ForeignKey("keywords.id"), nullable=False)
+    keyword_id = Column(Integer, ForeignKey("keywords.id", ondelete="CASCADE"), nullable=False)
     week_start = Column(DateTime(timezone=True), nullable=False)  # Monday of the week
     interest_score = Column(Integer, default=0)   # 0-100, Google Trends relative interest
     captured_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    keyword = relationship("Keyword", back_populates="trends")
+    keyword = relationship("Keyword", back_populates="trends", passive_deletes=True)
 
     __table_args__ = (
         Index("idx_ktrend_keyword_week", "keyword_id", "week_start", unique=True),
