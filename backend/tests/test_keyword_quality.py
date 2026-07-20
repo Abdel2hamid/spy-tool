@@ -242,13 +242,4 @@ class TestIntegrationKeywordPipeline:
         assert q_new != q_old  # Quality score should reflect correction
 
 
-class TestBackfillIdentification:
-    """Tests for the backfill identification logic."""
 
-    def test_identify_suspicious_keywords(self):
-        """Test detection of keywords affected by the bug."""
-        from app.services.keyword_quality_backfill import identify_affected_keywords
-        
-        # This tests the detection logic
-        # The actual implementation would need a mock DB
-        assert callable(identify_affected_keywords)

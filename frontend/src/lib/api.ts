@@ -292,28 +292,6 @@ export interface App {
 // Keyword Search / Discover Apps
 // ---------------------------------------------------------------------------
 
-export interface KeywordSearchResultItem {
-  id: number;
-  app_id: string;
-  name: string;
-  developer: string | null;
-  icon_url: string | null;
-  current_rating: number | null;
-  current_reviews: number | null;
-  primary_category: string | null;
-  price: number;
-  is_free: boolean;
-  url: string | null;
-  is_new: boolean;
-}
-
-export interface KeywordSearchResponse {
-  keyword: string;
-  results: KeywordSearchResultItem[];
-  total: number;
-  new_apps_count: number;
-}
-
 export interface AppVersion {
   id: number;
   app_id: number;
@@ -396,29 +374,6 @@ export interface Keyword {
   search_volume: number;
   difficulty: number;
   trend: number;
-}
-
-export interface Ranking {
-  id: number;
-  app_id: number;
-  chart_type: string;
-  rank: number;
-  previous_rank: number | null;
-  rank_velocity: number;
-  recorded_at: string;
-}
-
-export interface Opportunity {
-  app_id: number | null;
-  opportunity_type: string;
-  primary_keyword: string | null;
-  competition_score: number;
-  trend_score: number;
-  success_probability: number;
-  ai_integration_potential: number;
-  recommendation: string | null;
-  id: number;
-  generated_at: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -925,14 +880,6 @@ export async function getApp(appId: number): Promise<App> {
   return fetchApi<App>(`/apps/${appId}`);
 }
 
-export async function searchAppsByKeyword(
-  keyword: string,
-  limit: number = 50
-): Promise<KeywordSearchResponse> {
-  const params = new URLSearchParams({ keyword, limit: String(limit) });
-  return fetchApi<KeywordSearchResponse>(`/search/apps?${params}`);
-}
-
 // ---------------------------------------------------------------------------
 // On-Demand App Import
 // ---------------------------------------------------------------------------
@@ -1124,26 +1071,6 @@ export async function triggerKeywordPipeline(): Promise<{ status: string; messag
   const res = await fetch(`${API_BASE}/keywords/pipeline/run`, { method: 'POST', headers: _authHeaders() });
   if (!res.ok) return { status: 'error', message: 'Failed to trigger pipeline' };
   return res.json();
-}
-
-export async function getRankings(
-  appId?: number,
-  chartType?: string,
-  limit: number = 100
-): Promise<Ranking[]> {
-  let url = `/rankings?limit=${limit}`;
-  if (appId) url += `&app_id=${appId}`;
-  if (chartType) url += `&chart_type=${chartType}`;
-  return fetchApi<Ranking[]>(url);
-}
-
-export async function getOpportunities(
-  minProbability?: number,
-  limit: number = 50
-): Promise<Opportunity[]> {
-  let url = `/opportunities?limit=${limit}`;
-  if (minProbability) url += `&min_probability=${minProbability}`;
-  return fetchApi<Opportunity[]>(url);
 }
 
 export async function getAppDetail(appId: number): Promise<AppDetail> {
@@ -1548,39 +1475,6 @@ export async function triggerPhase1Discovery(
   return res.json();
 }
 
-// ---------------------------------------------------------------------------
-// Install & Revenue Estimates
-// ---------------------------------------------------------------------------
-
-export interface InstallEstimate {
-  app_id: number;
-  estimated_installs_min: number;
-  estimated_installs_max: number;
-  install_confidence: number;
-  methodology: string;
-}
-
-export interface RevenueEstimate {
-  app_id: number;
-  estimated_revenue_monthly_min: number;
-  estimated_revenue_monthly_max: number;
-  model: string;
-  arpu: number;
-  category: string;
-}
-
-export async function getInstallEstimate(appId: number): Promise<InstallEstimate> {
-  const res = await fetch(`${API_BASE}/apps/${appId}/install-estimate`, { headers: _authHeaders() });
-  if (!res.ok) { await _checkUpgrade(res); throw new Error(`API error: ${res.status}`); }
-  return res.json();
-}
-
-export async function getRevenueEstimate(appId: number): Promise<RevenueEstimate> {
-  const res = await fetch(`${API_BASE}/apps/${appId}/revenue-estimate`, { headers: _authHeaders() });
-  if (!res.ok) { await _checkUpgrade(res); throw new Error(`API error: ${res.status}`); }
-  return res.json();
-}
-
 export interface DownloadEstimate {
   app_id: number;
   estimated_downloads_daily: number;
@@ -1838,74 +1732,6 @@ export async function getBlowingUpApps(filters: BlowingUpFilters = {}): Promise<
   return res.json();
 }
 
-// ===========================================================================
-// Growth Intelligence Types
-// ===========================================================================
-
-export interface MetricSnapshot {
-  id: number;
-  app_id: number;
-  snapshot_at: string;
-  estimated_downloads_min: number | null;
-  estimated_downloads_max: number | null;
-  install_confidence: number | null;
-  estimated_revenue_monthly_min: number | null;
-  estimated_revenue_monthly_max: number | null;
-  revenue_confidence: number | null;
-  monetization_model: string | null;
-  has_ads_signal: boolean;
-  campaign_confidence: number;
-}
-
-export interface MetricSnapshotHistory {
-  app_id: number;
-  snapshots: MetricSnapshot[];
-  latest: MetricSnapshot | null;
-  downloads_delta_7d: { delta_min: number; delta_max: number; change_pct: number } | null;
-}
-
-export interface AdCreative {
-  id: number;
-  app_id: number;
-  network: string;
-  external_creative_id: string | null;
-  format: string | null;
-  creative_url: string | null;
-  preview_url: string | null;
-  title: string | null;
-  body: string | null;
-  cta: string | null;
-  landing_url: string | null;
-  first_seen_at: string | null;
-  last_seen_at: string | null;
-  is_active: boolean;
-}
-
-export interface AdCampaign {
-  id: number;
-  app_id: number;
-  network: string;
-  campaign_key: string;
-  first_seen_at: string | null;
-  last_seen_at: string | null;
-  active_creatives_count: number;
-  countries: string[] | null;
-  status: string;
-  campaign_confidence: number;
-}
-
-export interface AppAdIntelligence {
-  app_id: number;
-  campaigns: AdCampaign[];
-  creatives: AdCreative[];
-  total_campaigns: number;
-  active_campaigns: number;
-  total_creatives: number;
-  active_creatives: number;
-  has_active_campaign: boolean;
-  networks: string[];
-}
-
 export interface AdIntelligenceListItem {
   app_id: string;
   app_db_id: number;
@@ -1926,25 +1752,6 @@ export interface AdIntelligenceListResponse {
   items: AdIntelligenceListItem[];
   total: number;
   active_count: number;
-}
-
-export interface GrowthEvent {
-  id: number;
-  app_id: number;
-  detected_at: string;
-  event_type: string;
-  confidence: number;
-  explanation: string | null;
-  signals: Record<string, unknown> | null;
-  started_at_estimate: string | null;
-  active_status: boolean;
-}
-
-export interface AppGrowthEvents {
-  app_id: number;
-  events: GrowthEvent[];
-  latest_event: GrowthEvent | null;
-  total: number;
 }
 
 export interface CampaignTrackingListItem {
@@ -1969,28 +1776,6 @@ export interface CampaignTrackingListResponse {
   by_type: Record<string, number> | null;
 }
 
-// ===========================================================================
-// Growth Intelligence API functions
-// ===========================================================================
-
-export async function getAppMetrics(appId: number, days = 30): Promise<MetricSnapshotHistory> {
-  const res = await fetch(`${API_BASE}/apps/${appId}/metrics?days=${days}`, { headers: _authHeaders() });
-  if (!res.ok) throw new Error(`Failed to fetch metrics: ${res.status}`);
-  return res.json();
-}
-
-export async function getAppAdIntelligence(appId: number): Promise<AppAdIntelligence> {
-  const res = await fetch(`${API_BASE}/apps/${appId}/ads`, { headers: _authHeaders() });
-  if (!res.ok) { await _checkUpgrade(res); throw new Error(`Failed to fetch ad intelligence: ${res.status}`); }
-  return res.json();
-}
-
-export async function scanAppAds(appId: number): Promise<{ status: string; creatives_upserted: number; campaigns_upserted: number }> {
-  const res = await fetch(`${API_BASE}/apps/${appId}/ads/scan`, { method: 'POST', headers: _authHeaders() });
-  if (!res.ok) { await _checkUpgrade(res); throw new Error(`Ad scan failed: ${res.status}`); }
-  return res.json();
-}
-
 export async function getAdIntelligenceList(params: {
   network?: string;
   active_only?: boolean;
@@ -2004,12 +1789,6 @@ export async function getAdIntelligenceList(params: {
   if (params.limit !== undefined) p.set('limit', String(params.limit));
   const res = await fetch(`${API_BASE}/ads?${p}`, { headers: _authHeaders() });
   if (!res.ok) { await _checkUpgrade(res); throw new Error(`Failed to fetch ad intelligence list: ${res.status}`); }
-  return res.json();
-}
-
-export async function getAppGrowthEvents(appId: number, activeOnly = false): Promise<AppGrowthEvents> {
-  const res = await fetch(`${API_BASE}/apps/${appId}/growth-events?active_only=${activeOnly}`, { headers: _authHeaders() });
-  if (!res.ok) { await _checkUpgrade(res); throw new Error(`Failed to fetch growth events: ${res.status}`); }
   return res.json();
 }
 
