@@ -121,7 +121,13 @@ class Subscription(Base):
     plan_code = Column(String(50), nullable=False, default="trial")
     status = Column(String(30), nullable=False, default="trialing")
     trial_ends_at = Column(DateTime(timezone=True))
-    # Future billing fields (Stripe, etc.) — kept nullable for now
+    # Provider-agnostic billing identity. `provider` names the payment gateway
+    # ("stripe", "airwallex", …); the *_id columns are that gateway's ids.
+    provider = Column(String(30), nullable=False, server_default="stripe")
+    provider_customer_id = Column(String(255))
+    provider_subscription_id = Column(String(255))
+    # Legacy Stripe columns — retained transitionally and kept in sync; will be
+    # dropped once no code reads them.
     stripe_customer_id = Column(String(255))
     stripe_subscription_id = Column(String(255))
     current_period_end = Column(DateTime(timezone=True))
@@ -133,6 +139,7 @@ class Subscription(Base):
     __table_args__ = (
         Index("idx_sub_workspace", "workspace_id"),
         Index("idx_sub_status", "status"),
+        Index("idx_sub_provider_customer", "provider", "provider_customer_id"),
     )
 
 

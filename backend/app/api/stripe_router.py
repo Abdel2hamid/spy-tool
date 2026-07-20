@@ -8,7 +8,6 @@ Stripe billing endpoints:
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
@@ -17,11 +16,10 @@ from sqlalchemy.orm import Session
 from app.api.deps import AuthContext, get_auth_context
 from app.config import settings
 from app.database import get_db
-from app.models.models import Subscription
-from app.services import stripe_service
+from app.services.billing import get_billing_provider
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/stripe", tags=["stripe"])
+router = APIRouter(prefix="/stripe", tags=["billing"])
 
 
 # ---------------------------------------------------------------------------
@@ -50,9 +48,8 @@ class StripeConfigResponse(BaseModel):
 
 @router.get("/config", response_model=StripeConfigResponse)
 def get_stripe_config():
-    """Return Stripe publishable key for the frontend."""
-    return StripeConfigResponse(publishable_key=settings.stripe_publishable_key)
-
+    """Return the client-safe publishable key for the frontend."""
+    return StripeConfigResponse(publishable_key=get_billing_provider().publishable_key())
 
 
 @router.post("/create-checkout", response_model=CheckoutResponse)
@@ -61,82 +58,51 @@ def create_checkout(
     ctx: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
 ):
-    """Create a Stripe Checkout session for the authenticated user."""
-    if not stripe_service.is_configured():
+    """Create a checkout session for the authenticated user (active gateway)."""
+    provider = get_billing_provider()
+    if not provider.is_configured():
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Billing not configured.")
-
-    sub = db.query(Subscription).filter(
-        Subscription.workspace_id == ctx.workspace.id,
-    ).first()
-
-    if not sub:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No subscription record found.")
-
-    # Create Stripe customer if needed
-    if not sub.stripe_customer_id:
-        customer = stripe_service.create_customer(
-            email=ctx.user.email,
-            name=ctx.user.full_name,
-        )
-        sub.stripe_customer_id = customer.id
-        db.commit()
 
     success_url = f"{settings.frontend_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{settings.frontend_url}/signup"
 
     try:
-        session = stripe_service.create_checkout_session(
-            customer_id=sub.stripe_customer_id,
+        checkout_url = provider.create_checkout(
+            db=db,
+            workspace_id=ctx.workspace.id,
             plan_code=body.plan_code,
+            customer_email=ctx.user.email,
+            customer_name=ctx.user.full_name,
             success_url=success_url,
             cancel_url=cancel_url,
         )
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
     except Exception as e:
-        logger.error("Stripe checkout creation failed: %s", e)
+        logger.error("Checkout creation failed: %s", e)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Failed to create checkout session.")
 
-    return CheckoutResponse(checkout_url=session.url)
+    return CheckoutResponse(checkout_url=checkout_url)
 
 
 @router.post("/webhook")
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
-    """Handle incoming Stripe webhook events."""
+    """Handle incoming billing webhook events for the active gateway."""
+    provider = get_billing_provider()
     payload = await request.body()
-    sig = request.headers.get("stripe-signature", "")
 
     try:
-        event = stripe_service.construct_event(payload, sig)
+        event = provider.verify_webhook(payload=payload, headers=request.headers)
     except Exception as e:
-        logger.error("Stripe webhook signature failed: %s", e)
+        logger.error("Webhook signature verification failed: %s", e)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid signature.")
 
-    event_type = event.get("type", "")
-    data = event.get("data", {}).get("object", {})
-
-    def _dispatch():
-        if event_type == "checkout.session.completed":
-            stripe_service.handle_checkout_completed(data, db)
-        elif event_type == "customer.subscription.updated":
-            stripe_service.handle_subscription_updated(data, db)
-        elif event_type == "customer.subscription.deleted":
-            stripe_service.handle_subscription_deleted(data, db)
-        elif event_type == "invoice.payment_succeeded":
-            stripe_service.handle_invoice_payment_succeeded(data, db)
-        elif event_type == "invoice.payment_failed":
-            stripe_service.handle_invoice_payment_failed(data, db)
-        elif event_type == "customer.subscription.trial_will_end":
-            stripe_service.handle_trial_will_end(data, db)
-        else:
-            logger.debug("Unhandled Stripe event: %s", event_type)
-
     try:
-        # Handlers do sync Stripe/DB I/O — keep them off the event loop.
+        # Handlers do sync gateway/DB I/O — keep them off the event loop.
         from starlette.concurrency import run_in_threadpool
-        await run_in_threadpool(_dispatch)
+        await run_in_threadpool(provider.handle_webhook_event, event, db)
     except Exception as e:
-        logger.error("Webhook handler failed for %s: %s", event_type, e)
+        logger.error("Webhook handler failed: %s", e)
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Webhook processing failed.")
 
     return {"status": "ok"}
@@ -147,24 +113,21 @@ def billing_portal(
     ctx: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),
 ):
-    """Create a Stripe Customer Portal session for subscription management."""
-    if not stripe_service.is_configured():
+    """Create a customer billing-management portal session (active gateway)."""
+    provider = get_billing_provider()
+    if not provider.is_configured():
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Billing not configured.")
 
-    sub = db.query(Subscription).filter(
-        Subscription.workspace_id == ctx.workspace.id,
-    ).first()
-
-    if not sub or not sub.stripe_customer_id:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No billing account found.")
-
     try:
-        session = stripe_service.create_billing_portal_session(
-            customer_id=sub.stripe_customer_id,
+        portal_url = provider.create_billing_portal(
+            db=db,
+            workspace_id=ctx.workspace.id,
             return_url=f"{settings.frontend_url}/settings",
         )
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
     except Exception as e:
-        logger.error("Stripe billing portal creation failed: %s", e)
+        logger.error("Billing portal creation failed: %s", e)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Failed to open billing portal. Please try again.")
 
-    return PortalResponse(portal_url=session.url)
+    return PortalResponse(portal_url=portal_url)

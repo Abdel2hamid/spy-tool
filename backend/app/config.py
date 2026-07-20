@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
 
     # ── Stripe billing ─────────────────────────────────────────────────
+    # Active payment gateway behind the BillingProvider interface
+    # ("stripe" today; "airwallex" once its provider is implemented).
+    payment_provider: str = "stripe"
     stripe_secret_key: str = ""
     stripe_publishable_key: str = ""
     stripe_webhook_secret: str = ""

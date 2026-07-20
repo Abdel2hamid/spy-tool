@@ -360,12 +360,25 @@ def _fuzzy_match_category(category: str) -> str:
     return "default"
 
 
+# Fixed uncertainty spread around the central estimate. A symmetric ±40% range
+# keeps the (lo, hi) bounds monotonic whenever the central estimate is
+# monotonic, which the original band-ratio approach did not guarantee at
+# band edges.
+_ESTIMATE_SPREAD = 1.4
+
+
 def interpolate_rank_downloads(rank: int, category: str) -> Tuple[int, int]:
     """
     Return (daily_lo, daily_hi) for a given rank in a given category.
 
     Uses log-linear interpolation within each band so that the transition
-    between bands is smooth rather than step-wise.
+    between bands is smooth and monotonic: a worse rank never returns more
+    downloads than a better rank, and adjacent bands meet at their shared
+    boundary.
+
+    For a band ``(lo_rank, hi_rank) -> (lo_dl, hi_dl)``:
+      - ``lo_rank`` (the best rank in the band) maps to ``hi_dl``.
+      - ``hi_rank`` (the worst rank in the band) maps to ``lo_dl``.
 
     Args:
         rank: Chart rank (1 = #1, positive integer)
@@ -380,37 +393,34 @@ def interpolate_rank_downloads(rank: int, category: str) -> Tuple[int, int]:
     cat_key = _fuzzy_match_category(category)
     bands = RANK_CURVES[cat_key]
 
-    # Find the matching band
-    for (lo_rank, hi_rank), (lo_dl, hi_dl) in sorted(bands.items()):
+    sorted_bands = sorted(bands.items())
+    for (lo_rank, hi_rank), (lo_dl, hi_dl) in sorted_bands:
         if lo_rank <= rank <= hi_rank:
-            if lo_rank == hi_rank or lo_rank == rank:
+            # Degenerate single-rank band
+            if lo_rank == hi_rank:
                 return (lo_dl, hi_dl)
 
-            # Log-linear interpolation within band
-            # position: 0.0 = start of band (lo_rank), 1.0 = end (hi_rank)
+            # Log-linear position inside the band: 0.0 at lo_rank, 1.0 at hi_rank
             try:
                 t = (math.log(rank) - math.log(lo_rank)) / (
                     math.log(hi_rank) - math.log(lo_rank)
                 )
             except (ValueError, ZeroDivisionError):
                 t = 0.5
-
             t = max(0.0, min(1.0, t))
-            # Downloads decrease as rank increases (worse rank = fewer downloads)
-            interp_lo = int(lo_dl * (1 - t) + hi_dl * t)
-            interp_hi = int(lo_dl * (1 - t) + hi_dl * t)
-            # Keep the (lo, hi) spread proportional
-            ratio = hi_dl / lo_dl if lo_dl > 0 else 2.0
-            band_lo = int(lo_dl * (1 - t) + (lo_dl / ratio) * t)
-            band_hi = int(hi_dl * (1 - t) + hi_dl * t)
-            # Simpler: interpolate midpoint, return band spread around it
-            midpoint = int(((lo_dl + hi_dl) / 2) * (1 - t) + ((lo_dl / ratio + hi_dl) / 2) * t)
-            spread = (hi_dl - lo_dl) / 2
-            return (max(1, int(midpoint - spread * (1 - t))), int(midpoint + spread * (1 - t)))
 
-    # Rank beyond all bands — use lowest band
-    last_band_vals = list(bands.values())[-1]
-    return last_band_vals
+            # Central estimate: decreases from hi_dl (best rank) to lo_dl (worst rank)
+            central = hi_dl * (1 - t) + lo_dl * t
+
+            # Symmetric uncertainty spread. Because the spread factor is constant,
+            # monotonicity of the central estimate guarantees monotonicity of
+            # both bounds and continuity at band boundaries.
+            lo = max(1, int(central / _ESTIMATE_SPREAD))
+            hi = max(lo, int(central * _ESTIMATE_SPREAD))
+            return (lo, hi)
+
+    # Rank beyond all bands — use the lowest (long-tail) band values as a floor
+    return sorted_bands[-1][1]
 
 
 def get_category_reliability(category: str) -> float:

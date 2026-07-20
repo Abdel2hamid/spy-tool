@@ -152,6 +152,54 @@ class TestRankCurves:
         lo1000, hi1000 = interpolate_rank_downloads(1000, "productivity")
         assert (lo100 + hi100) > (lo1000 + hi1000)
 
+    def test_interpolation_is_monotonic(self):
+        """A worse rank must never produce a higher central estimate."""
+        from app.config.rank_curves import interpolate_rank_downloads
+
+        ranks = [1, 2, 3, 4, 5, 6, 10, 15, 20, 21, 30, 50, 51, 100, 200, 500, 1000]
+        centers = []
+        for r in ranks:
+            lo, hi = interpolate_rank_downloads(r, "games")
+            centers.append((lo + hi) / 2)
+
+        for i in range(1, len(centers)):
+            assert centers[i - 1] >= centers[i], (
+                f"Non-monotonic at ranks {ranks[i - 1]}->{ranks[i]}: "
+                f"{centers[i - 1]} < {centers[i]}"
+            )
+
+    def test_band_boundaries_are_continuous(self):
+        """The central estimate at the top of one band should match the next band's bottom."""
+        from app.config.rank_curves import interpolate_rank_downloads
+
+        # games: band (1,5) ends at 200k; band (6,20) starts at 200k
+        lo5, hi5 = interpolate_rank_downloads(5, "games")
+        lo6, hi6 = interpolate_rank_downloads(6, "games")
+        mid5 = (lo5 + hi5) / 2
+        mid6 = (lo6 + hi6) / 2
+        assert abs(mid5 - mid6) / max(mid5, mid6) < 0.05, (
+            f"Midpoint discontinuity at rank 5->6: mid5={mid5}, mid6={mid6}"
+        )
+
+        lo20, hi20 = interpolate_rank_downloads(20, "games")
+        lo21, hi21 = interpolate_rank_downloads(21, "games")
+        mid20 = (lo20 + hi20) / 2
+        mid21 = (lo21 + hi21) / 2
+        assert abs(mid20 - mid21) / max(mid20, mid21) < 0.05, (
+            f"Midpoint discontinuity at rank 20->21: mid20={mid20}, mid21={mid21}"
+        )
+
+    def test_rank_20_less_than_rank_6(self):
+        """Regression test for the original non-monotonic band-edge bug."""
+        from app.config.rank_curves import interpolate_rank_downloads
+
+        lo6, hi6 = interpolate_rank_downloads(6, "games")
+        lo20, hi20 = interpolate_rank_downloads(20, "games")
+        assert (lo6 + hi6) > (lo20 + hi20), (
+            f"Rank 6 should estimate more downloads than rank 20: "
+            f"rank6={(lo6+hi6)/2}, rank20={(lo20+hi20)/2}"
+        )
+
 
 # ===========================================================================
 # 2. Category ARPU Profiles
