@@ -40,11 +40,21 @@ def db(engine):
     from sqlalchemy import text
     Session = sessionmaker(bind=engine)
     s = Session()
-    s.execute(text("TRUNCATE rankings RESTART IDENTITY CASCADE"))
+    s.execute(text("TRUNCATE rankings, apps RESTART IDENTITY CASCADE"))
     s.commit()
     yield s
     s.rollback()
     s.close()
+
+
+@pytest.fixture(autouse=True)
+def rank_test_app(db):
+    """Create a dummy app so ranking FK constraints are satisfied."""
+    from app.models.models import App
+    app = App(id=1, app_id="rank-test", name="Rank Test", developer="Dev")
+    db.add(app)
+    db.commit()
+    yield app
 
 
 class TestRecordRanking:
