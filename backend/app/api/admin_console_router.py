@@ -29,9 +29,51 @@ from app.models.models import (
     Favorite, MyApp, AdminActivityLog, AdminSetting, Announcement, UserActivityLog,
 )
 from app.services.data_quality_metrics import get_data_quality_metrics
+from app.services.billing import get_billing_provider
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin-console", tags=["admin-console"])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Workspace / subscription cleanup helper
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _cancel_workspace_subscription(db: Session, workspace_id: int) -> None:
+    """Cancel the workspace's subscription at the payment gateway, if any.
+
+    Errors are swallowed and logged: the workspace must still be deletable
+    even if the billing provider is unreachable.
+    """
+    sub = db.query(Subscription).filter(Subscription.workspace_id == workspace_id).first()
+    if not sub or not sub.provider_subscription_id:
+        return
+
+    provider = get_billing_provider()
+    if not provider.is_configured():
+        logger.warning(
+            "Billing provider %s is not configured; skipping cancellation for workspace %s",
+            provider.name, workspace_id,
+        )
+        return
+
+    try:
+        provider.cancel_subscription(sub.provider_subscription_id)
+        logger.info("Cancelled %s subscription %s for workspace %s", provider.name, sub.provider_subscription_id, workspace_id)
+    except Exception as exc:  # noqa: BLE001 — billing failure must not block deletion
+        logger.warning("Failed to cancel subscription %s for workspace %s: %s", sub.provider_subscription_id, workspace_id, exc)
+
+
+def _delete_user_and_workspace(db: Session, user: User) -> None:
+    """Delete a user and their primary workspace, cancelling Stripe first."""
+    mem = db.query(Membership).filter(Membership.user_id == user.id).first()
+    if mem:
+        _cancel_workspace_subscription(db, mem.workspace_id)
+        workspace = db.query(Workspace).filter(Workspace.id == mem.workspace_id).first()
+        if workspace:
+            db.delete(workspace)
+    db.delete(user)
+    db.commit()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -548,15 +590,14 @@ def delete_user(
     db: Session = Depends(get_db),
     admin: User = Depends(get_superadmin),
 ):
-    """Delete a user (cannot delete self)."""
+    """Delete a user and their primary workspace, cancelling any active subscription."""
     if user_id == admin.id:
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     email = user.email
-    db.delete(user)
-    db.commit()
+    _delete_user_and_workspace(db, user)
     _log_activity(db, admin, "user.delete", "user", user_id, {"email": email})
     return {"ok": True}
 
@@ -799,9 +840,8 @@ def bulk_user_action(
     elif body.action == "delete":
         for u in users:
             if u.id != admin.id:
-                db.delete(u)
+                _delete_user_and_workspace(db, u)
                 affected += 1
-        db.commit()
 
     elif body.action == "change_plan":
         if not body.plan_code:
